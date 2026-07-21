@@ -1,0 +1,16 @@
+[project]
+name = "glean-osint"
+version = "0.0.1"
+description = "Glean — OSINT synthesis: unify open-source recon tools into one provenance-tracked, LLM-prioritised intelligence report."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Yulan Galagoda" }]
+keywords = ["osint", "reconnaissance", "threat-intelligence", "security"]
+
+[project.urls]
+Homepage = "https://github.com/yulangalagoda/glean"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
