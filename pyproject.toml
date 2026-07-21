@@ -1,6 +1,6 @@
 [project]
 name = "glean-osint"
-version = "0.0.1"
+version = "0.0.2"
 description = "Glean — OSINT synthesis: unify open-source recon tools into one provenance-tracked, LLM-prioritised intelligence report."
 readme = "README.md"
 requires-python = ">=3.10"
