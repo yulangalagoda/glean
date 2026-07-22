@@ -1,0 +1,102 @@
+{
+  "schema_version": "0.1.0",
+  "scan": {
+    "target": "example.com",
+    "authorisation": "Root domain owned by the operator; documented in targets.md #1.",
+    "started_at": "2026-07-22T09:00:00Z",
+    "finished_at": "2026-07-22T09:04:12Z",
+    "glean_version": "0.1.0",
+    "tools_run": [
+      {
+        "source_tool": "crtsh",
+        "method": "passive",
+        "invoked_at": "2026-07-22T09:00:05Z",
+        "raw_output_ref": "raw/crtsh-example.com.json"
+      },
+      {
+        "source_tool": "theharvester",
+        "tool_version": "4.6.0",
+        "method": "passive",
+        "invoked_at": "2026-07-22T09:01:10Z",
+        "raw_output_ref": "raw/theharvester-example.com.json"
+      },
+      {
+        "source_tool": "amass",
+        "tool_version": "4.2.0",
+        "method": "active",
+        "invoked_at": "2026-07-22T09:02:00Z",
+        "raw_output_ref": "raw/amass-example.com.json"
+      }
+    ]
+  },
+  "entities": [
+    {
+      "id": "domain:example.com",
+      "type": "domain",
+      "value": "example.com",
+      "attributes": { "registrar": "IANA" },
+      "provenance": [
+        { "source_tool": "theharvester", "method": "passive", "collected_at": "2026-07-22T09:01:10Z", "raw_record_ref": "$.domains[0]" }
+      ],
+      "first_seen": "2026-07-22T09:01:10Z",
+      "last_seen": "2026-07-22T09:01:10Z"
+    },
+    {
+      "id": "subdomain:admin.example.com",
+      "type": "subdomain",
+      "value": "admin.example.com",
+      "attributes": {},
+      "provenance": [
+        { "source_tool": "crtsh", "method": "passive", "collected_at": "2026-07-22T09:00:05Z", "raw_record_ref": "$[14].name_value", "confidence": 0.9 },
+        { "source_tool": "amass", "source_module": "dns_brute", "method": "active", "collected_at": "2026-07-22T09:02:40Z", "raw_record_ref": "line:212" }
+      ],
+      "first_seen": "2026-07-22T09:00:05Z",
+      "last_seen": "2026-07-22T09:02:40Z",
+      "priority": {
+        "score": 8.5,
+        "rank": 1,
+        "signals": ["admin_hostname_pattern", "resolves_to_live_ip"]
+      }
+    },
+    {
+      "id": "ip_address:203.0.113.42",
+      "type": "ip_address",
+      "value": "203.0.113.42",
+      "attributes": { "asn": "AS64500", "network": "203.0.113.0/24" },
+      "provenance": [
+        { "source_tool": "amass", "method": "active", "collected_at": "2026-07-22T09:02:41Z", "raw_record_ref": "line:212" }
+      ]
+    },
+    {
+      "id": "service:203.0.113.42:443",
+      "type": "service",
+      "value": "203.0.113.42:443",
+      "attributes": { "port": 443, "protocol": "tcp", "service": "https" },
+      "provenance": [
+        { "source_tool": "amass", "method": "active", "collected_at": "2026-07-22T09:02:45Z", "raw_record_ref": "line:230" }
+      ],
+      "priority": { "score": 6.0, "rank": 2, "signals": ["exposed_service"] }
+    },
+    {
+      "id": "email_address:security@example.com",
+      "type": "email_address",
+      "value": "security@example.com",
+      "attributes": {},
+      "provenance": [
+        { "source_tool": "theharvester", "source_module": "bing", "method": "passive", "collected_at": "2026-07-22T09:01:12Z", "raw_record_ref": "$.emails[3]" }
+      ]
+    }
+  ],
+  "edges": [
+    { "source_id": "subdomain:admin.example.com", "target_id": "domain:example.com", "relation": "subdomain_of" },
+    {
+      "source_id": "subdomain:admin.example.com",
+      "target_id": "ip_address:203.0.113.42",
+      "relation": "resolves_to",
+      "provenance": [
+        { "source_tool": "amass", "method": "active", "collected_at": "2026-07-22T09:02:41Z", "raw_record_ref": "line:212" }
+      ]
+    },
+    { "source_id": "ip_address:203.0.113.42", "target_id": "service:203.0.113.42:443", "relation": "exposes_service" }
+  ]
+}

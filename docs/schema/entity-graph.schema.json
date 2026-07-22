@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://glean-osint.dev/schema/entity-graph/0.1.0",
+  "title": "Glean Entity Graph",
+  "description": "The normalised, provenance-tracked output of a Glean scan. A single container holding deduplicated entities and the relationships between them. Every entity carries first-class provenance. Version 0.1.0 (v1 infra/domain scope).",
+  "type": "object",
+  "required": ["schema_version", "scan", "entities", "edges"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "0.1.0",
+      "description": "Version of this schema the document conforms to."
+    },
+    "scan": {
+      "$ref": "#/$defs/scanMeta"
+    },
+    "entities": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/entity" },
+      "description": "Deduplicated entities. One record per real-world entity, even if multiple tools reported it."
+    },
+    "edges": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/edge" },
+      "description": "Directed relationships between entities, keyed by entity id."
+    }
+  },
+  "$defs": {
+    "scanMeta": {
+      "type": "object",
+      "required": ["target", "started_at", "glean_version"],
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "type": "string",
+          "description": "The seed target of the scan (a root domain in v1)."
+        },
+        "authorisation": {
+          "type": "string",
+          "description": "Free-text note recording the basis on which this target was authorised for scanning."
+        },
+        "started_at": { "type": "string", "format": "date-time" },
+        "finished_at": { "type": "string", "format": "date-time" },
+        "glean_version": { "type": "string" },
+        "tools_run": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/toolRun" },
+          "description": "Which adapters/tools contributed to this scan, and how."
+        }
+      }
+    },
+    "toolRun": {
+      "type": "object",
+      "required": ["source_tool", "method"],
+      "additionalProperties": false,
+      "properties": {
+        "source_tool": { "type": "string", "description": "Canonical tool id, e.g. 'theharvester', 'amass', 'crtsh'." },
+        "tool_version": { "type": "string" },
+        "method": { "$ref": "#/$defs/method" },
+        "invoked_at": { "type": "string", "format": "date-time" },
+        "raw_output_ref": {
+          "type": "string",
+          "description": "Path/URI to the archived raw output for this tool run (reproducibility + provenance)."
+        }
+      }
+    },
+    "method": {
+      "type": "string",
+      "enum": ["passive", "active"],
+      "description": "Whether the data was collected passively (no packets to target) or actively (touches the target). Enforced separation per charter."
+    },
+    "entityType": {
+      "type": "string",
+      "enum": [
+        "domain",
+        "subdomain",
+        "ip_address",
+        "dns_record",
+        "email_address",
+        "breach_exposure",
+        "service",
+        "web_tech",
+        "certificate"
+      ],
+      "description": "The v1 infra/domain entity vocabulary. Extending this list is a schema version bump."
+    },
+    "provenanceEntry": {
+      "type": "object",
+      "required": ["source_tool", "method", "collected_at"],
+      "additionalProperties": false,
+      "description": "One assertion, by one tool, that this entity exists. An entity seen by N tools carries N provenance entries. This array is the substrate of the provenance-retention metric.",
+      "properties": {
+        "source_tool": { "type": "string" },
+        "source_module": {
+          "type": "string",
+          "description": "Optional sub-source within a tool (e.g. a specific theHarvester source, an Amass data source)."
+        },
+        "method": { "$ref": "#/$defs/method" },
+        "collected_at": { "type": "string", "format": "date-time" },
+        "raw_record_ref": {
+          "type": "string",
+          "description": "Pointer into the archived raw output (e.g. a line number, JSON path, or record id) so any surfaced claim is traceable to source bytes."
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Optional tool-reported or adapter-assigned confidence. Absent means unspecified, not zero."
+        }
+      }
+    },
+    "entity": {
+      "type": "object",
+      "required": ["id", "type", "value", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable deterministic identity key. Convention: '<type>:<canonical_value>'. Two tools reporting the same real-world entity MUST produce the same id after canonicalisation, so dedup is a key match.",
+          "pattern": "^[a-z_]+:.+$"
+        },
+        "type": { "$ref": "#/$defs/entityType" },
+        "value": {
+          "type": "string",
+          "description": "The canonical, normalised representation (lowercased host, compressed IPv6, lowercased email, etc.). Canonicalisation rules are defined in ADR-0001."
+        },
+        "attributes": {
+          "type": "object",
+          "description": "Type-specific fields. Kept open so each entity type can carry its own detail without a schema bump; documented per-type in ADR-0001.",
+          "additionalProperties": true
+        },
+        "provenance": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/provenanceEntry" },
+          "description": "At least one entry. Non-empty provenance is invariant: an entity with no source cannot exist in a Glean graph."
+        },
+        "first_seen": { "type": "string", "format": "date-time" },
+        "last_seen": { "type": "string", "format": "date-time" },
+        "priority": {
+          "$ref": "#/$defs/priority",
+          "description": "Deterministic prioritisation output. Computed in code (ADR-0004), never by the LLM. Optional until the scoring stage runs."
+        }
+      }
+    },
+    "priority": {
+      "type": "object",
+      "required": ["score", "rank"],
+      "additionalProperties": false,
+      "properties": {
+        "score": { "type": "number", "description": "Deterministic priority score from the ADR-0004 rubric." },
+        "rank": { "type": "integer", "minimum": 1, "description": "1-based position in the scan-wide priority ordering." },
+        "signals": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "The named signals that contributed to the score (e.g. 'exposed_service', 'breach_hit'), for explainability and eval."
+        }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "required": ["source_id", "target_id", "relation"],
+      "additionalProperties": false,
+      "description": "Directed relationship. source_id and target_id MUST reference entity ids present in the graph.",
+      "properties": {
+        "source_id": { "type": "string" },
+        "target_id": { "type": "string" },
+        "relation": {
+          "type": "string",
+          "enum": [
+            "subdomain_of",
+            "resolves_to",
+            "hosts",
+            "has_record",
+            "exposes_service",
+            "runs_tech",
+            "issued_for",
+            "exposed_in_breach"
+          ],
+          "description": "Relationship vocabulary for v1 infra scope."
+        },
+        "provenance": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/provenanceEntry" },
+          "description": "Optional provenance for the relationship itself (which tool asserted this edge)."
+        }
+      }
+    }
+  }
+}

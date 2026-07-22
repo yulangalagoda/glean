@@ -1,7 +1,42 @@
-.venv/
+# ── Glean .gitignore ───────────────────────────────────────────────
+# Principle: the repo is PUBLIC by default. Anything that must never be
+# published is excluded here, so exclusion is enforced by the repo, not
+# by remembering. See docs/DATA_HANDLING.md.
+
+# ── Never publish: private planning + third-party copyrighted material ──
+_private/                 # planning docs, research PDFs, anything not for the world
+
+# ── Never publish: real reconnaissance data ──
+# Raw tool output and scan results about real infrastructure are sensitive
+# even for domains you own. Commit only sanitised fixtures, deliberately.
+raw/
+scans/
+*.scan.json
+targets.txt
+targets.md
+**/live-*.json
+
+# ── Secrets / config ──
+.env
+*.key
+config/*.local.*
+**/secrets.*
+
+# ── Python (for when development starts) ──
 __pycache__/
-*.pyc
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
 dist/
 build/
-*.egg-info/
-.env
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# ── OS / editor noise ──
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
