@@ -1,0 +1,4 @@
+include README.md LICENSE
+prune docs
+prune _private
+exclude CHARTER.md
