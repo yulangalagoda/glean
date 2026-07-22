@@ -1,6 +1,6 @@
 # ADR-0002 — The Adapter Contract (v1)
 
-- **Status:** Proposed (v0 — for review)
+- **Status:** Proposed — pilot-tested 2026-07-22, one correction needed (see D3 note and `docs/PILOT_findings.md`); not yet Accepted
 - **Date:** 2026-07-22
 - **Scope:** Glean v1 — the interface every tool integration conforms to
 - **Depends on:** ADR-0001 (entity schema)
@@ -45,7 +45,7 @@ class Adapter(Protocol):
 
 - **Emit schema-valid entities only** (ADR-0001). Each entity: correct `type`, canonicalised `value`, id of the form `<type>:<canonical_value>`.
 - **Canonicalise before emitting** (ADR-0001 D3): lowercase hosts, compress IPv6, lowercase emails, etc. Canonicalisation is the *adapter's* job so identity is stable before dedup ever runs.
-- **Stamp exactly one provenance entry per assertion**, carrying this adapter's `tool_id`, its `method`, `collected_at` from the context, and a `raw_record_ref` pointing back into the archived raw output (line number, JSON path, record id — whatever locates the source bytes).
+- **Stamp exactly one provenance entry per assertion**, carrying this adapter's `tool_id`, its `method`, `collected_at` from the context, and a `raw_record_ref` pointing back into the archived raw output (line number, JSON path, record id — whatever locates the source bytes). **Pilot correction (2026-07-22):** not every tool supports this at record granularity. theHarvester's JSON output, when run with multiple `-b` sources, returns a single flat merged host list with no per-source or per-record attribution — there is no way to know which of `crtsh`/`otx`/`duckduckgo` found a given host. An adapter for a tool like this MUST degrade honestly: `source_module` becomes a combined-sources label (e.g. `"combined:crtsh,otx,duckduckgo"`) and `raw_record_ref` points at the coarsest locator the tool actually gives (e.g. array position in the output file), not a specific underlying engine. This is not a contract violation — it's the contract correctly reflecting a real tool limitation. Adapters must not invent finer-grained provenance than the tool actually supports.
 - **Declare method honestly.** If a tool has both passive and active modes, the adapter sets `method` per record, not globally.
 - **Be deterministic.** Same raw bytes → identical `ParseResult`. No randomness, no ordering dependence on dict iteration, no ambient time.
 

@@ -1,6 +1,6 @@
 # ADR-0005 — The One-Page Brief (report contract)
 
-- **Status:** Proposed (v0 — for review)
+- **Status:** Accepted (v0.1.0 frozen — format confirmed by pilot 2026-07-22; was blocked on ADR-0004's liveness-signal correction, now resolved, so the ranking a brief renders is trustworthy)
 - **Date:** 2026-07-22
 - **Scope:** Glean v1 — the human-facing output of `glean scan`
 - **Depends on:** ADR-0001 (entity schema), ADR-0004 (prioritisation)

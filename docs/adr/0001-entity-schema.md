@@ -1,6 +1,6 @@
 # ADR-0001 — Normalised Entity Schema (v1, infra/domain scope)
 
-- **Status:** Proposed (v0 — for review, then freeze as Accepted)
+- **Status:** Accepted (v0.1.0 frozen — validated against a real pilot target, see `docs/PILOT_findings.md`)
 - **Date:** 2026-07-22
 - **Scope:** Glean v1, infrastructure / domain reconnaissance only
 - **Machine-checkable schema:** [`docs/schema/entity-graph.schema.json`](../schema/entity-graph.schema.json)
@@ -40,7 +40,7 @@ The `id` and `value` are only stable if canonicalisation is fixed. For v1:
 - **Email addresses:** lowercase the whole address (v1 treats the local part case-insensitively for dedup — recorded as a known simplification).
 - **DNS records:** canonicalise the owning name as a host; record type uppercased (`A`, `MX`, `TXT`, …).
 - **Services:** `<ip>:<port>` with port as an integer attribute; protocol lowercased.
-- **Certificates:** identity keyed on the certificate fingerprint (SHA-256) when available, else on the serial + issuer.
+- **Certificates:** identity keyed on the certificate fingerprint (SHA-256) when available, else on the serial + issuer. **Validated against a real crt.sh pull (pilot, 604 rows): the crt.sh JSON API never returns a fingerprint field, only `issuer_name` + `serial_number`.** For any adapter built against crt.sh's summary JSON endpoint, serial+issuer is not a fallback — it is the only available identity. Wording changed from "fallback" to reflect this.
 
 Canonicalisation happens in the adapter/normalisation layer, never in the LLM.
 
@@ -84,12 +84,12 @@ The `scan` block records the target, an `authorisation` note (the basis on which
 - **Costs / accepted simplifications:** the merged-entity model is slightly more complex to write in adapters; email case-folding may over-merge in rare cases (recorded); `attributes` being open means per-type validation is convention + code, not pure schema. These are deliberate v1 trade-offs.
 - **What this locks:** ADR-0002 through ADR-0005 must conform to this. Any change to entity types, the id convention, or the provenance shape is a `schema_version` bump and a new ADR.
 
-## Open questions to resolve before freezing
+## Open questions (status after pilot)
 
-1. Confirm the entity-type enum is complete enough for the MVP toolset (Amass, theHarvester, crt.sh, BBOT, dnsx) — validated once real tool output is captured.
-2. Confirm `certificate` identity on fingerprint is available from crt.sh output in practice.
-3. Decide whether `breach_exposure` stays in v1 (needs a passive breach source with acceptable ToS) or defers.
+1. Entity-type enum completeness — confirmed sufficient for crt.sh and theHarvester output; Amass/BBOT/dnsx not yet pilot-tested.
+2. ~~Confirm `certificate` identity on fingerprint is available from crt.sh output in practice.~~ **Resolved: no, it is not available. Serial+issuer is the primary identity path for crt.sh, not a fallback.** See D3.
+3. Decide whether `breach_exposure` stays in v1 — still open, not exercised by this pilot (no breach source was queried).
 
-## Validation before freezing
+## Validation
 
-This schema is validated against real output from a lightweight tool such as theHarvester or crt.sh: each field of that output is mapped onto the schema to confirm nothing is lost. Once a representative tool maps cleanly, the status moves to **Accepted** and the schema freezes at v0.1.0.
+Validated 2026-07-22 against real crt.sh output (604 rows / 207 unique hostnames) for a domain the operator owns. Ten sample records — including a wildcard, a multi-name certificate, and a plain subdomain — all mapped cleanly onto `subdomain`/`domain`/`certificate` types with no schema gaps. Canonicalisation rules for mixed case, trailing dots, and punycode were not exercised by this dataset (no such records appeared) — they remain unvalidated, not confirmed. Full findings: `docs/PILOT_findings.md`.

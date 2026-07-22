@@ -1,6 +1,6 @@
 # ADR-0003 — Deterministic Correlation & Dedup (v1)
 
-- **Status:** Proposed (v0 — for review)
+- **Status:** Accepted — validated against real overlapping data 2026-07-22, see `docs/PILOT_findings.md`
 - **Date:** 2026-07-22
 - **Scope:** Glean v1 — how the pile of per-adapter entities collapses into one deduplicated graph
 - **Depends on:** ADR-0001 (schema, identity), ADR-0002 (adapters emit un-deduped, canonicalised entities)
@@ -86,3 +86,5 @@ Same `id` → one merged entity, provenance = [crtsh/passive, amass/active], `fi
 ## Validation
 
 Dedup is implemented as a pure function over a list of `ParseResult`s and tested by **shuffling adapter output order and asserting identical graphs**, plus a golden test on a two-tool overlap (the `admin.example.com` case). Implementing it alongside the first adapters makes the before/after metric available from the first multi-tool scan.
+
+**Pilot confirmation (2026-07-22):** hand-merged a real two-source overlap (a host reported by both crt.sh directly and by theHarvester, which itself queries crt.sh among other sources). Both produced the same canonical `id`, grouped correctly, provenance union worked as designed. Measured on the overlapping subset: `entities_before = 4, entities_after = 2, duplicate_rate = 50%` — plausible and non-degenerate. D1–D2 confirmed against real data.

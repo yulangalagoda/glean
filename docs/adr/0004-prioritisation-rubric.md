@@ -1,6 +1,6 @@
 # ADR-0004 — Deterministic Prioritisation Rubric (v1)
 
-- **Status:** Proposed (v0 — for review)
+- **Status:** Accepted (v0.1.0 frozen — pilot-tested and corrected 2026-07-22, re-validated against real data, see D2 and `docs/PILOT_findings.md`)
 - **Date:** 2026-07-22
 - **Scope:** Glean v1 — how each entity gets `priority.score`, `priority.rank`, `priority.signals`
 - **Depends on:** ADR-0001 (entity schema)
@@ -45,8 +45,15 @@ Weights are small integers for legibility. Positive signals raise priority; nega
 | `active_only_finding` | entity seen *only* via active collection (weaker passive footprint) | +1 | any |
 | `wildcard_or_default` | wildcard DNS / placeholder / parked indicator | −1 | subdomain |
 | `passive_low_signal` | root domain / published contact with no other signal | −1 | domain, email_address |
+| `stale_no_dns` | a DNS-resolution adapter (`dnsx` or equivalent) **ran and positively confirmed** no current A/AAAA/CNAME record for the hostname | −3 | subdomain, domain |
 
 The hostname keyword list and port list live in a versioned config file (`config/priority-signals.v1.yaml`), not hard-coded, so they're auditable and tunable without touching logic. Editing them is a rubric version bump.
+
+**`stale_no_dns` firing rule (important, not optional detail):** this signal fires only on *positive evidence* of non-resolution from a DNS-resolution tool run in this scan. It must never fire merely because no DNS-resolution adapter was part of the toolset for a given scan — absence of a check is not evidence of staleness, and treating it as such would silently and incorrectly zero out every entity whenever `dnsx` (or equivalent) isn't run. This makes a DNS-resolution adapter effectively non-optional for the MVP toolset: without one, this signal is inert (never fires, never penalises), which is a safe default, not a broken one.
+
+**Pilot correction (2026-07-22) — resolved.** Hand-scoring real entities from a passive-only pilot (crt.sh + theHarvester, no DNS-resolution tool run) originally exposed a gap: `sensitive_hostname_pattern` fired purely on hostname text, with nothing checking whether the entity was currently live. A dead, years-old, spam-era certificate for an admin-sounding subdomain scored *higher* than genuinely live, multi-tool-corroborated infrastructure — reproducing, inside Glean's own rubric, exactly the "noise mistaken for signal" failure the charter opens with. Fixed by adding `stale_no_dns` above (weight −3, chosen to exactly offset `sensitive_hostname_pattern`'s +3 so a dead pattern-matching host nets to 0 and falls out of the ranked brief per D5, rather than needing to be zeroed by a special case).
+
+**Re-validated against the same real data:** a real dead, admin-pattern-matching historical finding now scores `+3 −3 = 0` (falls to "also found," per D5). A real live, two-tool-corroborated host now scores `+1` (`multi_tool_corroboration`, `stale_no_dns` does not fire since it resolves) and correctly outranks the dead entry. Gut-check passes.
 
 ### D3 — Normalisation to a 0–10 scale
 
@@ -98,7 +105,10 @@ Keeping the rubric simple is deliberate: a complex rubric that happens to match 
 2. Final hostname keyword and sensitive-port lists — draft now, but confirm against real scan output.
 3. Do we expose `priority.score` to the reader (ADR-0005 Q3) or only `rank` + signals?
 4. Should `multi_tool_corroboration` weight scale with the *number* of tools, or stay flat? (Leaning flat for v1.)
+5. ~~Exact weight/sign for the new liveness signal — zero out entirely, or just penalise?~~ **Resolved:** penalised (`stale_no_dns`, −3), not a hard zero — sized to offset `sensitive_hostname_pattern` exactly, so a dead-but-named entity nets to 0 rather than being force-excluded by a special case. A stale finding with other independent signals (e.g. a `breach_hit`) can still surface.
 
 ## Validation
 
-The weight table is frozen into `config/priority-signals.v1.yaml`, then applied to one real target scored by hand, to confirm the ordering it produces is reasonable before any code computes it.
+The weight table is frozen into `config/priority-signals.v1.yaml` once implementation begins (not yet created — pre-code phase), then applied to one real target scored by hand, to confirm the ordering it produces is reasonable before any code computes it.
+
+**Pilot result (2026-07-22):** hand-scored against a real target. Gut-check initially **failed** (see the resolved D2 correction note above), **fix designed and re-validated against the same real data same day — now passes.** Status: `Accepted`.
