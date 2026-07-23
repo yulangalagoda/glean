@@ -1,6 +1,6 @@
 # ADR-0001 — Normalised Entity Schema (v1, infra/domain scope)
 
-- **Status:** Accepted (v0.1.0 frozen — validated against a real pilot target, see `docs/PILOT_findings.md`)
+- **Status:** Accepted (v0.1.0 frozen 2026-07-22, validated against a real pilot target, see `docs/PILOT_findings.md`; wildcard entity representation resolved 2026-07-23, see D3/D4)
 - **Date:** 2026-07-22
 - **Scope:** Glean v1, infrastructure / domain reconnaissance only
 - **Machine-checkable schema:** [`docs/schema/entity-graph.schema.json`](../schema/entity-graph.schema.json)
@@ -36,6 +36,7 @@ Every entity has an `id` of the form `<type>:<canonical_value>` (e.g. `subdomain
 The `id` and `value` are only stable if canonicalisation is fixed. For v1:
 
 - **Domains / subdomains:** lowercase; strip a trailing dot; IDNA/punycode-normalise internationalised names; no scheme, no port, no path.
+- **Wildcards:** a literal `*.example.com` — seen as a certificate SAN or as a DNS record owner name — canonicalises to its own `subdomain` entity (`subdomain:*.example.com`), not a special type. **Resolved 2026-07-23** (previously an open question, D4 below has the full rule): the leading `*.` is kept verbatim in `value`/`id` rather than stripped, because it is not the same fact as the bare apex — a wildcard is a distinct, structurally real thing that was observed (a pattern-match capability), and collapsing it into the apex entity would lose that.
 - **IP addresses:** validated; IPv6 compressed to its canonical short form; no zone suffix.
 - **Email addresses:** lowercase the whole address (v1 treats the local part case-insensitively for dedup — recorded as a known simplification).
 - **DNS records:** canonicalise the owning name as a host; record type uppercased (`A`, `MX`, `TXT`, …).
@@ -51,7 +52,7 @@ The top-level entity object is `additionalProperties: false` (a stable, validate
 | Type | Typical attributes |
 |------|--------------------|
 | `domain` | registrar, creation/expiry dates |
-| `subdomain` | (mostly relationships; wildcard flag if detected) |
+| `subdomain` | (mostly relationships); `wildcard` (bool, set when D3's wildcard rule applies); `wildcard_confirmed_active` (bool, see note below) |
 | `ip_address` | asn, network/CIDR, geo (coarse), ptr |
 | `dns_record` | record_type, ttl, rdata |
 | `email_address` | (source context only) |
@@ -61,6 +62,8 @@ The top-level entity object is `additionalProperties: false` (a stable, validate
 | `certificate` | fingerprint_sha256, issuer, subject, not_before, not_after, san[] |
 
 Adding a **new entity type** to the enum is a schema version bump; adding a new *attribute* is not.
+
+**Wildcard entities are not literally resolvable, and evidence of one is not evidence it is still active (resolved 2026-07-23).** `*.example.com` is a pattern-match capability, not an addressable host — no adapter or downstream signal may treat a literal DNS lookup of the string `*.example.com` as meaningful (some resolvers will even answer it due to wildcard matching, which makes this an explicit rule, not a safe assumption). The only way to confirm a wildcard is *currently* active is to resolve an arbitrary, non-predefined probe subdomain and see whether it answers — a structurally different check from resolving a literal name. `wildcard_confirmed_active` is set only by positive evidence from that kind of probe; it is absent (not `false`) when no such probe ran, matching the same "absence of a check is not evidence" discipline ADR-0004's `stale_no_dns` already established. This distinction matters because certificate evidence of a wildcard SAN is permanent (once logged, it never leaves CT logs) while the underlying DNS wildcard record is not — the two can and do diverge in practice, confirmed directly against real infrastructure this session, where a wildcard certificate remained visible in CT logs after the corresponding DNS wildcard record had been deliberately removed.
 
 ### D5 — Relationships as first-class edges
 
@@ -89,6 +92,7 @@ The `scan` block records the target, an `authorisation` note (the basis on which
 1. Entity-type enum completeness — confirmed sufficient for crt.sh and theHarvester output; Amass/BBOT/dnsx not yet pilot-tested.
 2. ~~Confirm `certificate` identity on fingerprint is available from crt.sh output in practice.~~ **Resolved: no, it is not available. Serial+issuer is the primary identity path for crt.sh, not a fallback.** See D3.
 3. Decide whether `breach_exposure` stays in v1 — still open, not exercised by this pilot (no breach source was queried).
+4. ~~How is `*.example.com` represented — its own entity, or just a SAN annotation on the certificate?~~ **Resolved 2026-07-23:** its own `subdomain` entity, `wildcard` attribute set true, `id`/`value` keep the literal `*.` prefix rather than collapsing into the apex. See D3/D4.
 
 ## Validation
 

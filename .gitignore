@@ -4,7 +4,8 @@
 # by remembering. See docs/DATA_HANDLING.md.
 
 # ── Never publish: private planning + third-party copyrighted material ──
-_private/                 # planning docs, research PDFs, anything not for the world
+# planning docs, research PDFs, anything not for the world
+_private/
 
 # ── Never publish: real reconnaissance data ──
 # Raw tool output and scan results about real infrastructure are sensitive
