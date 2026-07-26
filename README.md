@@ -6,13 +6,29 @@ Existing OSINT automation excels at *collection* but fails at *judgment*: result
 
 > Status: early development. Package name reserved on PyPI as [`glean-osint`](https://pypi.org/project/glean-osint/).
 
-## Planned pipeline
+## Pipeline
 
 1. **Collect** — run a curated set of maintained FOSS OSINT tools against a target.
 2. **Normalise** — merge findings into one provenance-tracked entity schema.
 3. **Correlate** — deterministic dedup and entity-linking (in code, not the LLM).
-4. **Synthesise** — a local LLM (via Ollama) produces a prioritised intelligence brief.
-5. **Report** — one readable output; CLI first, GUI later.
+4. **Synthesise** — a prioritised intelligence brief. Currently template-based;
+   local-LLM narration (via Ollama) is planned but not wired in yet.
+5. **Report** — one readable Markdown output; CLI first, GUI later.
+
+## Quickstart
+
+```
+pip install -e ".[dev]"
+glean scan example.com \
+  --crtsh path/to/crtsh-output.json \
+  --theharvester path/to/theharvester-output.json
+```
+
+`glean scan` is ingest-only for now: it builds the brief from crt.sh /
+theHarvester JSON output you've already fetched yourself (e.g. `curl
+"https://crt.sh/?q=%25.example.com&output=json"` and `theHarvester -d
+example.com -b crtsh,otx,duckduckgo -f out`); live invocation isn't built
+yet.
 
 ## Scope & ethics
 

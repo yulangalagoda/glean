@@ -71,13 +71,23 @@ point is a real release, just pre-dev groundwork.
   `GroundTruth` is a plain in-memory structure; ADR-0007's ground-truth
   file schema is still an open question there, so no loader/format is
   invented here.
+- The `glean` CLI entrypoint (`glean_osint.cli`, roadmap Workstream E1),
+  built on Typer: `glean scan <domain> --crtsh FILE --theharvester FILE`
+  runs the full pipeline end to end and renders a brief to stdout or
+  `--out`. Deliberately ingest-only — live invocation (fetching crt.sh,
+  running theHarvester) isn't built yet; ADR-0002's own open questions
+  flag "the runner" (invocation, timeouts, retries) as needing its own
+  design pass, not something to improvise here. `scan` is kept as an
+  explicit subcommand rather than a bare `glean <domain>` specifically so
+  it doesn't collide with the `glean eval` entrypoint the roadmap already
+  plans (Workstream E4) — this required an explicit no-op `@app.callback`
+  since Typer silently collapses a single-command app to bare-argument
+  invocation otherwise.
 
 ### Notes
 - Development has started (`crtsh`, `theharvester` adapters, dedup,
-  scoring, brief, evaluation). All seven ADRs now have real code, except
-  the LLM synthesis step itself (no Ollama wiring yet) and its dependent
-  faithfulness stage 2. Remaining pre-dev gate item: the eval target list
-  is at 6/10 (`_private/planning/ROADMAP_Pre-Development.md` Workstream
-  D3). Next up: either expand the target list, or start on the CLI /
-  Ollama synthesis step that would make the full charter MVP (`glean scan
-  <domain>`) real.
+  scoring, brief, evaluation, CLI). All seven ADRs now have real code,
+  except the LLM synthesis step itself (no Ollama wiring yet) and its
+  dependent faithfulness stage 2 — the brief's narration is template-based
+  until that exists. Remaining pre-dev gate item: the eval target list is
+  at 6/10 (`_private/planning/ROADMAP_Pre-Development.md` Workstream D3).

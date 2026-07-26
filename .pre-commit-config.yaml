@@ -17,5 +17,11 @@ repos:
     rev: v2.3.0
     hooks:
       - id: mypy
-        additional_dependencies: ["types-PyYAML>=6.0"]
+        # This hook runs in its own isolated env, separate from the project
+        # .venv — every runtime dependency mypy needs to resolve types for
+        # (plus its stub package, if the library isn't inline-typed) must be
+        # listed explicitly here, matching pyproject.toml's [project]
+        # dependencies. Forgetting one here (not pyproject.toml) is exactly
+        # what caused the pyyaml and typer hook-only failures.
+        additional_dependencies: ["pyyaml>=6.0", "types-PyYAML>=6.0", "typer==0.27.0"]
         files: ^src/

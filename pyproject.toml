@@ -9,7 +9,11 @@ authors = [{ name = "Yulan Galagoda" }]
 keywords = ["osint", "reconnaissance", "threat-intelligence", "security"]
 dependencies = [
     "pyyaml>=6.0",
+    "typer>=0.12",
 ]
+
+[project.scripts]
+glean = "glean_osint.cli:main"
 
 [project.optional-dependencies]
 dev = [
