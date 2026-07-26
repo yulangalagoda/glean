@@ -1,0 +1,163 @@
+{
+  "skipped": 3,
+  "entities": [
+    {
+      "id": "domain:example.com",
+      "type": "domain",
+      "value": "example.com",
+      "attributes": {
+        "dns_resolved": true
+      },
+      "provenance": [
+        {
+          "source_tool": "dnsx",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "$.candidates[0]"
+        }
+      ]
+    },
+    {
+      "id": "ip_address:203.0.113.1",
+      "type": "ip_address",
+      "value": "203.0.113.1",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "dnsx",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "$.resolved[host=example.com].a"
+        }
+      ]
+    },
+    {
+      "id": "subdomain:www.example.com",
+      "type": "subdomain",
+      "value": "www.example.com",
+      "attributes": {
+        "dns_resolved": true
+      },
+      "provenance": [
+        {
+          "source_tool": "dnsx",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "$.candidates[1]"
+        }
+      ]
+    },
+    {
+      "id": "ip_address:203.0.113.1",
+      "type": "ip_address",
+      "value": "203.0.113.1",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "dnsx",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "$.resolved[host=www.example.com].a"
+        }
+      ]
+    },
+    {
+      "id": "subdomain:www.example.com",
+      "type": "subdomain",
+      "value": "www.example.com",
+      "attributes": {
+        "dns_resolved": true
+      },
+      "provenance": [
+        {
+          "source_tool": "dnsx",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "$.candidates[2]"
+        }
+      ]
+    },
+    {
+      "id": "ip_address:203.0.113.1",
+      "type": "ip_address",
+      "value": "203.0.113.1",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "dnsx",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "$.resolved[host=www.example.com].a"
+        }
+      ]
+    },
+    {
+      "id": "subdomain:admin.example.com",
+      "type": "subdomain",
+      "value": "admin.example.com",
+      "attributes": {
+        "dns_resolved": true
+      },
+      "provenance": [
+        {
+          "source_tool": "dnsx",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "$.candidates[3]"
+        }
+      ]
+    },
+    {
+      "id": "ip_address:203.0.113.2",
+      "type": "ip_address",
+      "value": "203.0.113.2",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "dnsx",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "$.resolved[host=admin.example.com].a"
+        }
+      ]
+    },
+    {
+      "id": "subdomain:dead.example.com",
+      "type": "subdomain",
+      "value": "dead.example.com",
+      "attributes": {
+        "dns_resolved": false
+      },
+      "provenance": [
+        {
+          "source_tool": "dnsx",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "$.candidates[4]"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "source_id": "domain:example.com",
+      "target_id": "ip_address:203.0.113.1",
+      "relation": "resolves_to"
+    },
+    {
+      "source_id": "subdomain:www.example.com",
+      "target_id": "ip_address:203.0.113.1",
+      "relation": "resolves_to"
+    },
+    {
+      "source_id": "subdomain:www.example.com",
+      "target_id": "ip_address:203.0.113.1",
+      "relation": "resolves_to"
+    },
+    {
+      "source_id": "subdomain:admin.example.com",
+      "target_id": "ip_address:203.0.113.2",
+      "relation": "resolves_to"
+    }
+  ]
+}

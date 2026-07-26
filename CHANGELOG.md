@@ -71,6 +71,17 @@ point is a real release, just pre-dev groundwork.
   `GroundTruth` is a plain in-memory structure; ADR-0007's ground-truth
   file schema is still an open question there, so no loader/format is
   invented here.
+- Third adapter, `DnsxAdapter` (ADR-0002), feeding ADR-0004's `stale_no_dns`
+  liveness signal. dnsx's own output only shows hosts that resolved, so a
+  bare-stdout raw input can't distinguish "never checked" from "checked,
+  dead" — the adapter's raw input is instead the paired
+  `{"candidates": [...], "resolved": [...]}` envelope this project's own
+  capture convention already produces
+  (`_private/scripts/run_dnsx_liveness.sh`); a candidate absent from
+  `resolved` is the only case where `dns_resolved: false` is set (positive
+  confirmation, never absence-as-evidence). Wildcard-prefixed candidates
+  (`*.example.com`) are excluded entirely per ADR-0001 D4, not asserted
+  true or false.
 - The `glean` CLI entrypoint (`glean_osint.cli`, roadmap Workstream E1),
   built on Typer: `glean scan <domain> --crtsh FILE --theharvester FILE`
   runs the full pipeline end to end and renders a brief to stdout or
@@ -85,7 +96,7 @@ point is a real release, just pre-dev groundwork.
   invocation otherwise.
 
 ### Notes
-- Development has started (`crtsh`, `theharvester` adapters, dedup,
+- Development has started (`crtsh`, `theharvester`, `dnsx` adapters, dedup,
   scoring, brief, evaluation, CLI). All seven ADRs now have real code,
   except the LLM synthesis step itself (no Ollama wiring yet) and its
   dependent faithfulness stage 2 — the brief's narration is template-based
