@@ -33,8 +33,15 @@ point is a real release, just pre-dev groundwork.
   degradation rule (ADR-0002 D3): with no per-source attribution
   available, provenance degrades to a combined-sources label parsed from
   the tool's own invocation, never an invented specific source.
+- Deterministic correlation & dedup (`glean_osint.dedup`, ADR-0003):
+  exact-id merge, provenance union, attribute-conflict resolution
+  (confidence, then active-over-passive, then lexicographic, with losers
+  recorded under `_conflicts`), edge dedup, and the before/after
+  duplicate-rate MVP gate. A shuffle test caught a real non-determinism
+  bug (provenance union order depended on adapter run order); fixed by
+  sorting provenance into a canonical order before returning.
 
 ### Notes
-- Development has started (`crtsh`, `theharvester` adapters). Remaining
-  pre-dev gate item: the eval target list is at 6/10
+- Development has started (`crtsh`, `theharvester` adapters, dedup stage).
+  Remaining pre-dev gate item: the eval target list is at 6/10
   (`_private/planning/ROADMAP_Pre-Development.md` Workstream D3).
