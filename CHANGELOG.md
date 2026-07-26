@@ -59,11 +59,25 @@ point is a real release, just pre-dev groundwork.
   the skeleton, per the ADR's own framing. `ScanMeta`/`ToolRun` added to
   the schema module to complete ADR-0001 D8's scan-metadata block. First
   full pipeline integration test (adapters → dedup → scoring → brief).
+- The evaluation harness (`glean_osint.evaluation`, ADR-0006/0007): D1
+  stage 1 faithfulness (structural entity-id check — stage 2's LLM-judge
+  atomic-claim check is out of scope until a synthesis step exists), D3
+  provenance retention, and D2 prioritisation quality (`overlap@N` Jaccard
+  and a documented `nDCG@N` graded-relevance convention, since the ADR
+  specifies the metric but not a relevance-grading scheme). `overlap@N` is
+  validated against the exact real number from the first ADR-0006/0007
+  pilot pass on `yulan.me` (0.5) — the only one of the three that's an
+  unambiguous formula with no convention choice to reverse-engineer.
+  `GroundTruth` is a plain in-memory structure; ADR-0007's ground-truth
+  file schema is still an open question there, so no loader/format is
+  invented here.
 
 ### Notes
-- Development has started (`crtsh`, `theharvester` adapters, dedup, scoring,
-  brief). All five core ADRs (0001–0005) now have real code. Remaining
-  pre-dev gate item: the eval target list is at 6/10
-  (`_private/planning/ROADMAP_Pre-Development.md` Workstream D3). Next up:
-  ADR-0006/0007 (the evaluation harness) is what actually measures this
-  pipeline against the real ground-truth data already captured.
+- Development has started (`crtsh`, `theharvester` adapters, dedup,
+  scoring, brief, evaluation). All seven ADRs now have real code, except
+  the LLM synthesis step itself (no Ollama wiring yet) and its dependent
+  faithfulness stage 2. Remaining pre-dev gate item: the eval target list
+  is at 6/10 (`_private/planning/ROADMAP_Pre-Development.md` Workstream
+  D3). Next up: either expand the target list, or start on the CLI /
+  Ollama synthesis step that would make the full charter MVP (`glean scan
+  <domain>`) real.
