@@ -1,0 +1,213 @@
+{
+  "skipped": 1,
+  "entities": [
+    {
+      "id": "certificate:03a1f2b3c4d5e6|c=us, o=let's encrypt, cn=r11",
+      "type": "certificate",
+      "value": "03a1f2b3c4d5e6|c=us, o=let's encrypt, cn=r11",
+      "attributes": {
+        "issuer": "C=US, O=Let's Encrypt, CN=R11",
+        "subject": "example.com",
+        "not_before": "2026-06-01T07:00:00",
+        "not_after": "2026-08-30T08:00:00",
+        "san": [
+          "example.com",
+          "www.example.com"
+        ]
+      },
+      "provenance": [
+        {
+          "source_tool": "crtsh",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "$[0]"
+        }
+      ]
+    },
+    {
+      "id": "domain:example.com",
+      "type": "domain",
+      "value": "example.com",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "crtsh",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "$[0].name_value"
+        }
+      ]
+    },
+    {
+      "id": "subdomain:www.example.com",
+      "type": "subdomain",
+      "value": "www.example.com",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "crtsh",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "$[0].name_value"
+        }
+      ]
+    },
+    {
+      "id": "certificate:17bb88cc99dd00|c=us, o=let's encrypt, cn=r11",
+      "type": "certificate",
+      "value": "17bb88cc99dd00|c=us, o=let's encrypt, cn=r11",
+      "attributes": {
+        "issuer": "C=US, O=Let's Encrypt, CN=R11",
+        "subject": "admin.example.com",
+        "not_before": "2026-06-15T07:00:00",
+        "not_after": "2026-09-13T08:00:00",
+        "san": [
+          "admin.example.com"
+        ]
+      },
+      "provenance": [
+        {
+          "source_tool": "crtsh",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "$[1]"
+        }
+      ]
+    },
+    {
+      "id": "subdomain:admin.example.com",
+      "type": "subdomain",
+      "value": "admin.example.com",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "crtsh",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "$[1].name_value"
+        }
+      ]
+    },
+    {
+      "id": "certificate:2effaa11bb22cc|c=us, o=let's encrypt, cn=r11",
+      "type": "certificate",
+      "value": "2effaa11bb22cc|c=us, o=let's encrypt, cn=r11",
+      "attributes": {
+        "issuer": "C=US, O=Let's Encrypt, CN=R11",
+        "subject": "*.example.com",
+        "not_before": "2026-05-01T07:00:00",
+        "not_after": "2026-07-30T08:00:00",
+        "san": [
+          "*.example.com"
+        ]
+      },
+      "provenance": [
+        {
+          "source_tool": "crtsh",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "$[2]"
+        }
+      ]
+    },
+    {
+      "id": "subdomain:*.example.com",
+      "type": "subdomain",
+      "value": "*.example.com",
+      "attributes": {
+        "wildcard": true
+      },
+      "provenance": [
+        {
+          "source_tool": "crtsh",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "$[2].name_value"
+        }
+      ]
+    },
+    {
+      "id": "certificate:9900aabbccdd11|c=us, o=let's encrypt, cn=r11",
+      "type": "certificate",
+      "value": "9900aabbccdd11|c=us, o=let's encrypt, cn=r11",
+      "attributes": {
+        "issuer": "C=US, O=Let's Encrypt, CN=R11",
+        "subject": "ADMIN.EXAMPLE.COM.",
+        "not_before": "2026-07-01T07:00:00",
+        "not_after": "2026-09-29T08:00:00",
+        "san": [
+          "admin.example.com"
+        ]
+      },
+      "provenance": [
+        {
+          "source_tool": "crtsh",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "$[3]"
+        }
+      ]
+    },
+    {
+      "id": "subdomain:admin.example.com",
+      "type": "subdomain",
+      "value": "admin.example.com",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "crtsh",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "$[3].name_value"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "source_id": "certificate:03a1f2b3c4d5e6|c=us, o=let's encrypt, cn=r11",
+      "target_id": "domain:example.com",
+      "relation": "issued_for"
+    },
+    {
+      "source_id": "certificate:03a1f2b3c4d5e6|c=us, o=let's encrypt, cn=r11",
+      "target_id": "subdomain:www.example.com",
+      "relation": "issued_for"
+    },
+    {
+      "source_id": "subdomain:www.example.com",
+      "target_id": "domain:example.com",
+      "relation": "subdomain_of"
+    },
+    {
+      "source_id": "certificate:17bb88cc99dd00|c=us, o=let's encrypt, cn=r11",
+      "target_id": "subdomain:admin.example.com",
+      "relation": "issued_for"
+    },
+    {
+      "source_id": "subdomain:admin.example.com",
+      "target_id": "domain:example.com",
+      "relation": "subdomain_of"
+    },
+    {
+      "source_id": "certificate:2effaa11bb22cc|c=us, o=let's encrypt, cn=r11",
+      "target_id": "subdomain:*.example.com",
+      "relation": "issued_for"
+    },
+    {
+      "source_id": "subdomain:*.example.com",
+      "target_id": "domain:example.com",
+      "relation": "subdomain_of"
+    },
+    {
+      "source_id": "certificate:9900aabbccdd11|c=us, o=let's encrypt, cn=r11",
+      "target_id": "subdomain:admin.example.com",
+      "relation": "issued_for"
+    },
+    {
+      "source_id": "subdomain:admin.example.com",
+      "target_id": "domain:example.com",
+      "relation": "subdomain_of"
+    }
+  ]
+}

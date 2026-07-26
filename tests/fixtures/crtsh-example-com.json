@@ -1,0 +1,55 @@
+[
+  {
+    "issuer_ca_id": 190518,
+    "issuer_name": "C=US, O=Let's Encrypt, CN=R11",
+    "common_name": "example.com",
+    "name_value": "example.com\nwww.example.com",
+    "id": 7000000001,
+    "entry_timestamp": "2026-06-01T08:00:00",
+    "not_before": "2026-06-01T07:00:00",
+    "not_after": "2026-08-30T08:00:00",
+    "serial_number": "03a1f2b3c4d5e6",
+    "result_count": 1
+  },
+  {
+    "issuer_ca_id": 190518,
+    "issuer_name": "C=US, O=Let's Encrypt, CN=R11",
+    "common_name": "admin.example.com",
+    "name_value": "admin.example.com",
+    "id": 7000000002,
+    "entry_timestamp": "2026-06-15T08:00:00",
+    "not_before": "2026-06-15T07:00:00",
+    "not_after": "2026-09-13T08:00:00",
+    "serial_number": "17bb88cc99dd00",
+    "result_count": 1
+  },
+  {
+    "issuer_ca_id": 190518,
+    "issuer_name": "C=US, O=Let's Encrypt, CN=R11",
+    "common_name": "*.example.com",
+    "name_value": "*.example.com",
+    "id": 7000000003,
+    "entry_timestamp": "2026-05-01T08:00:00",
+    "not_before": "2026-05-01T07:00:00",
+    "not_after": "2026-07-30T08:00:00",
+    "serial_number": "2effaa11bb22cc",
+    "result_count": 1
+  },
+  {
+    "issuer_ca_id": 190518,
+    "issuer_name": "C=US, O=Let's Encrypt, CN=R11",
+    "common_name": "ADMIN.EXAMPLE.COM.",
+    "name_value": "ADMIN.EXAMPLE.COM.",
+    "id": 7000000004,
+    "entry_timestamp": "2026-07-01T08:00:00",
+    "not_before": "2026-07-01T07:00:00",
+    "not_after": "2026-09-29T08:00:00",
+    "serial_number": "9900aabbccdd11",
+    "result_count": 1
+  },
+  {
+    "issuer_ca_id": 190518,
+    "issuer_name": "C=US, O=Let's Encrypt, CN=R11",
+    "common_name": "broken.example.com"
+  }
+]

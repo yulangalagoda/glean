@@ -23,8 +23,14 @@ point is a real release, just pre-dev groundwork.
   pre-commit hooks, and CI (`ci.yml`) running all three on push/PR.
 - Packaging guard CI job (`package-guard.yml`) asserting docs/`_private`
   never ship in the built wheel.
+- First real code: the normalised entity-graph model (`glean_osint.schema`,
+  ADR-0001), the shared canonicalisation helpers (`glean_osint.normalise`,
+  ADR-0001 D3), the adapter contract (`glean_osint.adapters.base`,
+  ADR-0002 D2), and the first adapter, `CrtshAdapter`, with a golden
+  fixture test validating its output against the machine-checkable
+  entity-graph schema.
 
 ### Notes
-- No feature code exists yet beyond the package skeleton
-  (`src/glean_osint/__init__.py`). Everything above is pre-development
-  groundwork per `_private/planning/ROADMAP_Pre-Development.md`.
+- Development has started (first adapter, `crtsh`). Remaining pre-dev
+  gate item: the eval target list is at 6/10
+  (`_private/planning/ROADMAP_Pre-Development.md` Workstream D3).
