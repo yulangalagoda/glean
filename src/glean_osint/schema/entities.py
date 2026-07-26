@@ -136,3 +136,50 @@ class Edge:
         if self.provenance:
             d["provenance"] = [p.to_dict() for p in self.provenance]
         return d
+
+
+@dataclass(frozen=True, slots=True)
+class ToolRun:
+    """Which adapter contributed to a scan, and how (ADR-0001 D8)."""
+
+    source_tool: str
+    method: Method
+    tool_version: str | None = None
+    invoked_at: str | None = None
+    raw_output_ref: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {"source_tool": self.source_tool, "method": self.method}
+        if self.tool_version is not None:
+            d["tool_version"] = self.tool_version
+        if self.invoked_at is not None:
+            d["invoked_at"] = self.invoked_at
+        if self.raw_output_ref is not None:
+            d["raw_output_ref"] = self.raw_output_ref
+        return d
+
+
+@dataclass(frozen=True, slots=True)
+class ScanMeta:
+    """The reproducibility + audit header for a scan document (ADR-0001 D8)."""
+
+    target: str
+    started_at: str
+    glean_version: str
+    authorisation: str | None = None
+    finished_at: str | None = None
+    tools_run: tuple[ToolRun, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {
+            "target": self.target,
+            "started_at": self.started_at,
+            "glean_version": self.glean_version,
+        }
+        if self.authorisation is not None:
+            d["authorisation"] = self.authorisation
+        if self.finished_at is not None:
+            d["finished_at"] = self.finished_at
+        if self.tools_run:
+            d["tools_run"] = [t.to_dict() for t in self.tools_run]
+        return d

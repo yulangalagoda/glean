@@ -1,6 +1,11 @@
 repos:
+  # Pinned to the exact version pyproject.toml's dev extra installs (ruff,
+  # mypy) — a version drift between this isolated hook environment and the
+  # project .venv/CI has already caused a real, confusing hook-only failure
+  # once (mypy) and a latent one (ruff, unnoticed only by luck). Bump both
+  # together, deliberately, not independently.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+    rev: v0.16.0
     hooks:
       - id: ruff
         args: [--fix]
@@ -9,7 +14,7 @@ repos:
         files: ^(src|tests)/
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.11.2
+    rev: v2.3.0
     hooks:
       - id: mypy
         additional_dependencies: ["types-PyYAML>=6.0"]

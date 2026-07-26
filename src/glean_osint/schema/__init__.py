@@ -7,6 +7,8 @@ from glean_osint.schema.entities import (
     Priority,
     ProvenanceEntry,
     Relation,
+    ScanMeta,
+    ToolRun,
     entity_id,
 )
 
@@ -19,5 +21,7 @@ __all__ = [
     "Priority",
     "ProvenanceEntry",
     "Relation",
+    "ScanMeta",
+    "ToolRun",
     "entity_id",
 ]

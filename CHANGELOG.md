@@ -48,8 +48,22 @@ point is a real release, just pre-dev groundwork.
   (`pyyaml`, for the config file). Includes three regression tests that
   reproduce the exact real bugs the ADR's pilot corrections describe, so
   they can't silently reappear.
+- The brief contract (`glean_osint.brief`, ADR-0005): `build_brief` /
+  `render_markdown` produce the fixed header/top-priorities/also-found/
+  provenance-footer skeleton from a scored graph, plus `check_brief_contract`
+  — a structural validator for the ADR's own checklist (ordering, provenance
+  lines, faithfulness, footer counts) that doubles as the seed of ADR-0006's
+  stage-1 deterministic pre-check. Since no LLM is wired in yet, narration
+  (headline/body/"why ranked here") is a deterministic template, not a
+  model call — swapping in a real LLM later only touches the prose, never
+  the skeleton, per the ADR's own framing. `ScanMeta`/`ToolRun` added to
+  the schema module to complete ADR-0001 D8's scan-metadata block. First
+  full pipeline integration test (adapters → dedup → scoring → brief).
 
 ### Notes
-- Development has started (`crtsh`, `theharvester` adapters, dedup, scoring).
-  Remaining pre-dev gate item: the eval target list is at 6/10
-  (`_private/planning/ROADMAP_Pre-Development.md` Workstream D3).
+- Development has started (`crtsh`, `theharvester` adapters, dedup, scoring,
+  brief). All five core ADRs (0001–0005) now have real code. Remaining
+  pre-dev gate item: the eval target list is at 6/10
+  (`_private/planning/ROADMAP_Pre-Development.md` Workstream D3). Next up:
+  ADR-0006/0007 (the evaluation harness) is what actually measures this
+  pipeline against the real ground-truth data already captured.
