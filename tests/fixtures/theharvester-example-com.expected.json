@@ -1,0 +1,134 @@
+{
+  "skipped": 4,
+  "entities": [
+    {
+      "id": "domain:example.com",
+      "type": "domain",
+      "value": "example.com",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "theharvester",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "source_module": "combined:crtsh,duckduckgo,otx,certspotter",
+          "raw_record_ref": "$.hosts[0]"
+        }
+      ]
+    },
+    {
+      "id": "subdomain:*.example.com",
+      "type": "subdomain",
+      "value": "*.example.com",
+      "attributes": {
+        "wildcard": true
+      },
+      "provenance": [
+        {
+          "source_tool": "theharvester",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "source_module": "combined:crtsh,duckduckgo,otx,certspotter",
+          "raw_record_ref": "$.hosts[1]"
+        }
+      ]
+    },
+    {
+      "id": "subdomain:www.example.com",
+      "type": "subdomain",
+      "value": "www.example.com",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "theharvester",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "source_module": "combined:crtsh,duckduckgo,otx,certspotter",
+          "raw_record_ref": "$.hosts[2]"
+        }
+      ]
+    },
+    {
+      "id": "subdomain:www.example.com",
+      "type": "subdomain",
+      "value": "www.example.com",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "theharvester",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "source_module": "combined:crtsh,duckduckgo,otx,certspotter",
+          "raw_record_ref": "$.hosts[3]"
+        }
+      ]
+    },
+    {
+      "id": "subdomain:admin.example.com",
+      "type": "subdomain",
+      "value": "admin.example.com",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "theharvester",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "source_module": "combined:crtsh,duckduckgo,otx,certspotter",
+          "raw_record_ref": "$.hosts[4]"
+        }
+      ]
+    },
+    {
+      "id": "email_address:security@example.com",
+      "type": "email_address",
+      "value": "security@example.com",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "theharvester",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "source_module": "combined:crtsh,duckduckgo,otx,certspotter",
+          "raw_record_ref": "$.emails[0]"
+        }
+      ]
+    },
+    {
+      "id": "email_address:secops@example.com",
+      "type": "email_address",
+      "value": "secops@example.com",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "theharvester",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "source_module": "combined:crtsh,duckduckgo,otx,certspotter",
+          "raw_record_ref": "$.emails[1]"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "source_id": "subdomain:*.example.com",
+      "target_id": "domain:example.com",
+      "relation": "subdomain_of"
+    },
+    {
+      "source_id": "subdomain:www.example.com",
+      "target_id": "domain:example.com",
+      "relation": "subdomain_of"
+    },
+    {
+      "source_id": "subdomain:www.example.com",
+      "target_id": "domain:example.com",
+      "relation": "subdomain_of"
+    },
+    {
+      "source_id": "subdomain:admin.example.com",
+      "target_id": "domain:example.com",
+      "relation": "subdomain_of"
+    }
+  ]
+}

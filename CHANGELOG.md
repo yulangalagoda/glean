@@ -29,8 +29,12 @@ point is a real release, just pre-dev groundwork.
   ADR-0002 D2), and the first adapter, `CrtshAdapter`, with a golden
   fixture test validating its output against the machine-checkable
   entity-graph schema.
+- Second adapter, `TheHarvesterAdapter`, proving the contract's honest
+  degradation rule (ADR-0002 D3): with no per-source attribution
+  available, provenance degrades to a combined-sources label parsed from
+  the tool's own invocation, never an invented specific source.
 
 ### Notes
-- Development has started (first adapter, `crtsh`). Remaining pre-dev
-  gate item: the eval target list is at 6/10
+- Development has started (`crtsh`, `theharvester` adapters). Remaining
+  pre-dev gate item: the eval target list is at 6/10
   (`_private/planning/ROADMAP_Pre-Development.md` Workstream D3).
