@@ -16,7 +16,7 @@ Existing OSINT automation excels at *collection* but fails at *judgment*: result
 
 ## Scope & ethics
 
-For authorised security research only — targets you own or are explicitly cleared to assess. Passive and active reconnaissance are clearly separated.
+For authorised security research only — targets you own or are explicitly cleared to assess. Passive and active reconnaissance are clearly separated. Full policy and threat model: [`docs/ETHICS.md`](docs/ETHICS.md). Found a vulnerability in Glean itself? See [`SECURITY.md`](SECURITY.md).
 
 ## Licence
 

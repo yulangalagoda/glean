@@ -1,7 +1,7 @@
 # ── Glean .gitignore ───────────────────────────────────────────────
 # Principle: the repo is PUBLIC by default. Anything that must never be
 # published is excluded here, so exclusion is enforced by the repo, not
-# by remembering. See docs/DATA_HANDLING.md.
+# by remembering. See docs/ETHICS.md ("Data governance").
 
 # ── Never publish: private planning + third-party copyrighted material ──
 # planning docs, research PDFs, anything not for the world
