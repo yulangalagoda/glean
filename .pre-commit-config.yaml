@@ -12,6 +12,5 @@ repos:
     rev: v1.11.2
     hooks:
       - id: mypy
-        additional_dependencies: []
-        args: [--ignore-missing-imports]
+        additional_dependencies: ["types-PyYAML>=6.0"]
         files: ^src/

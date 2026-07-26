@@ -1,0 +1,36 @@
+# Glean prioritisation rubric — tunable inputs (ADR-0004 D2).
+#
+# The hostname keyword list and sensitive-port list live here, not
+# hard-coded in glean_osint/scoring.py, so they're auditable and tunable
+# without touching logic. Editing this file is a rubric version bump
+# (schema_version below), because it changes every score in every
+# historical scan.
+
+schema_version: "0.1.0"
+
+# sensitive_hostname_pattern (+3, subdomain): fires when a hostname
+# contains any of these as a substring (case-insensitive).
+sensitive_hostname_keywords:
+  - admin
+  - vpn
+  - staging
+  - dev
+  - internal
+  - jenkins
+  - gitlab
+  - portal
+  - mail
+  - db
+
+# sensitive_port (+2, service): fires when a service's port is one of
+# these admin/DB/remote-access ports.
+sensitive_ports:
+  - 22
+  - 23
+  - 3389
+  - 3306
+  - 5432
+  - 6379
+  - 9200
+  - 27017
+  - 5900

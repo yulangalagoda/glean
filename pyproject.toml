@@ -7,6 +7,9 @@ requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Yulan Galagoda" }]
 keywords = ["osint", "reconnaissance", "threat-intelligence", "security"]
+dependencies = [
+    "pyyaml>=6.0",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -15,6 +18,7 @@ dev = [
     "pytest>=8.0",
     "pre-commit>=3.7",
     "jsonschema>=4.22",
+    "types-PyYAML>=6.0",
 ]
 
 [project.urls]

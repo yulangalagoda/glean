@@ -40,8 +40,16 @@ point is a real release, just pre-dev groundwork.
   duplicate-rate MVP gate. A shuffle test caught a real non-determinism
   bug (provenance union order depended on adapter run order); fixed by
   sorting provenance into a canonical order before returning.
+- Deterministic prioritisation rubric (`glean_osint.scoring`, ADR-0004):
+  additive signal scoring against the versioned, auditable weight table
+  (`config/priority-signals.v1.yaml`), the `cert_orphaned`/`cert_superseded`/
+  `stale_no_dns` liveness corrections, D3 score clamping, and D4's
+  deterministic tie-break ranking. First runtime dependency added
+  (`pyyaml`, for the config file). Includes three regression tests that
+  reproduce the exact real bugs the ADR's pilot corrections describe, so
+  they can't silently reappear.
 
 ### Notes
-- Development has started (`crtsh`, `theharvester` adapters, dedup stage).
+- Development has started (`crtsh`, `theharvester` adapters, dedup, scoring).
   Remaining pre-dev gate item: the eval target list is at 6/10
   (`_private/planning/ROADMAP_Pre-Development.md` Workstream D3).
