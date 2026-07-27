@@ -192,11 +192,43 @@ point is a real release, just pre-dev groundwork.
   `stale_no_dns`/`cert_orphaned` signals, which deprioritise that exact
   pattern.
 
+- `glean eval` (roadmap Workstream E4): a single command that runs the
+  full pipeline (adapters → dedup → scoring → brief) against every target
+  under `--scans-dir` with both raw captures and a `ground_truth.yaml`,
+  and reports the charter's three headline numbers per target and
+  averaged across the set. `evaluation.py` gained `load_ground_truth`,
+  closing the loop now that ADR-0007's file schema is resolved. First
+  real run, across all 10 targets: faithfulness and provenance retention
+  are 1.000 everywhere (expected — the template-based brief can't
+  fabricate by construction, so this isn't a meaningful pass yet); mean
+  `overlap@5 = 0.464`, mean `nDCG@5 = 0.582` — real, substantial
+  disagreement between the deterministic rubric and independent human
+  judgment, concentrated on exactly the dead-but-still-certed `v2.*`
+  subdomain pattern flagged during annotation. Full numbers in
+  ADR-0006's Validation section.
+
+- ADR-0009 (`docs/adr/0009-llm-synthesis.md`, Proposed — not yet
+  implemented): design for real Ollama-based LLM narration, replacing
+  `brief.py`'s template `body`/`why_ranked` text (`headline` and the rest
+  of the skeleton stay template-generated — ADR-0005 already fixed that
+  as contract, not a model choice). Only `top_priorities` gets narrated,
+  not the noisy `also_found` tail; invocation is a direct HTTP call to
+  Ollama's local API (`format: json`, `temperature: 0`, no new
+  dependency); a malformed or invented-entity response degrades
+  per-finding, never blanks the whole brief; `--llm [--model TAG]` is
+  opt-in on `glean scan`, same conservative rollout as `--live` (ADR-0008
+  D6). Ollama already installed and running locally with 5 models pulled
+  (`llama3.1:8b`, `llama3.2:latest`, `mistral:latest`, `phi3:latest`,
+  `phi3:medium`) — covers the roadmap's "compare across 2-3 local
+  models" ask with zero new setup.
+
 ### Notes
 - Development has started (`crtsh`, `theharvester`, `dnsx`, `httpx` adapters, dedup,
   scoring, brief, evaluation, CLI). All seven ADRs now have real code,
   except the LLM synthesis step itself (no Ollama wiring yet) and its
   dependent faithfulness stage 2 — the brief's narration is template-based
   until that exists. Eval target list gate met: 10/10, all with real
-  ground-truth annotations (ADR-0007 F2 fully met)
-  (`_private/planning/ROADMAP_Pre-Development.md` Workstream D3/F2).
+  ground-truth annotations (ADR-0007 F2 fully met), and `glean eval`
+  (roadmap E4) now reproduces the three headline numbers from a clean
+  checkout on demand
+  (`_private/planning/ROADMAP_Pre-Development.md` Workstream D3/E4/F2).

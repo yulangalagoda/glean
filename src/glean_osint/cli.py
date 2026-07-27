@@ -13,6 +13,7 @@ from __future__ import annotations
 import subprocess
 import urllib.error
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
@@ -27,6 +28,14 @@ from glean_osint.adapters.httpx import HttpxAdapter
 from glean_osint.adapters.theharvester import TheHarvesterAdapter
 from glean_osint.brief import DEFAULT_TOP_N, build_brief, render_markdown
 from glean_osint.dedup import merge_graph
+from glean_osint.evaluation import (
+    FaithfulnessResult,
+    PrioritisationQuality,
+    faithfulness_stage1,
+    load_ground_truth,
+    prioritisation_quality,
+    provenance_retention,
+)
 from glean_osint.schema.entities import ScanMeta, ToolRun
 from glean_osint.scoring import score_graph
 
@@ -256,6 +265,129 @@ def _warn_skipped(tool: str, skipped: int) -> None:
         typer.secho(
             f"{tool}: skipped {skipped} malformed record(s).", fg=typer.colors.YELLOW, err=True
         )
+
+
+@dataclass(frozen=True, slots=True)
+class _TargetEvalResult:
+    target: str
+    faithfulness: FaithfulnessResult
+    provenance_retention: float
+    prioritisation: PrioritisationQuality
+
+
+_RAW_ADAPTERS = (
+    (CrtshAdapter, "crtsh-{slug}.json"),
+    (TheHarvesterAdapter, "theharvester-{slug}.json"),
+    (DnsxAdapter, "dnsx-{slug}.json"),
+)
+
+
+def _evaluate_target(target_dir: Path, top_n: int) -> _TargetEvalResult:
+    """Run the real pipeline (adapters -> dedup -> scoring -> brief) against
+    one target's raw captures and compare it against its ground truth
+    (ADR-0006/0007). Roadmap E4's single reproducible entrypoint."""
+    slug = target_dir.name
+    raw_dir = target_dir / "raw"
+    ground_truth = load_ground_truth(target_dir / "ground_truth.yaml")
+    collected_at = datetime.now(timezone.utc).isoformat()
+    ctx = ScanContext(target=ground_truth.target, collected_at=collected_at)
+
+    results: list[ParseResult] = []
+    for adapter_cls, filename_template in _RAW_ADAPTERS:
+        path = raw_dir / filename_template.format(slug=slug)
+        if path.exists():
+            results.append(adapter_cls().parse(path.read_bytes(), ctx))
+    httpx_path = raw_dir / f"httpx-{slug}.jsonl"
+    if httpx_path.exists():
+        results.append(HttpxAdapter().parse(httpx_path.read_bytes(), ctx))
+
+    merged = merge_graph(results)
+    scored = score_graph(merged.entities, merged.edges, datetime.now(timezone.utc))
+    scan_meta = ScanMeta(
+        target=ground_truth.target, started_at=collected_at, glean_version=__version__
+    )
+    brief = build_brief(scored, merged.edges, scan_meta, top_n=top_n)
+
+    entity_ids = {e.id for e in scored}
+    glean_ranked_ids = [e.id for e in scored]
+    return _TargetEvalResult(
+        target=ground_truth.target,
+        faithfulness=faithfulness_stage1(brief, entity_ids),
+        provenance_retention=provenance_retention(brief),
+        prioritisation=prioritisation_quality(glean_ranked_ids, ground_truth, n=top_n),
+    )
+
+
+@app.command(name="eval")
+def run_eval(
+    scans_dir: Annotated[
+        Path,
+        typer.Option(help="Directory containing <slug>/raw + <slug>/ground_truth.yaml pairs."),
+    ] = Path("eval/scans"),
+    top_n: Annotated[
+        int, typer.Option(help="N for prioritisation-quality overlap@N/nDCG@N (ADR-0006 D2).")
+    ] = DEFAULT_TOP_N,
+) -> None:
+    """Run the evaluation harness (ADR-0006) across every target under
+    SCANS_DIR that has both raw tool output and a ground_truth.yaml
+    (ADR-0007), and report the three headline numbers.
+
+    No LLM synthesis exists yet, so faithfulness is stage 1 only (the
+    deterministic structural check) — stage 2 needs an LLM judge this
+    project doesn't have.
+    """
+    if not scans_dir.is_dir():
+        typer.secho(f"{scans_dir} is not a directory.", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    target_dirs = sorted(
+        d for d in scans_dir.iterdir() if d.is_dir() and (d / "ground_truth.yaml").exists()
+    )
+    if not target_dirs:
+        typer.secho(
+            f"No targets with ground_truth.yaml found under {scans_dir}.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    results: list[_TargetEvalResult] = []
+    for target_dir in target_dirs:
+        try:
+            results.append(_evaluate_target(target_dir, top_n))
+        except Exception as error:  # noqa: BLE001 -- one bad target must not abort the report
+            typer.secho(
+                f"{target_dir.name}: evaluation failed ({error}), skipping.",
+                fg=typer.colors.YELLOW,
+                err=True,
+            )
+
+    if not results:
+        typer.secho("No targets evaluated successfully.", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(
+        f"{'target':<20} {'faithfulness':>13} {'provenance':>11} "
+        f"{'overlap@' + str(top_n):>10} {'ndcg@' + str(top_n):>9}"
+    )
+    for r in results:
+        typer.echo(
+            f"{r.target:<20} {r.faithfulness.score:>13.3f} {r.provenance_retention:>11.3f} "
+            f"{r.prioritisation.overlap_at_n:>10.3f} {r.prioritisation.ndcg_at_n:>9.3f}"
+        )
+
+    n = len(results)
+    mean_faithfulness = sum(r.faithfulness.score for r in results) / n
+    mean_provenance = sum(r.provenance_retention for r in results) / n
+    mean_overlap = sum(r.prioritisation.overlap_at_n for r in results) / n
+    mean_ndcg = sum(r.prioritisation.ndcg_at_n for r in results) / n
+
+    typer.secho(
+        f"\n[{n} targets] mean faithfulness={mean_faithfulness:.3f} "
+        f"mean provenance_retention={mean_provenance:.3f} "
+        f"mean overlap@{top_n}={mean_overlap:.3f} mean nDCG@{top_n}={mean_ndcg:.3f}",
+        fg=typer.colors.CYAN,
+    )
 
 
 def _default_raw_dir(domain: str, collected_at: datetime) -> Path:

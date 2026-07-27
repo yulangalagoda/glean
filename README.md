@@ -39,6 +39,22 @@ target, so it's never invoked without an explicit `--active` flag, and
 you should only use it against hosts you're authorised to probe directly
 (see [`docs/ETHICS.md`](docs/ETHICS.md)).
 
+## Evaluation
+
+```
+glean eval [--scans-dir eval/scans] [--top-n 5]
+```
+
+Runs the full pipeline against every target under `--scans-dir` that has
+both raw tool output (`<slug>/raw/`) and a ground-truth ranking
+(`<slug>/ground_truth.yaml`, ADR-0007), then reports the charter's three
+headline numbers per target and averaged across the set: faithfulness,
+provenance retention, and prioritisation quality (`overlap@N`/`nDCG@N`
+against an independent human ranking). Faithfulness/provenance-retention
+are trivially 1.0 until real LLM synthesis exists (the current brief is
+template-based, so it can't fabricate by construction) — prioritisation
+quality is the metric that's actually meaningful today.
+
 ## Scope & ethics
 
 For authorised security research only — targets you own or are explicitly cleared to assess. Passive and active reconnaissance are clearly separated. Full policy and threat model: [`docs/ETHICS.md`](docs/ETHICS.md). Found a vulnerability in Glean itself? See [`SECURITY.md`](SECURITY.md).

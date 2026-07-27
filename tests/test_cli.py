@@ -213,3 +213,75 @@ def test_scan_live_degraded_tool_does_not_abort_the_scan(
     assert result.exit_code == 0
     assert "theHarvester: live invocation failed" in result.output
     assert "# Glean Brief" in result.output
+
+
+# --- eval (ADR-0006/0007, roadmap E4) -----------------------------------
+
+
+def _write_ground_truth(path: Path, target: str, entity_ids: list[str]) -> None:
+    entries = "\n".join(f'  - entity_id: "{eid}"\n    justification: "test"' for eid in entity_ids)
+    path.write_text(
+        f'target: "{target}"\n'
+        'annotator: "Test Annotator"\n'
+        'annotated_at: "2026-01-01T00:00:00Z"\n'
+        "blind: true\n"
+        "corroboration_sources: []\n"
+        f"entries:\n{entries}\n"
+    )
+
+
+def _build_scans_dir(tmp_path: Path) -> Path:
+    scans_dir = tmp_path / "scans"
+    raw_dir = scans_dir / "example-com" / "raw"
+    raw_dir.mkdir(parents=True)
+    (raw_dir / "crtsh-example-com.json").write_bytes(
+        (FIXTURES / "crtsh-example-com.json").read_bytes()
+    )
+    (raw_dir / "theharvester-example-com.json").write_bytes(
+        (FIXTURES / "theharvester-example-com.json").read_bytes()
+    )
+    _write_ground_truth(
+        scans_dir / "example-com" / "ground_truth.yaml",
+        "example.com",
+        ["domain:example.com", "subdomain:admin.example.com"],
+    )
+    return scans_dir
+
+
+def test_eval_reports_headline_numbers_for_a_target(tmp_path: Path) -> None:
+    scans_dir = _build_scans_dir(tmp_path)
+    result = runner.invoke(app, ["eval", "--scans-dir", str(scans_dir)])
+    assert result.exit_code == 0
+    assert "example.com" in result.output
+    assert "faithfulness" in result.output
+    assert "mean faithfulness=1.000" in result.output
+    assert "mean provenance_retention=1.000" in result.output
+
+
+def test_eval_requires_a_directory_with_ground_truth_files(tmp_path: Path) -> None:
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    result = runner.invoke(app, ["eval", "--scans-dir", str(empty_dir)])
+    assert result.exit_code == 1
+    assert "No targets with ground_truth.yaml found" in result.output
+
+
+def test_eval_skips_a_target_missing_the_blind_attestation(tmp_path: Path) -> None:
+    """ADR-0007 D6: a ground-truth file without `blind: true` must not be
+    silently trusted -- and one bad target must not abort the report."""
+    scans_dir = _build_scans_dir(tmp_path)
+    broken_dir = scans_dir / "broken"
+    broken_dir.mkdir()
+    (broken_dir / "ground_truth.yaml").write_text(
+        'target: "broken.example"\n'
+        'annotator: "Test"\n'
+        'annotated_at: "2026-01-01T00:00:00Z"\n'
+        "blind: false\n"
+        "corroboration_sources: []\n"
+        "entries: []\n"
+    )
+
+    result = runner.invoke(app, ["eval", "--scans-dir", str(scans_dir)])
+    assert result.exit_code == 0
+    assert "broken: evaluation failed" in result.output
+    assert "example.com" in result.output

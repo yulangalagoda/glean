@@ -8,16 +8,20 @@ and "structurally guaranteed never to have false negatives." Provenance
 retention (D3) and prioritisation quality (D2) are both fully specified,
 unambiguous formulas and are implemented in full.
 
-The ground-truth file format itself is an explicitly open question in
-ADR-0007 (open question 2: "exact ground-truth file schema — not designed
-yet") — `GroundTruth` here is an in-memory structure any future loader can
-populate; this module doesn't presume that still-undecided format.
+The ground-truth file format (ADR-0007 open question 2) is resolved as of
+2026-07-27: a plain YAML file, `load_ground_truth` below reads it into
+`GroundTruth`. See `eval/scans/<slug>/ground_truth.yaml` for real examples
+and ADR-0007's "Resolved" note for the schema itself.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import yaml
 
 from glean_osint.brief import Brief
 
@@ -41,6 +45,30 @@ class GroundTruth:
     @property
     def ranked_ids(self) -> tuple[str, ...]:
         return tuple(e.entity_id for e in self.entries)
+
+
+def load_ground_truth(path: Path) -> GroundTruth:
+    """Load a `ground_truth.yaml` file (ADR-0007) into `GroundTruth`.
+
+    Does not validate `blind`/`corroboration_sources` (attestation/audit
+    metadata the file format needs, D6/D7) beyond requiring `blind: true`
+    to be present — those fields aren't carried onto the in-memory
+    dataclass, which only needs the ranking itself.
+    """
+    data: dict[str, Any] = yaml.safe_load(path.read_text())
+    if data.get("blind") is not True:
+        msg = f"{path}: missing or false 'blind' attestation (ADR-0007 D6)"
+        raise ValueError(msg)
+    entries = tuple(
+        GroundTruthEntry(entity_id=e["entity_id"], justification=e.get("justification", ""))
+        for e in data["entries"]
+    )
+    return GroundTruth(
+        target=data["target"],
+        annotator=data["annotator"],
+        annotated_at=data["annotated_at"],
+        entries=entries,
+    )
 
 
 @dataclass(frozen=True, slots=True)
