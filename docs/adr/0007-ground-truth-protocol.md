@@ -1,6 +1,6 @@
 # ADR-0007 — Ground-Truth Construction Protocol (v1)
 
-- **Status:** Accepted (v0.1.0 — validated 2026-07-23 with a real blind annotation pass against `yulan.me`; see Validation)
+- **Status:** Accepted (v0.1.0 — validated 2026-07-23 with a real blind annotation pass against `yulan.me`; see Validation). **Roadmap F2 fully met 2026-07-27:** all 10 ground-truth targets now have a real, structured `ground_truth.yaml` (schema resolved below, open question 2).
 - **Date:** 2026-07-22
 - **Scope:** Glean v1 — how the reference "what actually mattered" ranking is produced per target, for the prioritisation-quality metric
 - **Depends on:** ADR-0001 (entity schema — the annotator works from this graph), ADR-0004 (prioritisation rubric — the thing being independently checked, not re-derived), ADR-0006 (defines how the comparison is computed once this protocol supplies the reference ranking)
@@ -66,10 +66,27 @@ A ground-truth file necessarily names real target infrastructure — the same se
 ## Open questions
 
 1. Is a top-~10 (2×N) slice the right buffer size, or should it scale with graph size for very large or very small scans?
-2. Exact ground-truth file schema (YAML/JSON) — not designed yet, needs to happen alongside D8's directory once real annotation starts.
 3. Should corroboration sources (D7) become mandatory rather than optional? Left open per roadmap D4, not resolved here.
 4. Post-MVP: a second annotator on a subset of targets, to at least partially measure agreement even though not required now — recorded on the roadmap's slow clock (ADR-0004-style "extra"), not a v1 blocker.
+
+**Resolved (2026-07-27) — open question 2, ground-truth file schema:** a plain YAML file at `eval/scans/<slug>/ground_truth.yaml` (per D8), mapping directly onto `evaluation.GroundTruth`/`GroundTruthEntry`:
+
+```yaml
+target: <domain>
+annotator: <name>
+annotated_at: "<ISO 8601 timestamp>"
+blind: true          # D6 attestation
+corroboration_sources: []   # D7, empty if none consulted
+entries:
+  - entity_id: "<type>:<value>"
+    justification: "<one line>"
+  # index 0 is the top pick; order IS the ranking
+```
+
+First real file: `eval/scans/scanme-nmap-org/ground_truth.yaml`. Confirmed to load cleanly into `GroundTruth`/`GroundTruthEntry` with no transformation beyond a YAML parse. `blind`/`corroboration_sources` aren't fields on the in-memory `GroundTruth` dataclass — they're attestation/audit metadata the file format needs (D6, D7) that the dataclass itself doesn't need to carry once loaded.
 
 ## Validation
 
 **2026-07-23, against `yulan.me`:** first real run of this protocol end-to-end. D1/D6 held: a single named annotator (the project operator) produced a ranking from a priority-stripped entity graph (1 domain, 39 subdomains, 113 certificates), blind to Glean's computed `priority.rank`, timestamped before that computation happened. D2 held: same evidence base, conclusion stripped. D4 held: the annotator's final ranking (3 entities) was shorter than the ~10 ceiling — explicitly permitted, not a protocol violation. D7 (corroboration) was not used. No procedural gap found in the protocol itself; the interesting result of this pass was on the ADR-0006/ADR-0004 side (see `_private/findings/yulan-me-ground-truth-validation.md`), not here.
+
+**2026-07-27, the remaining 9 targets:** annotation packets were mechanically generated (`_private/scripts/build_annotation_packets.py`) by running the real adapters + dedup (deliberately never `score_graph`) against each target's actual captured data — the same "same evidence, hidden conclusion" guarantee as D2, now made structural rather than a discipline the packet author has to remember. D1 held throughout: every ranking judgment came from the named annotator in chat, never the assistant, precisely to avoid the "hand-replay of ADR-0004's own weight table" trap this ADR's Context section warns against. Two real, useful annotator-driven patterns emerged that weren't anticipated when this ADR was written: (1) a standing rule that the target's own `domain` entity is always included last, justified as "known scan input, not itself a finding, but useful for later identification if this output is saved as a report" — a legitimate D3 business-context judgment the code has no way to reason about; (2) a confirmed-dead-but-still-unexpired-certificate subdomain (seen on both `tessno.com`'s and `brenwick.autos`'s `v2.*` hosts) was consistently ranked at or near the top, justified as "an anomaly an attacker would dive into" — notably the *opposite* valence from ADR-0004's own `stale_no_dns`/`cert_orphaned` signals, which deprioritise exactly this pattern. This is a real, recorded human/code divergence worth watching once the actual `overlap@N`/`nDCG@N` comparison is run, not a protocol issue. All 10 files: `eval/scans/<slug>/ground_truth.yaml`.

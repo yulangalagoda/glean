@@ -171,10 +171,32 @@ point is a real release, just pre-dev groundwork.
   documented as dated corrections in the ADR itself, and the read-timeout
   and 404 cases now have regression tests (`tests/test_runner.py`).
 
+- Ground-truth annotations (ADR-0007) completed for all 10 targets —
+  roadmap gate F2 fully met. Real `ground_truth.yaml` files at
+  `eval/scans/<slug>/ground_truth.yaml`, closing ADR-0007's own open
+  schema question (a plain YAML mapping directly onto
+  `evaluation.GroundTruth`/`GroundTruthEntry`). Annotation packets
+  (priority-stripped entity graphs, D2) were generated mechanically
+  (`_private/scripts/build_annotation_packets.py`) by running the real
+  adapters + dedup — never `score_graph` — against each target's actual
+  captured data; every ranking judgment itself came from the named human
+  annotator, never the assistant, to avoid the exact "hand-replay of
+  ADR-0004's own weight table" circularity this ADR's Context section
+  warns against. `yulan.me`'s already-completed 2026-07-23 ranking was
+  transcribed into the same schema for consistency (not re-annotated).
+  One real, recorded human/code divergence worth watching once real
+  `overlap@N`/`nDCG@N` numbers are computed: a confirmed-dead-but-still-
+  unexpired-certificate subdomain (`tessno.com`/`brenwick.autos`'s `v2.*`)
+  was consistently ranked high by the human annotator as "an anomaly
+  worth investigating" — the opposite valence from ADR-0004's own
+  `stale_no_dns`/`cert_orphaned` signals, which deprioritise that exact
+  pattern.
+
 ### Notes
 - Development has started (`crtsh`, `theharvester`, `dnsx`, `httpx` adapters, dedup,
   scoring, brief, evaluation, CLI). All seven ADRs now have real code,
   except the LLM synthesis step itself (no Ollama wiring yet) and its
   dependent faithfulness stage 2 — the brief's narration is template-based
-  until that exists. Eval target list gate met: 10/10
-  (`_private/planning/ROADMAP_Pre-Development.md` Workstream D3).
+  until that exists. Eval target list gate met: 10/10, all with real
+  ground-truth annotations (ADR-0007 F2 fully met)
+  (`_private/planning/ROADMAP_Pre-Development.md` Workstream D3/F2).
