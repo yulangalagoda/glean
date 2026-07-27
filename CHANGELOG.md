@@ -115,6 +115,13 @@ point is a real release, just pre-dev groundwork.
   since Typer silently collapses a single-command app to bare-argument
   invocation otherwise.
 
+- `httpx` validated against real data for the first time (2026-07-27), across
+  the 5 owned eval targets (`scanme.nmap.org` deliberately excluded — its
+  authorisation is scoped to Nmap-style port scanning, not unambiguously
+  HTTP-level probing). Result: 0 adapter bugs, 0 skipped records across 12
+  real probed hosts. Recorded privately in `_private/planning/target-list.md`
+  (raw output stays gitignored, per this project's existing data governance).
+
 ### Notes
 - Development has started (`crtsh`, `theharvester`, `dnsx`, `httpx` adapters, dedup,
   scoring, brief, evaluation, CLI). All seven ADRs now have real code,
