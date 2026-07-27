@@ -141,6 +141,36 @@ def test_submit_scan_eventually_serves_the_saved_html_report(
     assert "example.com" in result.text
 
 
+def test_view_scan_response_has_a_nav_bar_but_the_saved_file_does_not(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Real feedback: once inside a report there was no way back to the
+    app. Fixed by injecting a nav bar into the HTTP *response* only --
+    the file view_scan reads from must stay byte-identical to what
+    render_html() (ADR-0010) produces, since it's the same file --out
+    report.html writes to disk for standalone, serverless use."""
+    monkeypatch.setattr(pipeline, "run_scan", lambda request, **kw: _fake_outcome(request))
+
+    client = _client(tmp_path)
+    redirect = client.post(
+        "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
+    )
+    scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
+
+    result = client.get(f"/scan/{scan_id}")
+    assert 'class="nav-brand" href="/">Glean</a>' in result.text
+    assert '<link rel="stylesheet" href="/static/style.css">' in result.text
+    # The stylesheet link must land before the report's own inline
+    # <style> block, or its generic `body` rule would win the cascade
+    # and silently strip the report's own width/padding.
+    assert result.text.index('rel="stylesheet"') < result.text.index("<style>")
+
+    saved = (tmp_path / scan_id / "brief.html").read_text()
+    assert "nav-brand" not in saved
+    assert "stylesheet" not in saved
+    assert saved != result.text  # the response is a wrapped copy, not the same bytes
+
+
 def test_submit_scan_writes_a_manifest(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(pipeline, "run_scan", lambda request, **kw: _fake_outcome(request))
 

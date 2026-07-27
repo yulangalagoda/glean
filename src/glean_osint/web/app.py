@@ -49,6 +49,43 @@ def _sse_line(event_type: str, payload: str) -> str:
     return f"event: {event_type}\ndata: {payload.replace(chr(10), ' ')}\n\n"
 
 
+_WEB_NAV_SNIPPET = """<header class="site-header">
+  <nav class="nav">
+    <a class="nav-brand" href="/">Glean</a>
+    <div class="nav-links">
+      <a href="/">New scan</a>
+      <a href="/history">History</a>
+    </div>
+  </nav>
+</header>
+"""
+
+
+def _wrap_scan_result_for_web(html: str) -> str:
+    """The saved `brief.html` (ADR-0010) is deliberately chrome-free --
+    it's the exact same file `--out report.html` writes to disk, meant
+    to open standalone via `file://` with no dependency on this server
+    ever running. That's also exactly why it was hard to get back to
+    the app from it (real feedback): there was nothing there on
+    purpose. This injects a nav bar *only* into the HTTP response
+    `view_scan` returns, never into the file on disk -- `execute_scan`/
+    the CLI still write `render_html()`'s output completely unmodified.
+
+    The site stylesheet is linked *before* the report's own inline
+    `<style>` (not after): the report defines its own `body { ... }`
+    (860px width) and the site's `.page`-based layout uses a different
+    one (640px, via `.page`, not `body` directly) -- but both still
+    style the bare `body` selector, and if the linked sheet landed
+    after the inline one it would win the cascade and silently strip
+    the report's own width/padding. Only the nav's own classes
+    (`.site-header`/`.nav`/`.nav-brand`/`.nav-links`) actually need the
+    linked sheet; the report's inline style never defines those, so
+    there's no fight to lose either way once ordered correctly.
+    """
+    html = html.replace("<style>", '<link rel="stylesheet" href="/static/style.css">\n<style>', 1)
+    return html.replace("<body>", "<body>\n" + _WEB_NAV_SNIPPET, 1)
+
+
 def _is_safe_scan_id(scan_id: str) -> bool:
     """`scan_id` is a path segment, not a filesystem path -- reject
     anything that could escape `history_root` before it ever touches
@@ -214,7 +251,7 @@ def create_app(history_root: Path = DEFAULT_HISTORY_ROOT) -> FastAPI:
         brief_path = history_root / scan_id / "brief.html"
         if not brief_path.is_file():
             raise HTTPException(status_code=404, detail="Scan not found.")
-        return HTMLResponse(brief_path.read_text())
+        return HTMLResponse(_wrap_scan_result_for_web(brief_path.read_text()))
 
     @app.get("/history", response_class=HTMLResponse)
     def history(request: Request) -> HTMLResponse:

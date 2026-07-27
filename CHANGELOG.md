@@ -545,6 +545,22 @@ point is a real release, just pre-dev groundwork.
   and no pill on `/history`, the message arriving live as a `status`
   event instead of `warning`) and the active-nav class landing on the
   correct link on both the form and history pages.
+- Immediate follow-up: once inside a scan result, the new nav bar was
+  gone. `/scan/{id}` serves the exact bytes of the saved `brief.html`,
+  deliberately chrome-free by design (ADR-0010) since it's the same
+  file `--out report.html` writes to disk for standalone `file://` use
+  -- correct for the file, but a dead end when reached through the web
+  UI instead. Fixed narrowly: the nav bar and a stylesheet `<link>` are
+  now injected into `view_scan`'s HTTP response only, via two targeted
+  string replacements on `render_html()`'s own output -- the saved
+  file and the CLI's `--out` output stay completely unmodified. The
+  stylesheet link lands *before* the report's own inline `<style>`
+  block specifically to avoid a cascade conflict (both style the bare
+  `body` selector; landing after would have silently stripped the
+  report's own 860px-width layout). 222/222 tests pass. Live-validated:
+  a real saved report served through the web UI now has the nav bar
+  with correctly-ordered CSS, while the file on disk (and a fresh CLI
+  `--out report.html`) has zero occurrences of the injected markup.
 
 ### Notes
 - Development has started (`crtsh`, `theharvester`, `dnsx`, `httpx` adapters, dedup,
