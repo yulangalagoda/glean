@@ -561,6 +561,43 @@ point is a real release, just pre-dev groundwork.
   a real saved report served through the web UI now has the nav bar
   with correctly-ordered CSS, while the file on disk (and a fresh CLI
   `--out report.html`) has zero occurrences of the injected markup.
+- Fifth tool: subfinder (passive subdomain discovery), added
+  specifically to test whether the tool registry's "add a tool and it
+  shows up automatically" promise (ADR-0011 D3) actually holds. It
+  does: the web UI's tool list and presets picked it up with zero
+  template changes. A real capture (`subfinder -d yulan.me -json
+  -silent`, 203 real records) confirmed its JSON-lines shape
+  (`{"host","input","source"}`) before any code was written, matching
+  every other adapter's pilot-first origin (ADR-0002). New
+  `SubfinderAdapter` (subdomain-only, same shape as theHarvester's
+  contribution to the graph; `source` -- which of subfinder's own
+  internal passive engines found a host, e.g. `"crtsh"`/`"virustotal"`
+  -- kept as a real attribute, not fabricated, `source_tool` stays
+  uniformly `"subfinder"`), `runner.run_subfinder`, and wiring into
+  both `cli.py`'s `scan()` and `pipeline.py`'s `run_scan()` (the two
+  places tools are wired per-tool by design, ADR-0008 D2). No changes
+  needed to `runner.extract_candidates` (already generic over any
+  `ParseResult`) or dedup/scoring.
+
+  One real finding while wiring this up: subfinder v2.14.0's own
+  `-version` output doesn't print the `projectdiscovery.io` banner
+  `_verify_projectdiscovery_binary` (ADR-0008 D9) checks for, unlike
+  dnsx/httpx -- confirmed live before assuming otherwise. Reusing that
+  check would have incorrectly rejected the real tool, so it's
+  deliberately not applied to subfinder (also no confirmed name-
+  collision risk for "subfinder" the way there is for "httpx");
+  `tool_available` (PATH existence) plus a new `--subfinder-bin`/
+  `$GLEAN_SUBFINDER_BIN` override is the same level of checking
+  theHarvester already gets.
+
+  237/237 tests pass (15 new: a golden-fixture adapter test, runner
+  invocation tests, pipeline wiring tests, CLI ingest/live tests),
+  ruff/mypy/pre-commit `--all-files` all clean. Live-validated end to
+  end on both surfaces: `glean scan hazelmoor.org --live` found 3 real
+  subdomains (`admin`/`portal`/`vpn`) via subfinder, corroborated by
+  crt.sh/dnsx; the same scan submitted through the web form showed
+  identical results, with `subfinder` appearing in `tools_run` and the
+  rendered report on both the CLI and `/scan/{id}`.
 
 ### Notes
 - Development has started (`crtsh`, `theharvester`, `dnsx`, `httpx` adapters, dedup,

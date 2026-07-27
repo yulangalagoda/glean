@@ -1,0 +1,86 @@
+{
+  "skipped": 4,
+  "entities": [
+    {
+      "id": "subdomain:admin.example.com",
+      "type": "subdomain",
+      "value": "admin.example.com",
+      "attributes": {
+        "subfinder_source": "crtsh"
+      },
+      "provenance": [
+        {
+          "source_tool": "subfinder",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:1"
+        }
+      ]
+    },
+    {
+      "id": "subdomain:www.example.com",
+      "type": "subdomain",
+      "value": "www.example.com",
+      "attributes": {
+        "subfinder_source": "crtsh"
+      },
+      "provenance": [
+        {
+          "source_tool": "subfinder",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:2"
+        }
+      ]
+    },
+    {
+      "id": "subdomain:www.example.com",
+      "type": "subdomain",
+      "value": "www.example.com",
+      "attributes": {
+        "subfinder_source": "virustotal"
+      },
+      "provenance": [
+        {
+          "source_tool": "subfinder",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:3"
+        }
+      ]
+    },
+    {
+      "id": "domain:example.com",
+      "type": "domain",
+      "value": "example.com",
+      "attributes": {
+        "subfinder_source": "dnsdumpster"
+      },
+      "provenance": [
+        {
+          "source_tool": "subfinder",
+          "method": "passive",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:4"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "source_id": "subdomain:admin.example.com",
+      "target_id": "domain:example.com",
+      "relation": "subdomain_of"
+    },
+    {
+      "source_id": "subdomain:www.example.com",
+      "target_id": "domain:example.com",
+      "relation": "subdomain_of"
+    },
+    {
+      "source_id": "subdomain:www.example.com",
+      "target_id": "domain:example.com",
+      "relation": "subdomain_of"
+    }
+  ]
+}

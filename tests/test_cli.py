@@ -64,6 +64,22 @@ def test_scan_with_both_tools_produces_a_brief() -> None:
     assert "Findings in this brief:" in result.output
 
 
+def test_scan_ingests_a_subfinder_file() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "example.com",
+            "--subfinder",
+            str(FIXTURES / "subfinder-example-com.jsonl"),
+        ],
+    )
+    assert result.exit_code == 0
+    assert "# Glean Brief — example.com" in result.output
+    assert "subfinder" in result.output
+    assert "admin.example.com" in result.output
+
+
 def test_scan_reports_skipped_malformed_records() -> None:
     result = runner.invoke(
         app,
@@ -217,16 +233,43 @@ def _empty_theharvester(target: str, **kwargs: object) -> bytes:
     return b'{"cmd": "", "hosts": []}'
 
 
+def _empty_subfinder(target: str, **kwargs: object) -> bytes:
+    return b""
+
+
 def test_scan_live_alone_satisfies_the_input_guard(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(live_runner, "fetch_crtsh", lambda target: b"[]")
     monkeypatch.setattr(live_runner, "run_theharvester", _empty_theharvester)
+    monkeypatch.setattr(live_runner, "run_subfinder", _empty_subfinder)
     monkeypatch.setattr(live_runner, "run_dnsx", _empty_dnsx_envelope)
 
     result = runner.invoke(app, ["scan", "example.com", "--live", "--raw-dir", str(tmp_path)])
     assert result.exit_code == 0
     assert "# Glean Brief" in result.output
+
+
+def test_scan_live_invokes_subfinder_and_records_it_in_tools_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(live_runner, "fetch_crtsh", lambda target: b"[]")
+    monkeypatch.setattr(live_runner, "run_theharvester", _empty_theharvester)
+    monkeypatch.setattr(
+        live_runner,
+        "run_subfinder",
+        lambda target, **kwargs: (
+            b'{"host":"beta.example.com","input":"example.com","source":"crtsh"}\n'
+        ),
+    )
+    monkeypatch.setattr(live_runner, "run_dnsx", _empty_dnsx_envelope)
+
+    result = runner.invoke(app, ["scan", "example.com", "--live", "--raw-dir", str(tmp_path)])
+
+    assert result.exit_code == 0
+    assert "subfinder (passive)" in result.output
+    assert "beta.example.com" in result.output
+    assert (tmp_path / "subfinder-example.com.jsonl").exists()
 
 
 def test_scan_live_without_raw_dir_writes_a_manifest_to_the_shared_history(
@@ -237,6 +280,7 @@ def test_scan_live_without_raw_dir_writes_a_manifest_to_the_shared_history(
     browsable from either surface."""
     monkeypatch.setattr(live_runner, "fetch_crtsh", lambda target: b"[]")
     monkeypatch.setattr(live_runner, "run_theharvester", _empty_theharvester)
+    monkeypatch.setattr(live_runner, "run_subfinder", _empty_subfinder)
     monkeypatch.setattr(live_runner, "run_dnsx", _empty_dnsx_envelope)
 
     result = runner.invoke(app, ["scan", "example.com", "--live"])
@@ -261,6 +305,7 @@ def test_scan_live_with_explicit_raw_dir_skips_the_shared_history(
     not just the raw-archive location."""
     monkeypatch.setattr(live_runner, "fetch_crtsh", lambda target: b"[]")
     monkeypatch.setattr(live_runner, "run_theharvester", _empty_theharvester)
+    monkeypatch.setattr(live_runner, "run_subfinder", _empty_subfinder)
     monkeypatch.setattr(live_runner, "run_dnsx", _empty_dnsx_envelope)
 
     result = runner.invoke(
@@ -282,6 +327,7 @@ def test_scan_live_reports_a_crtsh_cache_hit(
 
     monkeypatch.setattr(live_runner, "fetch_crtsh", fake_fetch)
     monkeypatch.setattr(live_runner, "run_theharvester", _empty_theharvester)
+    monkeypatch.setattr(live_runner, "run_subfinder", _empty_subfinder)
     monkeypatch.setattr(live_runner, "run_dnsx", _empty_dnsx_envelope)
 
     # First scan: cold cache, real (fake) fetch happens once.
@@ -307,6 +353,7 @@ def test_scan_live_no_crtsh_cache_always_refetches(
 
     monkeypatch.setattr(live_runner, "fetch_crtsh", fake_fetch)
     monkeypatch.setattr(live_runner, "run_theharvester", _empty_theharvester)
+    monkeypatch.setattr(live_runner, "run_subfinder", _empty_subfinder)
     monkeypatch.setattr(live_runner, "run_dnsx", _empty_dnsx_envelope)
 
     for _ in range(2):
@@ -323,6 +370,7 @@ def test_scan_live_without_active_never_invokes_httpx(
 ) -> None:
     monkeypatch.setattr(live_runner, "fetch_crtsh", lambda target: b"[]")
     monkeypatch.setattr(live_runner, "run_theharvester", _empty_theharvester)
+    monkeypatch.setattr(live_runner, "run_subfinder", _empty_subfinder)
     monkeypatch.setattr(live_runner, "run_dnsx", _empty_dnsx_envelope)
 
     def _fail_if_called(*args: object, **kwargs: object) -> bytes:
@@ -340,6 +388,7 @@ def test_scan_live_with_active_invokes_httpx_and_archives_raw_output(
 ) -> None:
     monkeypatch.setattr(live_runner, "fetch_crtsh", lambda target: b"[]")
     monkeypatch.setattr(live_runner, "run_theharvester", _empty_theharvester)
+    monkeypatch.setattr(live_runner, "run_subfinder", _empty_subfinder)
     dnsx_envelope = (
         b'{"candidates": ["example.com"], '
         b'"resolved": [{"host": "example.com", "a": ["203.0.113.1"]}]}'
@@ -374,6 +423,7 @@ def test_scan_live_per_tool_file_overrides_live_invocation(
 
     monkeypatch.setattr(live_runner, "fetch_crtsh", _fail_if_called)
     monkeypatch.setattr(live_runner, "run_theharvester", _empty_theharvester)
+    monkeypatch.setattr(live_runner, "run_subfinder", _empty_subfinder)
     monkeypatch.setattr(live_runner, "run_dnsx", _empty_dnsx_envelope)
 
     result = runner.invoke(
@@ -402,6 +452,7 @@ def test_scan_live_degraded_tool_does_not_abort_the_scan(
 
     monkeypatch.setattr(live_runner, "fetch_crtsh", lambda target: b"[]")
     monkeypatch.setattr(live_runner, "run_theharvester", _unavailable)
+    monkeypatch.setattr(live_runner, "run_subfinder", _empty_subfinder)
     monkeypatch.setattr(live_runner, "run_dnsx", _empty_dnsx_envelope)
 
     result = runner.invoke(app, ["scan", "example.com", "--live", "--raw-dir", str(tmp_path)])

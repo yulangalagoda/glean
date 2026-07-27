@@ -26,6 +26,7 @@ def _stub_all_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         runner, "run_theharvester", lambda target, **kwargs: b'{"cmd": "", "hosts": []}'
     )
+    monkeypatch.setattr(runner, "run_subfinder", lambda target, **kwargs: b"")
     monkeypatch.setattr(runner, "run_dnsx", _empty_dnsx_envelope)
     monkeypatch.setattr(runner, "run_httpx", lambda hosts, **kwargs: b"")
 
@@ -55,6 +56,37 @@ def test_run_scan_only_invokes_selected_tools(
     assert calls == ["crtsh"]
     assert [t.source_tool for t in outcome.brief.scan.tools_run] == ["crtsh"]
     assert outcome.warnings == ()
+
+
+def test_run_scan_subfinder_subdomains_feed_dnsx_candidates(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """extract_candidates (runner.py) is already generic over every
+    ParseResult regardless of source tool -- confirms subfinder's
+    output reaches dnsx with zero changes needed there."""
+    monkeypatch.setattr(runner, "fetch_crtsh_cached", lambda target, **kwargs: b"[]")
+    monkeypatch.setattr(
+        runner,
+        "run_subfinder",
+        lambda target, **kwargs: (
+            b'{"host":"beta.example.com","input":"example.com","source":"crtsh"}\n'
+        ),
+    )
+    seen_candidates: list[str] = []
+
+    def fake_dnsx(candidates: list[str], **kwargs: object) -> bytes:
+        seen_candidates.extend(candidates)
+        return b'{"candidates": [], "resolved": []}'
+
+    monkeypatch.setattr(runner, "run_dnsx", fake_dnsx)
+
+    outcome = pipeline.run_scan(
+        ScanRequest(target="example.com", tools=frozenset({"crtsh", "subfinder", "dnsx"})),
+        raw_dir=tmp_path,
+    )
+
+    assert "beta.example.com" in seen_candidates
+    assert {t.source_tool for t in outcome.brief.scan.tools_run} == {"crtsh", "subfinder", "dnsx"}
 
 
 def test_run_scan_httpx_selection_pulls_in_dnsx_even_without_going_through_the_web_layer(
@@ -202,6 +234,7 @@ def test_run_scan_reads_tool_binary_env_vars(
     bug found live: theHarvester failed through the web UI even with
     the env var exported, since pipeline.py wasn't reading it at all)."""
     monkeypatch.setenv("GLEAN_THEHARVESTER_BIN", "/opt/theHarvester")
+    monkeypatch.setenv("GLEAN_SUBFINDER_BIN", "/opt/subfinder")
     monkeypatch.setenv("GLEAN_DNSX_BIN", "/opt/dnsx")
     monkeypatch.setenv("GLEAN_HTTPX_BIN", "/opt/httpx")
     seen_binaries: dict[str, str] = {}
@@ -209,6 +242,10 @@ def test_run_scan_reads_tool_binary_env_vars(
     def fake_theharvester(target: str, *, binary: str = "theHarvester", **kwargs: object) -> bytes:
         seen_binaries["theharvester"] = binary
         return b'{"cmd": "", "hosts": []}'
+
+    def fake_subfinder(target: str, *, binary: str = "subfinder", **kwargs: object) -> bytes:
+        seen_binaries["subfinder"] = binary
+        return b""
 
     def fake_dnsx(candidates: list[str], *, binary: str = "dnsx", **kwargs: object) -> bytes:
         seen_binaries["dnsx"] = binary
@@ -220,19 +257,21 @@ def test_run_scan_reads_tool_binary_env_vars(
 
     monkeypatch.setattr(runner, "fetch_crtsh_cached", lambda target, **kwargs: b"[]")
     monkeypatch.setattr(runner, "run_theharvester", fake_theharvester)
+    monkeypatch.setattr(runner, "run_subfinder", fake_subfinder)
     monkeypatch.setattr(runner, "run_dnsx", fake_dnsx)
     monkeypatch.setattr(runner, "run_httpx", fake_httpx)
 
     pipeline.run_scan(
         ScanRequest(
             target="example.com",
-            tools=frozenset({"theharvester", "httpx"}),  # httpx pulls in dnsx too
+            tools=frozenset({"theharvester", "subfinder", "httpx"}),  # httpx pulls in dnsx too
         ),
         raw_dir=tmp_path,
     )
 
     assert seen_binaries == {
         "theharvester": "/opt/theHarvester",
+        "subfinder": "/opt/subfinder",
         "dnsx": "/opt/dnsx",
         "httpx": "/opt/httpx",
     }

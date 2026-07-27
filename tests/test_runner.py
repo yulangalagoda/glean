@@ -333,6 +333,52 @@ def test_run_theharvester_uses_the_custom_binary_as_argv0(
     assert result == b'{"cmd": "...", "hosts": []}'
 
 
+# --- run_subfinder ----------------------------------------------------
+
+
+def test_run_subfinder_returns_stdout_directly(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(runner, "tool_available", lambda name: True)
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        assert argv == ["subfinder", "-d", "example.com", "-json", "-silent"]
+        return subprocess.CompletedProcess(
+            argv, 0, stdout=b'{"host":"www.example.com","input":"example.com","source":"crtsh"}\n'
+        )
+
+    result = runner.run_subfinder("example.com", run=fake_run)
+    assert result == b'{"host":"www.example.com","input":"example.com","source":"crtsh"}\n'
+
+
+def test_run_subfinder_returns_empty_stdout_on_zero_results_without_raising(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Confirmed live: subfinder exits 0 with empty stdout when a target
+    has no discoverable subdomains -- a legitimate outcome, not a
+    failure (same reasoning as dnsx/httpx's own check=False)."""
+    monkeypatch.setattr(runner, "tool_available", lambda name: True)
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(argv, 0, stdout=b"", stderr=b"")
+
+    assert runner.run_subfinder("larnby.com", run=fake_run) == b""
+
+
+def test_run_subfinder_uses_the_custom_binary_as_argv0(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(runner, "tool_available", lambda name: True)
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        assert argv[0] == "/opt/subfinder/subfinder"
+        return subprocess.CompletedProcess(argv, 0, stdout=b"")
+
+    runner.run_subfinder("example.com", binary="/opt/subfinder/subfinder", run=fake_run)
+
+
+def test_run_subfinder_raises_tool_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(runner, "tool_available", lambda name: False)
+    with pytest.raises(runner.ToolUnavailable):
+        runner.run_subfinder("example.com")
+
+
 # --- run_dnsx -------------------------------------------------------------
 
 

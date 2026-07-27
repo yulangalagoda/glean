@@ -1,6 +1,6 @@
 # ADR-0002 — The Adapter Contract (v1)
 
-- **Status:** Proposed — pilot-tested 2026-07-22, one correction needed (see D3 note and `docs/PILOT_findings.md`); not yet Accepted
+- **Status:** Accepted — pilot-tested 2026-07-22 (one correction found and applied, see D3 note and `docs/PILOT_findings.md`), and validated against five real, conforming adapters since (crt.sh, theHarvester, dnsx, httpx, subfinder — the last added 2026-07-27 as a real test of whether a new tool could be added cleanly against this contract; see Validation)
 - **Date:** 2026-07-22
 - **Scope:** Glean v1 — the interface every tool integration conforms to
 - **Depends on:** ADR-0001 (entity schema)
@@ -93,3 +93,5 @@ Whether Glean ran the tool or ingested it, the raw bytes are saved and reference
 ## Validation
 
 The first adapter is written against a saved fixture from the smallest tool (theHarvester or crt.sh JSON). That single adapter validates this contract, the entity schema, and the canonicalisation rules at once, and produces the first golden fixture for the test suite.
+
+**Update (2026-07-27):** five real adapters now conform to this contract — crt.sh, theHarvester, dnsx, httpx, and subfinder (`SubfinderAdapter`, `src/glean_osint/adapters/subfinder.py`). subfinder was added specifically as a test of whether a new tool integrates cleanly: a real capture (`subfinder -d yulan.me -json -silent`, 203 real records) confirmed its JSON-lines shape before any code was written, matching every other adapter's own pilot-first origin. It needed no changes to this contract, `runner.extract_candidates` (already generic over any `ParseResult` regardless of source tool), or the dedup/scoring stages — only a new adapter file, a `run_subfinder` in `runner.py`, and wiring into the two call sites (`cli.py`'s `scan()`, `pipeline.py`'s `run_scan()`) that already exist per-tool by design (ADR-0008 D2: "invocation differs by tool, and that's fine"). The one new thing subfinder's addition surfaced: not every ProjectDiscovery-family tool's `-version` output includes the `projectdiscovery.io` banner `_verify_projectdiscovery_binary` (ADR-0008 D9) checks for — confirmed live that subfinder v2.14.0 doesn't print it, so that check was deliberately not reused for subfinder (no confirmed name-collision risk for "subfinder" either, unlike httpx's), rather than forcing a check that would incorrectly reject the real tool.

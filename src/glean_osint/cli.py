@@ -26,6 +26,7 @@ from glean_osint.adapters.base import ParseResult, ScanContext
 from glean_osint.adapters.crtsh import CrtshAdapter
 from glean_osint.adapters.dnsx import DnsxAdapter
 from glean_osint.adapters.httpx import HttpxAdapter
+from glean_osint.adapters.subfinder import SubfinderAdapter
 from glean_osint.adapters.theharvester import TheHarvesterAdapter
 from glean_osint.brief import DEFAULT_TOP_N, build_brief, render_html, render_markdown
 from glean_osint.dedup import merge_graph
@@ -115,6 +116,14 @@ def scan(
             exists=True, readable=True, help="Path to theHarvester JSON output for this target."
         ),
     ] = None,
+    subfinder: Annotated[
+        Path | None,
+        typer.Option(
+            exists=True,
+            readable=True,
+            help="Path to subfinder -json (JSON-lines) output for this target.",
+        ),
+    ] = None,
     dnsx: Annotated[
         Path | None,
         typer.Option(
@@ -182,6 +191,18 @@ def scan(
             "$GLEAN_THEHARVESTER_BIN once instead of passing this every time.",
         ),
     ] = "theHarvester",
+    subfinder_bin: Annotated[
+        str,
+        typer.Option(
+            envvar="GLEAN_SUBFINDER_BIN",
+            help="Executable name/path for subfinder. Override this if it isn't on PATH, or "
+            "set $GLEAN_SUBFINDER_BIN once instead of passing this every time. No "
+            "impostor-binary check here (unlike --dnsx-bin/--httpx-bin): confirmed live that "
+            "subfinder's own -version output doesn't print a projectdiscovery.io banner the "
+            "way dnsx/httpx do, and there's no known real name-collision risk for "
+            "'subfinder' the way there confirmedly is for 'httpx'.",
+        ),
+    ] = "subfinder",
     dnsx_bin: Annotated[
         str,
         typer.Option(
@@ -238,14 +259,23 @@ def scan(
     """Build a prioritised, provenance-tracked brief for DOMAIN.
 
     Ingest-only by default: point it at already-fetched raw tool output
-    (--crtsh / --theharvester / --dnsx / --httpx). Pass --live to actually
-    invoke tools (ADR-0008); a per-tool file option still overrides live
-    invocation for that specific tool (mixed mode). --active is required
-    in addition to --live to invoke httpx, the only active-method tool.
+    (--crtsh / --theharvester / --subfinder / --dnsx / --httpx). Pass
+    --live to actually invoke tools (ADR-0008); a per-tool file option
+    still overrides live invocation for that specific tool (mixed mode).
+    --active is required in addition to --live to invoke httpx, the
+    only active-method tool.
     """
-    if not live and crtsh is None and theharvester is None and dnsx is None and httpx is None:
+    if (
+        not live
+        and crtsh is None
+        and theharvester is None
+        and subfinder is None
+        and dnsx is None
+        and httpx is None
+    ):
         typer.secho(
-            "Provide at least one of --crtsh, --theharvester, --dnsx, --httpx, or --live.",
+            "Provide at least one of --crtsh, --theharvester, --subfinder, --dnsx, --httpx, "
+            "or --live.",
             fg=typer.colors.RED,
             err=True,
         )
@@ -304,6 +334,30 @@ def scan(
             ToolRun(source_tool="theharvester", method="passive", raw_output_ref=theharvester_ref)
         )
         _warn_skipped("theHarvester", result.skipped)
+
+    with _maybe_spin(
+        subfinder is None and live, "Searching passive sources for subdomains (subfinder)..."
+    ):
+        subfinder_raw, subfinder_ref, subfinder_warning = _resolve_input(
+            subfinder,
+            live,
+            lambda: runner.run_subfinder(domain, binary=subfinder_bin),
+            "subfinder",
+        )
+    if subfinder_warning:
+        typer.secho(subfinder_warning, fg=typer.colors.YELLOW, err=True)
+    if subfinder_raw is not None:
+        if subfinder is None:
+            subfinder_ref = runner.archive_raw(
+                output_dir, f"subfinder-{domain}.jsonl", subfinder_raw
+            )
+        ctx = ScanContext(target=domain, collected_at=collected_at, raw_output_ref=subfinder_ref)
+        result = SubfinderAdapter().parse(subfinder_raw, ctx)
+        results.append(result)
+        tools_run.append(
+            ToolRun(source_tool="subfinder", method="passive", raw_output_ref=subfinder_ref)
+        )
+        _warn_skipped("subfinder", result.skipped)
 
     # --- Stage 2: dnsx, fed Stage 1's parsed hostnames (ADR-0008 D1) ---
 

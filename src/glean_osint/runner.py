@@ -275,6 +275,47 @@ def run_theharvester(
         return (Path(tmp) / "out.json").read_bytes()
 
 
+def run_subfinder(
+    target: str,
+    *,
+    binary: str = "subfinder",
+    timeout: float = SUBPROCESS_TIMEOUT_SECONDS,
+    run: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run,
+) -> bytes:
+    """Run subfinder, returning its `-json -silent` JSONL stdout directly.
+
+    Unlike theHarvester, subfinder's own `build_command()` argv is
+    already complete and self-sufficient -- no output-file dance
+    needed, its stdout *is* the parseable output (same shape as
+    dnsx/httpx). `check=False`: confirmed live that subfinder exits 0
+    with empty stdout when a target has no discoverable subdomains
+    (`larnby.com`) -- that's a legitimate zero-result outcome, not a
+    tool failure, the same reasoning dnsx/httpx's own `check=False`
+    already documents.
+
+    No `_verify_projectdiscovery_binary` check here, unlike dnsx/httpx:
+    confirmed live that subfinder v2.14.0's own `-version` output
+    doesn't print the `projectdiscovery.io` banner those two do (no
+    ASCII banner at all), so reusing that check would incorrectly
+    reject the real tool. There's also no known real name-collision
+    risk for "subfinder" the way there confirmedly is for "httpx" --
+    ADR-0008 D8 was already explicit that verification is for the one
+    case with *confirmed* collision risk, not applied speculatively
+    everywhere. `tool_available` (PATH existence) is the same level of
+    checking theHarvester already gets.
+    """
+    if not tool_available(binary):
+        raise ToolUnavailable(binary)
+
+    from glean_osint.adapters.subfinder import SubfinderAdapter
+
+    argv = SubfinderAdapter().build_command(target)
+    assert argv is not None
+    argv = [binary, *argv[1:]]
+    completed = run(argv, capture_output=True, timeout=timeout, check=False)
+    return completed.stdout
+
+
 def run_dnsx(
     candidates: list[str],
     *,
@@ -352,8 +393,10 @@ def run_httpx(
 
 def extract_candidates(target: str, results: list[ParseResult]) -> list[str]:
     """Stage 1 -> Stage 2 (ADR-0008 D1): every `domain`/`subdomain` entity's
-    canonical value from crt.sh + theHarvester's parsed output, plus the
-    apex target itself. Wildcards excluded — dnsx's own adapter already
+    canonical value from any Stage 1 tool's parsed output (crt.sh,
+    theHarvester, subfinder), plus the apex target itself -- generic over
+    `results`, so a new Stage 1 tool's subdomains reach this with no
+    changes needed here. Wildcards excluded — dnsx's own adapter already
     treats a literal lookup of one as meaningless (ADR-0001 D4), so there's
     no reason to ask it to try."""
     hosts = {target}

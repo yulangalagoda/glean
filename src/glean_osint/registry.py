@@ -30,6 +30,7 @@ class ToolInfo:
 TOOL_REGISTRY: dict[str, ToolInfo] = {
     "crtsh": ToolInfo("crtsh", "crt.sh", "passive"),
     "theharvester": ToolInfo("theharvester", "theHarvester", "passive"),
+    "subfinder": ToolInfo("subfinder", "subfinder", "passive"),
     "dnsx": ToolInfo("dnsx", "dnsx", "passive"),
     "httpx": ToolInfo("httpx", "httpx", "active", requires=("dnsx",)),
 }
@@ -37,8 +38,8 @@ TOOL_REGISTRY: dict[str, ToolInfo] = {
 # Named shortcuts (ADR-0011 D4) -- just pre-set tool selections, not
 # separate pipeline logic. Adding one is a config entry here, nothing else.
 PRESETS: dict[str, tuple[str, ...]] = {
-    "Passive only": ("crtsh", "theharvester", "dnsx"),
-    "Full scan": ("crtsh", "theharvester", "dnsx", "httpx"),
+    "Passive only": ("crtsh", "theharvester", "subfinder", "dnsx"),
+    "Full scan": ("crtsh", "theharvester", "subfinder", "dnsx", "httpx"),
     "Certificate check": ("crtsh",),
 }
 

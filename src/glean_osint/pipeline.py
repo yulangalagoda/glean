@@ -30,6 +30,7 @@ from glean_osint.adapters.base import ParseResult, ScanContext
 from glean_osint.adapters.crtsh import CrtshAdapter
 from glean_osint.adapters.dnsx import DnsxAdapter
 from glean_osint.adapters.httpx import HttpxAdapter
+from glean_osint.adapters.subfinder import SubfinderAdapter
 from glean_osint.adapters.theharvester import TheHarvesterAdapter
 from glean_osint.brief import Brief, build_brief
 from glean_osint.dedup import merge_graph
@@ -158,6 +159,22 @@ def run_scan(
                 ToolRun(source_tool="theharvester", method="passive", raw_output_ref=ref)
             )
             _warn_skipped(add_warning, "theHarvester", result.skipped)
+
+    if "subfinder" in tools:
+        status("Searching passive sources for subdomains (subfinder)...")
+        try:
+            raw = runner.run_subfinder(
+                request.target, binary=_tool_binary("GLEAN_SUBFINDER_BIN", "subfinder")
+            )
+        except _LIVE_INVOCATION_ERRORS as error:
+            add_warning(f"subfinder: live invocation failed ({error}), skipping.")
+        else:
+            ref = runner.archive_raw(raw_dir, f"subfinder-{request.target}.jsonl", raw)
+            ctx = ScanContext(target=request.target, collected_at=collected_at, raw_output_ref=ref)
+            result = SubfinderAdapter().parse(raw, ctx)
+            results.append(result)
+            tools_run.append(ToolRun(source_tool="subfinder", method="passive", raw_output_ref=ref))
+            _warn_skipped(add_warning, "subfinder", result.skipped)
 
     # --- Stage 2: dnsx, fed Stage 1's parsed hostnames (ADR-0008 D1) ---
 

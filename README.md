@@ -8,20 +8,27 @@ Existing OSINT automation excels at *collection* but fails at *judgment*: result
 
 ## Pipeline
 
-1. **Collect** — run a curated set of maintained FOSS OSINT tools against a target.
+1. **Collect** — run a curated set of maintained FOSS OSINT tools against a target
+   (crt.sh, theHarvester, subfinder, dnsx, httpx).
 2. **Normalise** — merge findings into one provenance-tracked entity schema.
 3. **Correlate** — deterministic dedup and entity-linking (in code, not the LLM).
 4. **Synthesise** — a prioritised intelligence brief. Template-based by
    default; `--llm` narrates "Top priorities" with a real local model via
    Ollama instead (ADR-0009).
-5. **Report** — one readable Markdown output; CLI first, GUI later.
+5. **Report** — Markdown by default; `--out report.html` writes a
+   self-contained HTML report instead (ADR-0010). Bare `glean` (no
+   subcommand) launches a local web interface — scan form, live
+   progress, browsable history (ADR-0011).
 
 ## Quickstart
 
 ```
 pip install -e ".[dev]"
 
-# Live: actually invoke tools (requires theHarvester/dnsx/httpx installed)
+# Web interface: scan form, live progress, browsable history
+glean
+
+# Live: actually invoke tools (requires theHarvester/subfinder/dnsx/httpx installed)
 glean scan example.com --live
 glean scan example.com --live --active   # also runs httpx (ACTIVE — see below)
 
@@ -29,13 +36,14 @@ glean scan example.com --live --active   # also runs httpx (ACTIVE — see below
 glean scan example.com \
   --crtsh path/to/crtsh-output.json \
   --theharvester path/to/theharvester-output.json \
+  --subfinder path/to/subfinder-output.jsonl \
   --dnsx path/to/dnsx-envelope.json \
   --httpx path/to/httpx-output.jsonl
 ```
 
 A per-tool file option overrides live invocation for that specific tool,
-even with `--live` (mixed mode). `crt.sh`/`theHarvester`/`dnsx` are
-passive; `httpx` is **active** — it sends real HTTP requests at the
+even with `--live` (mixed mode). `crt.sh`/`theHarvester`/`subfinder`/`dnsx`
+are passive; `httpx` is **active** — it sends real HTTP requests at the
 target, so it's never invoked without an explicit `--active` flag, and
 you should only use it against hosts you're authorised to probe directly
 (see [`docs/ETHICS.md`](docs/ETHICS.md)).
