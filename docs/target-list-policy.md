@@ -29,6 +29,12 @@ Subdomains using the ADR-0004 curated sensitive-keyword list (`admin`, `staging`
 ### Profile D — Wildcard + multi-source corroboration
 A real (intentional) wildcard DNS record resolving every subdomain to the same static harmless page. Safest profile to run — since every possible subdomain serves identical harmless content, there's nothing for even a probing scanner to find beyond the wildcard itself. **Tests:** the `wildcard_or_default` signal, and — once the domain has existed long enough to appear in multiple passive sources naturally — `multi_tool_corroboration` without any special setup.
 
+### Profile E — Real published contact info
+Apex + a `/.well-known/security.txt` (RFC 9116) + a contact page, both listing 2–3 dedicated throwaway addresses that genuinely forward to the operator's inbox (e.g. via Cloudflare Email Routing) — no real functionality behind them beyond receiving mail. **Tests:** theHarvester's actual value-add (email harvesting) against real data — every prior test of the email-harvesting path used only synthetic fixtures. **Caution confirmed in practice:** Cloudflare's Email Address Obfuscation feature (on by default) rewrites plaintext `mailto:` links in served HTML into obfuscated JS-decoded spans — this defeats the whole point of a page meant to expose findable addresses, and needs to be turned off (Scrape Shield settings) for the contact-page half of this profile to actually work. `security.txt` is unaffected (not HTML), so it degrades gracefully either way.
+
+### Profile F — Different hosting stack
+Apex-only, static, otherwise identical to Profile A — but deliberately hosted somewhere other than the Cloudflare setup every other target in this set uses (e.g. GitHub Pages, DNS pointed directly at the registrar, no Cloudflare proxy in front). **Tests:** that nothing in the pipeline (particularly httpx's tech/webserver fingerprinting) is accidentally tuned to one CDN's signature — confirmed in practice: this is the only target in the set whose `httpx` capture shows no `cloudflare` field at all.
+
 ### Hard safety rules across all profiles
 - **No real vulnerable software.** If a signal needs to look "risky" (an open port, a sensitive name), the risk signal comes from OSINT-visible metadata (naming, exposure, cert age) — never from actually running outdated or exploitable software. A public IP with a genuinely vulnerable service attracts real internet background-radiation attacks and could be compromised and reused by someone else for their own purposes.
 - **No real credentials, no real functionality, anywhere.** Every "sensitive-looking" surface serves static, clearly-labeled placeholder content only.
@@ -36,4 +42,6 @@ A real (intentional) wildcard DNS record resolving every subdomain to the same s
 
 ## Target count plan
 
-10 total: `yulan.me` (already piloted) + `scanme.nmap.org` (verified, no setup needed) + 3–4 newly-registered owned domains across Profiles A–D, expanded further later if the roadmap's post-MVP "more targets" goal is pursued. The real domain names, once registered, are recorded in `_private/planning/target-list.md` — never in this file.
+10 total: `yulan.me` (already piloted) + `scanme.nmap.org` (verified, no setup needed) + 4 newly-registered owned domains across Profiles A–D (one repeat each of B and D, plus new Profiles E and F to close real gaps rather than just repeating A–D once each) + the original 3 (Profiles A, B, C, D one each). Expanded further later if the roadmap's post-MVP "more targets" goal is pursued. The real domain names, once registered, are recorded in `_private/planning/target-list.md` — never in this file.
+
+**2026-07-27 note on budget-cheap TLDs:** the 4 newest targets used deeply-discounted new-gTLD promo pricing (~$1.50–2/domain first year) rather than a full-price registrar, since cost was a real constraint at the time. Worth knowing for future target planning: these renew at a much higher rate after year one, so budget for that or plan to let them lapse once their evaluation purpose is served.

@@ -121,11 +121,27 @@ point is a real release, just pre-dev groundwork.
   HTTP-level probing). Result: 0 adapter bugs, 0 skipped records across 12
   real probed hosts. Recorded privately in `_private/planning/target-list.md`
   (raw output stays gitignored, per this project's existing data governance).
+- Ground-truth target list reaches **10/10** (roadmap gate F2), adding 4
+  new owned targets across 2 repeat profiles (B, D — a second independent
+  instance of each, for statistical robustness) and 2 new profiles: E
+  (real published contact info, first real-data test of theHarvester's
+  email-harvesting path) and F (a non-Cloudflare hosting stack, to check
+  nothing in the pipeline is accidentally tuned to one CDN's fingerprint).
+  Validating `dnsx` against real data for the first time (prompted by
+  this expansion) surfaced a real bug: the private capture script had
+  been saving dnsx's bare native output directly, never actually
+  assembling the `{candidates, resolved}` envelope `DnsxAdapter` requires
+  — so `dnsx` had produced 0 entities against every real capture across
+  all targets, this whole time, undetected because the capture script
+  was only ever used as an intermediate host list for `httpx`, never run
+  through the adapter itself. Fixed the capture script and regenerated
+  data for all 10 targets; full detail in `_private/planning/target-list.md`
+  and `docs/target-list-policy.md` (new Profiles E/F).
 
 ### Notes
 - Development has started (`crtsh`, `theharvester`, `dnsx`, `httpx` adapters, dedup,
   scoring, brief, evaluation, CLI). All seven ADRs now have real code,
   except the LLM synthesis step itself (no Ollama wiring yet) and its
   dependent faithfulness stage 2 — the brief's narration is template-based
-  until that exists. Remaining pre-dev gate item: the eval target list is
-  at 6/10 (`_private/planning/ROADMAP_Pre-Development.md` Workstream D3).
+  until that exists. Eval target list gate met: 10/10
+  (`_private/planning/ROADMAP_Pre-Development.md` Workstream D3).
