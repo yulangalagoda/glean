@@ -70,6 +70,30 @@ def test_index_lists_every_registered_tool_and_preset(tmp_path: Path) -> None:
         assert preset_name in response.text
 
 
+def test_nav_marks_new_scan_active_on_the_index_page(tmp_path: Path) -> None:
+    response = _client(tmp_path).get("/")
+    assert 'href="/" class="active"' in response.text
+    assert 'href="/history" class="active"' not in response.text
+
+
+def test_nav_marks_history_active_on_the_history_page(tmp_path: Path) -> None:
+    response = _client(tmp_path).get("/history")
+    assert 'href="/history" class="active"' in response.text
+    assert 'href="/" class="active"' not in response.text
+
+
+def test_nav_appears_on_both_form_and_history_pages(tmp_path: Path) -> None:
+    # The results page (/scan/{id}) deliberately has no nav -- it's the
+    # exact same render_html() output ADR-0010's --out writes to disk,
+    # and that file should never carry web-only chrome.
+    client = _client(tmp_path)
+    for url in ["/", "/history"]:
+        response = client.get(url)
+        assert 'class="nav-brand" href="/">Glean</a>' in response.text
+        assert "New scan" in response.text
+        assert "History" in response.text
+
+
 def _scan_id_from_watch_redirect(location: str) -> str:
     # location is "/scan/<scan_id>/watch?target=...".
     return urlparse(location).path.removeprefix("/scan/").removesuffix("/watch")

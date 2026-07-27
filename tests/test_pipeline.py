@@ -139,21 +139,30 @@ def test_run_scan_without_on_warning_still_populates_the_final_tuple(
     assert "theHarvester: live invocation failed" in outcome.warnings[0]
 
 
-def test_run_scan_folds_crtsh_cache_info_into_warnings(
+def test_run_scan_reports_crtsh_cache_info_as_status_not_a_warning(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """A cache hit is informational, not a problem -- a real bug once
+    folded it into `warnings`, so a perfectly healthy scan showed a
+    misleading "1 warning" on the history page. Matches the CLI's own
+    cyan-vs-yellow treatment of the same messages."""
+
     def fake_fetch_cached(target: str, *, info: list[str] | None = None, **kwargs: object) -> bytes:
         if info is not None:
             info.append("crt.sh: using cached response from 5m ago.")
         return b"[]"
 
     monkeypatch.setattr(runner, "fetch_crtsh_cached", fake_fetch_cached)
+    statuses: list[str] = []
 
     outcome = pipeline.run_scan(
-        ScanRequest(target="example.com", tools=frozenset({"crtsh"})), raw_dir=tmp_path
+        ScanRequest(target="example.com", tools=frozenset({"crtsh"})),
+        raw_dir=tmp_path,
+        on_status=statuses.append,
     )
 
-    assert "crt.sh: using cached response from 5m ago." in outcome.warnings
+    assert "crt.sh: using cached response from 5m ago." in statuses
+    assert outcome.warnings == ()
 
 
 def test_run_scan_calls_on_status_before_each_selected_stage(

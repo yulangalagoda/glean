@@ -521,6 +521,31 @@ point is a real release, just pre-dev groundwork.
   CLI-run history entries never show the warning pill, even if
   something degraded. Not chased further.
 
+### Fixed
+- `/history` showed "1 warning" on scans where nothing had actually
+  gone wrong: `pipeline.run_scan` was folding crt.sh's cache-hit/
+  stale-failsafe notices (ADR-0008 D9) into the same bucket used for
+  real problems, a regression against the CLI's own already-correct
+  convention (cache-hit notices print in cyan there, separate from
+  real yellow warnings). Fixed by routing them through the existing
+  `status()` callback instead -- shown live in neutral style, correctly
+  absent from the manifest's `warnings` and the history warning pill.
+
+### Changed
+- Redesigned the web interface's navigation: a proper full-width
+  header bar (previously the nav sat inside the same constrained
+  column as page content), a "Glean" brand mark linking home, and
+  active-page highlighting. Consolidated the stylesheet onto CSS
+  custom properties for the palette, fixing a real cascade bug found
+  in the process (`.hint`'s colour was declared twice with different
+  values; the later, hardcoded one was silently winning).
+
+  221/221 tests pass (3 new), ruff/mypy/pre-commit clean. Live-
+  validated against a real cache-hit scan (confirmed `warnings: []`
+  and no pill on `/history`, the message arriving live as a `status`
+  event instead of `warning`) and the active-nav class landing on the
+  correct link on both the form and history pages.
+
 ### Notes
 - Development has started (`crtsh`, `theharvester`, `dnsx`, `httpx` adapters, dedup,
   scoring, brief, evaluation, CLI, LLM synthesis). All nine ADRs now have

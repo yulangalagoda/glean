@@ -7,10 +7,17 @@
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<nav class="nav">
-  <a href="/">New scan</a>
-  <a href="/history">History</a>
-</nav>
+<header class="site-header">
+  <nav class="nav">
+    <a class="nav-brand" href="/">Glean</a>
+    <div class="nav-links">
+      <a href="/" class="{{ 'active' if request.url.path == '/' else '' }}">New scan</a>
+      <a href="/history" class="{{ 'active' if request.url.path == '/history' else '' }}">History</a>
+    </div>
+  </nav>
+</header>
+<main class="page">
 {% block content %}{% endblock %}
+</main>
 </body>
 </html>

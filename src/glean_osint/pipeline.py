@@ -124,8 +124,16 @@ def run_scan(
         except _LIVE_INVOCATION_ERRORS as error:
             add_warning(f"crt.sh: live invocation failed ({error}), skipping.")
         else:
+            # Cache-hit/stale-failsafe notices are informational, not a
+            # problem -- routed through status() (shown live, no history
+            # warning pill), matching the CLI's own cyan-vs-yellow
+            # treatment of the same messages (cli.py prints crtsh_info
+            # in CYAN, separate from the YELLOW crtsh_warning bucket).
+            # A real bug: this used to fold them into add_warning(),
+            # so a perfectly healthy cache hit showed up as "1 warning"
+            # on the history page.
             for message in info:
-                add_warning(message)
+                status(message)
             ref = runner.archive_raw(raw_dir, f"crtsh-{request.target}.json", raw)
             ctx = ScanContext(target=request.target, collected_at=collected_at, raw_output_ref=ref)
             result = CrtshAdapter().parse(raw, ctx)
