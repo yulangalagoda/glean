@@ -1,18 +1,26 @@
-"""Tests for the evaluation harness (ADR-0006)."""
+"""Tests for the evaluation harness (ADR-0006).
 
+Stage-2 faithfulness tests mock the judge call via `urlopen` -- no real
+network access happens in this suite.
+"""
+
+import json
 import math
+import urllib.error
 from dataclasses import replace
 from datetime import datetime, timezone
 
-from glean_osint.brief import build_brief
+from glean_osint.brief import Brief, build_brief
 from glean_osint.evaluation import (
     GroundTruth,
     GroundTruthEntry,
+    build_judge_prompt,
     faithfulness_stage1,
+    faithfulness_stage2,
     prioritisation_quality,
     provenance_retention,
 )
-from glean_osint.schema.entities import Entity, ProvenanceEntry, ScanMeta
+from glean_osint.schema.entities import Entity, Priority, ProvenanceEntry, ScanMeta
 from glean_osint.scoring import score_graph
 
 AS_OF = datetime(2026, 7, 26, tzinfo=timezone.utc)
@@ -177,3 +185,108 @@ def test_real_pilot_regression_yulan_me_overlap_at_3() -> None:
     result = prioritisation_quality(glean_top3, gt, n=3)
 
     assert result.overlap_at_n == 0.5
+
+
+# --- Faithfulness (D1 stage 2) --------------------------------------------
+
+
+class _FakeResponse:
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    def __enter__(self) -> "_FakeResponse":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._data
+
+
+def _ollama_envelope(response_text: str) -> bytes:
+    return json.dumps({"response": response_text}).encode("utf-8")
+
+
+def _narrated_brief() -> Brief:
+    entity = Entity(
+        id="domain:example.com",
+        type="domain",
+        value="example.com",
+        provenance=(_prov(),),
+        priority=Priority(score=3.0, rank=1, signals=()),
+    )
+    brief = build_brief([entity], [], SCAN)
+    narrated = replace(
+        brief.top_priorities[0],
+        body="Resolves to a live IP.",
+        why_ranked="Seen independently by multiple tools.",
+    )
+    return replace(brief, top_priorities=(narrated,))
+
+
+def test_build_judge_prompt_includes_stated_text_and_real_facts() -> None:
+    brief = _narrated_brief()
+    prompt = build_judge_prompt(brief.top_priorities)
+
+    assert "Resolves to a live IP." in prompt
+    assert "domain:example.com" in prompt
+
+
+def test_faithfulness_stage2_counts_supported_and_unsupported_claims() -> None:
+    brief = _narrated_brief()
+
+    def fake_urlopen(request: object, timeout: float) -> _FakeResponse:
+        text = json.dumps(
+            {
+                "findings": [
+                    {
+                        "entity_id": "domain:example.com",
+                        "claims": [
+                            {"claim": "Resolves to a live IP.", "supported": True},
+                            {"claim": "Runs outdated software.", "supported": False},
+                        ],
+                    }
+                ]
+            }
+        )
+        return _FakeResponse(_ollama_envelope(text))
+
+    result = faithfulness_stage2(brief, urlopen=fake_urlopen)
+
+    assert result.total_claims == 2
+    assert result.supported_claims == 1
+    assert result.score == 0.5
+    assert result.unjudged_findings == 0
+
+
+def test_faithfulness_stage2_falls_back_to_unjudged_on_ollama_error() -> None:
+    brief = _narrated_brief()
+
+    def fake_urlopen(request: object, timeout: float) -> _FakeResponse:
+        raise urllib.error.URLError("connection refused")
+
+    result = faithfulness_stage2(brief, urlopen=fake_urlopen)
+
+    assert result.total_claims == 0
+    assert result.unjudged_findings == 1
+    assert result.score == 1.0  # vacuous, same convention as stage 1
+
+
+def test_faithfulness_stage2_skips_when_no_top_priorities() -> None:
+    entity = Entity(
+        id="domain:example.com",
+        type="domain",
+        value="example.com",
+        provenance=(_prov(),),
+        priority=Priority(score=0.0, rank=1, signals=()),
+    )
+    brief = build_brief([entity], [], SCAN)
+    assert brief.top_priorities == ()
+
+    def fail_if_called(request: object, timeout: float) -> _FakeResponse:
+        raise AssertionError("must not call the judge with no top_priorities")
+
+    result = faithfulness_stage2(brief, urlopen=fail_if_called)
+    assert result.total_claims == 0
+    assert result.unjudged_findings == 0

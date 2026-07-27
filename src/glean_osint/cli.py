@@ -29,9 +29,12 @@ from glean_osint.adapters.theharvester import TheHarvesterAdapter
 from glean_osint.brief import DEFAULT_TOP_N, build_brief, render_markdown
 from glean_osint.dedup import merge_graph
 from glean_osint.evaluation import (
+    DEFAULT_JUDGE_MODEL,
     FaithfulnessResult,
     PrioritisationQuality,
+    Stage2FaithfulnessResult,
     faithfulness_stage1,
+    faithfulness_stage2,
     load_ground_truth,
     prioritisation_quality,
     provenance_retention,
@@ -294,6 +297,7 @@ class _TargetEvalResult:
     faithfulness: FaithfulnessResult
     provenance_retention: float
     prioritisation: PrioritisationQuality
+    stage2: Stage2FaithfulnessResult | None
 
 
 _RAW_ADAPTERS = (
@@ -304,7 +308,12 @@ _RAW_ADAPTERS = (
 
 
 def _evaluate_target(
-    target_dir: Path, top_n: int, *, llm: bool = False, model: str = synthesis.DEFAULT_MODEL
+    target_dir: Path,
+    top_n: int,
+    *,
+    llm: bool = False,
+    model: str = synthesis.DEFAULT_MODEL,
+    judge_model: str = DEFAULT_JUDGE_MODEL,
 ) -> _TargetEvalResult:
     """Run the real pipeline (adapters -> dedup -> scoring -> brief) against
     one target's raw captures and compare it against its ground truth
@@ -330,8 +339,13 @@ def _evaluate_target(
         target=ground_truth.target, started_at=collected_at, glean_version=__version__
     )
     brief = build_brief(scored, merged.edges, scan_meta, top_n=top_n)
+    stage2: Stage2FaithfulnessResult | None = None
     if llm:
         brief = synthesis.synthesize_brief(brief, scored, model=model).brief
+        # Stage 2 only means something once there's real narration to judge
+        # (also_found is always template text, trivially faithful, D2) --
+        # skip the extra judge call entirely on a template-only brief.
+        stage2 = faithfulness_stage2(brief, judge_model=judge_model)
 
     entity_ids = {e.id for e in scored}
     glean_ranked_ids = [e.id for e in scored]
@@ -340,6 +354,7 @@ def _evaluate_target(
         faithfulness=faithfulness_stage1(brief, entity_ids),
         provenance_retention=provenance_retention(brief),
         prioritisation=prioritisation_quality(glean_ranked_ids, ground_truth, n=top_n),
+        stage2=stage2,
     )
 
 
@@ -363,16 +378,26 @@ def run_eval(
     model: Annotated[
         str, typer.Option(help="Ollama model tag to use with --llm.")
     ] = synthesis.DEFAULT_MODEL,
+    judge_model: Annotated[
+        str,
+        typer.Option(
+            help="Ollama model tag for the stage-2 faithfulness judge (ADR-0006 D4). Should be "
+            "a different, ideally stronger model than --model. Only used with --llm."
+        ),
+    ] = DEFAULT_JUDGE_MODEL,
 ) -> None:
     """Run the evaluation harness (ADR-0006) across every target under
     SCANS_DIR that has both raw tool output and a ground_truth.yaml
     (ADR-0007), and report the three headline numbers.
 
-    Faithfulness is stage 1 only (the deterministic structural check) —
-    stage 2 needs a separate LLM-judge pass this project doesn't have yet.
     Without --llm, faithfulness/provenance-retention are trivially 1.0
-    (the template brief can't fabricate by construction); --llm is what
-    makes those two numbers measure something real.
+    (the template brief can't fabricate by construction). With --llm,
+    faithfulness is reported at both stages: stage 1 (structural —
+    does the finding's entity exist at all) will *still* read 1.0, since
+    an invented entity is already filtered out before it can reach the
+    brief; stage 2 (an LLM judge checking the narrated prose's actual
+    claims against that entity's real facts) is where a real fabricated
+    detail would actually show up.
     """
     if not scans_dir.is_dir():
         typer.secho(f"{scans_dir} is not a directory.", fg=typer.colors.RED, err=True)
@@ -392,7 +417,9 @@ def run_eval(
     results: list[_TargetEvalResult] = []
     for target_dir in target_dirs:
         try:
-            results.append(_evaluate_target(target_dir, top_n, llm=llm, model=model))
+            results.append(
+                _evaluate_target(target_dir, top_n, llm=llm, model=model, judge_model=judge_model)
+            )
         except Exception as error:  # noqa: BLE001 -- one bad target must not abort the report
             typer.secho(
                 f"{target_dir.name}: evaluation failed ({error}), skipping.",
@@ -404,15 +431,19 @@ def run_eval(
         typer.secho("No targets evaluated successfully.", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
 
-    typer.echo(
-        f"{'target':<20} {'faithfulness':>13} {'provenance':>11} "
-        f"{'overlap@' + str(top_n):>10} {'ndcg@' + str(top_n):>9}"
-    )
+    header = f"{'target':<20} {'faithfulness':>13} {'provenance':>11} "
+    header += f"{'overlap@' + str(top_n):>10} {'ndcg@' + str(top_n):>9}"
+    if llm:
+        header += f" {'stage2_faith':>13}"
+    typer.echo(header)
     for r in results:
-        typer.echo(
+        line = (
             f"{r.target:<20} {r.faithfulness.score:>13.3f} {r.provenance_retention:>11.3f} "
             f"{r.prioritisation.overlap_at_n:>10.3f} {r.prioritisation.ndcg_at_n:>9.3f}"
         )
+        if llm and r.stage2 is not None:
+            line += f" {r.stage2.score:>13.3f}"
+        typer.echo(line)
 
     n = len(results)
     mean_faithfulness = sum(r.faithfulness.score for r in results) / n
@@ -420,12 +451,18 @@ def run_eval(
     mean_overlap = sum(r.prioritisation.overlap_at_n for r in results) / n
     mean_ndcg = sum(r.prioritisation.ndcg_at_n for r in results) / n
 
-    typer.secho(
+    summary = (
         f"\n[{n} targets] mean faithfulness={mean_faithfulness:.3f} "
         f"mean provenance_retention={mean_provenance:.3f} "
-        f"mean overlap@{top_n}={mean_overlap:.3f} mean nDCG@{top_n}={mean_ndcg:.3f}",
-        fg=typer.colors.CYAN,
+        f"mean overlap@{top_n}={mean_overlap:.3f} mean nDCG@{top_n}={mean_ndcg:.3f}"
     )
+    stage2_results = [r.stage2 for r in results if r.stage2 is not None]
+    if stage2_results:
+        mean_stage2 = sum(s.score for s in stage2_results) / len(stage2_results)
+        total_unjudged = sum(s.unjudged_findings for s in stage2_results)
+        summary += f" mean stage2_faithfulness={mean_stage2:.3f} (unjudged={total_unjudged})"
+
+    typer.secho(summary, fg=typer.colors.CYAN)
 
 
 def _default_raw_dir(domain: str, collected_at: datetime) -> Path:

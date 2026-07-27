@@ -52,7 +52,8 @@ aborts the scan.
 ## Evaluation
 
 ```
-glean eval [--scans-dir eval/scans] [--top-n 5] [--llm [--model TAG]]
+glean eval [--scans-dir eval/scans] [--top-n 5] \
+  [--llm [--model TAG] [--judge-model TAG]]
 ```
 
 Runs the full pipeline against every target under `--scans-dir` that has
@@ -60,13 +61,19 @@ both raw tool output (`<slug>/raw/`) and a ground-truth ranking
 (`<slug>/ground_truth.yaml`, ADR-0007), then reports the charter's three
 headline numbers per target and averaged across the set: faithfulness,
 provenance retention, and prioritisation quality (`overlap@N`/`nDCG@N`
-against an independent human ranking). Faithfulness/provenance-retention
-read 1.0 either way today — real LLM narration (`--llm`) doesn't change
-that, since stage 1 only checks whether a finding's entity exists at all
-(and invented entities are already filtered before they'd reach the
-brief); catching a real entity given a *false* detail in its prose needs
-a separate LLM-judge pass (stage 2) this project doesn't have yet.
-Prioritisation quality is the metric that's actually meaningful today.
+against an independent human ranking). Faithfulness stage 1 and
+provenance retention read 1.0 either way — stage 1 only checks whether a
+finding's entity exists at all, which invented entities are already
+filtered out before ever reaching the brief. With `--llm`, a second
+faithfulness number (`stage2_faith`) also appears: a real, different
+local model judges whether the narrated *prose* actually states only
+facts supported by that entity's real data (ADR-0006 D1 stage 2,
+ADR-0006 D4 requires the judge to differ from the narration model —
+`--judge-model` defaults to a different, larger model than `--model`).
+Treat the judge's own output with real skepticism — real validation
+found the judge itself makes mistakes (see ADR-0006's Validation
+section), so `stage2_faith` is closer to a lower bound on true narrator
+faithfulness than an exact figure.
 
 ## Scope & ethics
 

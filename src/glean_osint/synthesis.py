@@ -118,7 +118,7 @@ def build_prompt(findings: tuple[Finding, ...]) -> str:
     return _SYSTEM_PREAMBLE + "\n\nFindings:\n" + json.dumps(facts, indent=2)
 
 
-def _extract_items(parsed: object) -> list[object]:
+def extract_json_items(parsed: object) -> list[object]:
     """Ollama's `format: json` mode constrains the grammar to a top-level
     JSON *object* -- confirmed empirically across all locally-pulled
     models, which return the requested findings array under a variety of
@@ -127,6 +127,9 @@ def _extract_items(parsed: object) -> list[object]:
     single key, two returned a single bare finding object instead of an
     array at all). This tries each real shape seen in practice, most
     specific first, rather than assuming any one of them.
+
+    Shared with `evaluation.py`'s stage-2 judge call, which hits the same
+    Ollama quirk against a differently-shaped prompt/response.
     """
     if isinstance(parsed, list):
         return parsed
@@ -161,7 +164,7 @@ def _parse_response(raw_text: str, expected_ids: set[str]) -> tuple[dict[str, di
         parsed = json.loads(raw_text)
     except json.JSONDecodeError:
         return {}, 0
-    items = _extract_items(parsed)
+    items = extract_json_items(parsed)
 
     result: dict[str, dict[str, str]] = {}
     invented = 0

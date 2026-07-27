@@ -243,15 +243,35 @@ point is a real release, just pre-dev groundwork.
   (a separate LLM-judge pass, still not built) exists to catch. Full
   writeup in ADR-0009's Validation section.
 
+- Faithfulness stage 2 (ADR-0006 D1/D4): `evaluation.faithfulness_stage2`
+  — real atomic-claim entailment checking via a second, different local
+  LLM judge (`llama3.1:8b` by default, vs synthesis's `llama3.2:latest`).
+  Decomposition and entailment are combined into one judge call per brief
+  (not two), reusing `synthesis.call_ollama` and the same `format: json`
+  object-wrapping fix from ADR-0009. `glean eval --llm` now reports a
+  `stage2_faith` column and mean; `glean scan --llm` is unaffected (stage
+  2 is an evaluation-time check, not part of the brief itself).
+
+  First real run, across all 10 ground-truth targets: **mean stage-2
+  faithfulness = 0.725**, real variance per target (0.500-1.000), zero
+  unjudged findings. Reading actual judge output by hand (`larnby.com`)
+  found the judge itself makes real errors — it marked two genuinely true
+  claims ("seen independently by multiple tools," where the entity's real
+  `seen_by` field did list two tools) as unsupported. This is ADR-0006
+  D4's own named risk ("a model judging a model has its own faithfulness
+  problem") demonstrated concretely, in the less-obvious direction: the
+  judge wrongly *rejecting* a true claim, not wrongly accepting a false
+  one. `0.725` is therefore a lower bound on real narrator faithfulness
+  for this run, not a precise measurement — recorded as a real, honest
+  limitation in ADR-0006's Validation section rather than quietly
+  prompt-tuned away same-day.
+
 ### Notes
 - Development has started (`crtsh`, `theharvester`, `dnsx`, `httpx` adapters, dedup,
   scoring, brief, evaluation, CLI, LLM synthesis). All nine ADRs now have
-  real code. Faithfulness stage 2 (an LLM-judge pass for content-level
-  fabrication, not just entity-id existence) is the one piece of ADR-0006
-  still not built — real LLM narration exists now (ADR-0009), but stage 1
-  alone can't yet tell a faithful sentence from an unfaithful one about a
-  real entity. Eval target list gate met: 10/10, all with real
-  ground-truth annotations (ADR-0007 F2 fully met), and `glean eval`
-  (roadmap E4) now reproduces the three headline numbers from a clean
-  checkout on demand, optionally through real LLM narration (`--llm`)
+  real code, including both faithfulness stages. Eval target list gate
+  met: 10/10, all with real ground-truth annotations (ADR-0007 F2 fully
+  met), and `glean eval` (roadmap E4) reproduces all three headline
+  numbers from a clean checkout on demand, optionally through real LLM
+  narration and judging (`--llm`)
   (`_private/planning/ROADMAP_Pre-Development.md` Workstream D1/D2/D3/E4/F2).

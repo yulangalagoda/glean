@@ -1,10 +1,13 @@
 """Tests for the `glean` CLI entrypoint."""
 
+import json
+import re
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
+from glean_osint import evaluation, synthesis
 from glean_osint import runner as live_runner
 from glean_osint.cli import app
 
@@ -256,6 +259,47 @@ def test_eval_reports_headline_numbers_for_a_target(tmp_path: Path) -> None:
     assert "faithfulness" in result.output
     assert "mean faithfulness=1.000" in result.output
     assert "mean provenance_retention=1.000" in result.output
+
+
+def _entity_ids_in_prompt(prompt: str) -> list[str]:
+    return re.findall(r'"entity_id":\s*"([^"]+)"', prompt)
+
+
+def test_eval_llm_reports_stage2_faithfulness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--llm wires both narration (synthesis.call_ollama) and stage-2
+    judging (evaluation.call_ollama) -- both are the same underlying
+    function, imported into two different module namespaces, so both
+    need patching independently for a full CLI-level test."""
+    scans_dir = _build_scans_dir(tmp_path)
+
+    def fake_narrate(
+        prompt: str, *, model: str = "", timeout: float = 0, urlopen: object = None
+    ) -> str:
+        findings = [
+            {"entity_id": eid, "body": "Narrated body.", "why_ranked": "Narrated reason."}
+            for eid in _entity_ids_in_prompt(prompt)
+        ]
+        return json.dumps({"findings": findings})
+
+    def fake_judge(
+        prompt: str, *, model: str = "", timeout: float = 0, urlopen: object = None
+    ) -> str:
+        findings = [
+            {"entity_id": eid, "claims": [{"claim": "Narrated body.", "supported": True}]}
+            for eid in _entity_ids_in_prompt(prompt)
+        ]
+        return json.dumps({"findings": findings})
+
+    monkeypatch.setattr(synthesis, "call_ollama", fake_narrate)
+    monkeypatch.setattr(evaluation, "call_ollama", fake_judge)
+
+    result = runner.invoke(app, ["eval", "--scans-dir", str(scans_dir), "--llm"])
+    assert result.exit_code == 0
+    assert "stage2_faith" in result.output
+    assert "mean stage2_faithfulness=1.000" in result.output
+    assert "unjudged=0" in result.output
 
 
 def test_eval_requires_a_directory_with_ground_truth_files(tmp_path: Path) -> None:
