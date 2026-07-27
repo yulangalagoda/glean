@@ -137,6 +137,19 @@ point is a real release, just pre-dev groundwork.
   through the adapter itself. Fixed the capture script and regenerated
   data for all 10 targets; full detail in `_private/planning/target-list.md`
   and `docs/target-list-policy.md` (new Profiles E/F).
+- ADR-0008 (`docs/adr/0008-runner.md`, Proposed — not yet implemented):
+  design for live tool invocation, closing ADR-0002's own open question
+  on whether the runner deserves its own ADR. Establishes the runner as
+  a 3-stage pipeline (crt.sh + theHarvester independent → dnsx fed their
+  parsed hostnames → httpx fed dnsx's resolved hosts, matching the real
+  dependency already visible in each adapter's `build_command()`), a
+  hard `--active` gate so `httpx` never runs without explicit opt-in
+  (the charter's "active requires explicit opt-in" made code-enforced
+  for the first time), crt.sh retry/backoff promoted from the private
+  capture scripts into real code, and raw-output archival under
+  `./glean-output/` for live runs. `--live` is opt-in for now, not a
+  silent new default — deliberately conservative until it has real
+  running experience behind it.
 
 ### Notes
 - Development has started (`crtsh`, `theharvester`, `dnsx`, `httpx` adapters, dedup,
