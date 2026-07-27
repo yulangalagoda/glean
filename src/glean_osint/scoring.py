@@ -56,7 +56,9 @@ SIGNAL_APPLIES_TO: dict[str, frozenset[EntityType]] = {
     "stale_no_dns": frozenset({"subdomain", "domain"}),
 }
 
-# D4's fixed tie-break precedence, highest priority first.
+# D4's fixed tie-break precedence, highest priority first. `web_tech` sits
+# last: it's descriptive metadata about another entity, never itself the
+# actionable finding (2026-07-27 pilot correction — see ADR-0004).
 _TYPE_PRECEDENCE: tuple[EntityType, ...] = (
     "breach_exposure",
     "service",
@@ -66,8 +68,13 @@ _TYPE_PRECEDENCE: tuple[EntityType, ...] = (
     "email_address",
     "dns_record",
     "domain",
+    "web_tech",
 )
 _TYPE_RANK = {t: i for i, t in enumerate(_TYPE_PRECEDENCE)}
+assert set(_TYPE_PRECEDENCE) == ALL_ENTITY_TYPES, (
+    "_TYPE_PRECEDENCE must cover every EntityType or _tie_break_key crashes "
+    "the first time that type actually appears in a scan"
+)
 
 
 @dataclass(frozen=True, slots=True)

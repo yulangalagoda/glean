@@ -19,6 +19,8 @@ import typer
 from glean_osint import __version__
 from glean_osint.adapters.base import ParseResult, ScanContext
 from glean_osint.adapters.crtsh import CrtshAdapter
+from glean_osint.adapters.dnsx import DnsxAdapter
+from glean_osint.adapters.httpx import HttpxAdapter
 from glean_osint.adapters.theharvester import TheHarvesterAdapter
 from glean_osint.brief import DEFAULT_TOP_N, build_brief, render_markdown
 from glean_osint.dedup import merge_graph
@@ -57,6 +59,24 @@ def scan(
             exists=True, readable=True, help="Path to theHarvester JSON output for this target."
         ),
     ] = None,
+    dnsx: Annotated[
+        Path | None,
+        typer.Option(
+            exists=True,
+            readable=True,
+            help="Path to a dnsx {candidates, resolved} JSON envelope for this target.",
+        ),
+    ] = None,
+    httpx: Annotated[
+        Path | None,
+        typer.Option(
+            exists=True,
+            readable=True,
+            help="Path to httpx -json (JSON-lines) output for this target. "
+            "This is an ACTIVE-recon tool: only use it against targets you're "
+            "authorised to probe directly.",
+        ),
+    ] = None,
     authorisation: Annotated[
         str | None,
         typer.Option(help="Authorisation basis for this scan (recorded in the brief header)."),
@@ -69,16 +89,17 @@ def scan(
     ] = None,
 ) -> None:
     """Build a prioritised, provenance-tracked brief for DOMAIN from
-    already-fetched raw tool output (see --crtsh / --theharvester).
+    already-fetched raw tool output (see --crtsh / --theharvester / --dnsx
+    / --httpx).
 
     This does not run any tool itself — live invocation (fetching crt.sh,
-    running theHarvester) isn't built yet. Fetch the raw output yourself
-    first (see _private/scripts/run_passive_scans.sh for this project's
-    own convention), then point this command at the saved files.
+    running theHarvester/dnsx/httpx) isn't built yet. Fetch the raw output
+    yourself first (see _private/scripts/ for this project's own
+    conventions), then point this command at the saved files.
     """
-    if crtsh is None and theharvester is None:
+    if crtsh is None and theharvester is None and dnsx is None and httpx is None:
         typer.secho(
-            "Provide at least one of --crtsh or --theharvester.",
+            "Provide at least one of --crtsh, --theharvester, --dnsx, or --httpx.",
             fg=typer.colors.RED,
             err=True,
         )
@@ -105,6 +126,20 @@ def scan(
             ToolRun(source_tool="theharvester", method="passive", raw_output_ref=str(theharvester))
         )
         _warn_skipped("theHarvester", result.skipped)
+
+    if dnsx is not None:
+        ctx = ScanContext(target=domain, collected_at=collected_at, raw_output_ref=str(dnsx))
+        result = DnsxAdapter().parse(dnsx.read_bytes(), ctx)
+        results.append(result)
+        tools_run.append(ToolRun(source_tool="dnsx", method="passive", raw_output_ref=str(dnsx)))
+        _warn_skipped("dnsx", result.skipped)
+
+    if httpx is not None:
+        ctx = ScanContext(target=domain, collected_at=collected_at, raw_output_ref=str(httpx))
+        result = HttpxAdapter().parse(httpx.read_bytes(), ctx)
+        results.append(result)
+        tools_run.append(ToolRun(source_tool="httpx", method="active", raw_output_ref=str(httpx)))
+        _warn_skipped("httpx", result.skipped)
 
     merged = merge_graph(results)
     scored = score_graph(merged.entities, merged.edges, datetime.now(timezone.utc))

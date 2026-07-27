@@ -1,0 +1,392 @@
+{
+  "skipped": 5,
+  "entities": [
+    {
+      "id": "domain:example.com",
+      "type": "domain",
+      "value": "example.com",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "httpx",
+          "method": "active",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:1"
+        }
+      ]
+    },
+    {
+      "id": "ip_address:203.0.113.1",
+      "type": "ip_address",
+      "value": "203.0.113.1",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "httpx",
+          "method": "active",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:1"
+        }
+      ]
+    },
+    {
+      "id": "service:203.0.113.1:443",
+      "type": "service",
+      "value": "203.0.113.1:443",
+      "attributes": {
+        "port": 443,
+        "protocol": "tcp",
+        "service": "https"
+      },
+      "provenance": [
+        {
+          "source_tool": "httpx",
+          "method": "active",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:1"
+        }
+      ]
+    },
+    {
+      "id": "web_tech:nginx",
+      "type": "web_tech",
+      "value": "nginx",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "httpx",
+          "method": "active",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:1"
+        }
+      ]
+    },
+    {
+      "id": "web_tech:php",
+      "type": "web_tech",
+      "value": "php",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "httpx",
+          "method": "active",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:1"
+        }
+      ]
+    },
+    {
+      "id": "subdomain:www.example.com",
+      "type": "subdomain",
+      "value": "www.example.com",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "httpx",
+          "method": "active",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:2"
+        }
+      ]
+    },
+    {
+      "id": "ip_address:203.0.113.1",
+      "type": "ip_address",
+      "value": "203.0.113.1",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "httpx",
+          "method": "active",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:2"
+        }
+      ]
+    },
+    {
+      "id": "service:203.0.113.1:443",
+      "type": "service",
+      "value": "203.0.113.1:443",
+      "attributes": {
+        "port": 443,
+        "protocol": "tcp",
+        "service": "https"
+      },
+      "provenance": [
+        {
+          "source_tool": "httpx",
+          "method": "active",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:2"
+        }
+      ]
+    },
+    {
+      "id": "web_tech:nginx",
+      "type": "web_tech",
+      "value": "nginx",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "httpx",
+          "method": "active",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:2"
+        }
+      ]
+    },
+    {
+      "id": "subdomain:www.example.com",
+      "type": "subdomain",
+      "value": "www.example.com",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "httpx",
+          "method": "active",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:4"
+        }
+      ]
+    },
+    {
+      "id": "ip_address:203.0.113.1",
+      "type": "ip_address",
+      "value": "203.0.113.1",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "httpx",
+          "method": "active",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:4"
+        }
+      ]
+    },
+    {
+      "id": "service:203.0.113.1:443",
+      "type": "service",
+      "value": "203.0.113.1:443",
+      "attributes": {
+        "port": 443,
+        "protocol": "tcp",
+        "service": "https"
+      },
+      "provenance": [
+        {
+          "source_tool": "httpx",
+          "method": "active",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:4"
+        }
+      ]
+    },
+    {
+      "id": "web_tech:nginx",
+      "type": "web_tech",
+      "value": "nginx",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "httpx",
+          "method": "active",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:4"
+        }
+      ]
+    },
+    {
+      "id": "subdomain:admin.example.com",
+      "type": "subdomain",
+      "value": "admin.example.com",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "httpx",
+          "method": "active",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:5"
+        }
+      ]
+    },
+    {
+      "id": "subdomain:cdn.example.com",
+      "type": "subdomain",
+      "value": "cdn.example.com",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "httpx",
+          "method": "active",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:6"
+        }
+      ]
+    },
+    {
+      "id": "ip_address:203.0.113.3",
+      "type": "ip_address",
+      "value": "203.0.113.3",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "httpx",
+          "method": "active",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:6"
+        }
+      ]
+    },
+    {
+      "id": "service:203.0.113.3:443",
+      "type": "service",
+      "value": "203.0.113.3:443",
+      "attributes": {
+        "port": 443,
+        "protocol": "tcp",
+        "service": "https"
+      },
+      "provenance": [
+        {
+          "source_tool": "httpx",
+          "method": "active",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:6"
+        }
+      ]
+    },
+    {
+      "id": "web_tech:wordpress",
+      "type": "web_tech",
+      "value": "wordpress",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "httpx",
+          "method": "active",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:6"
+        }
+      ]
+    },
+    {
+      "id": "subdomain:noport.example.com",
+      "type": "subdomain",
+      "value": "noport.example.com",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "httpx",
+          "method": "active",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:7"
+        }
+      ]
+    },
+    {
+      "id": "ip_address:203.0.113.5",
+      "type": "ip_address",
+      "value": "203.0.113.5",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "httpx",
+          "method": "active",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:7"
+        }
+      ]
+    },
+    {
+      "id": "web_tech:apache",
+      "type": "web_tech",
+      "value": "apache",
+      "attributes": {},
+      "provenance": [
+        {
+          "source_tool": "httpx",
+          "method": "active",
+          "collected_at": "2026-07-26T20:00:00Z",
+          "raw_record_ref": "line:7"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "source_id": "domain:example.com",
+      "target_id": "ip_address:203.0.113.1",
+      "relation": "resolves_to"
+    },
+    {
+      "source_id": "ip_address:203.0.113.1",
+      "target_id": "service:203.0.113.1:443",
+      "relation": "exposes_service"
+    },
+    {
+      "source_id": "domain:example.com",
+      "target_id": "web_tech:nginx",
+      "relation": "runs_tech"
+    },
+    {
+      "source_id": "domain:example.com",
+      "target_id": "web_tech:php",
+      "relation": "runs_tech"
+    },
+    {
+      "source_id": "subdomain:www.example.com",
+      "target_id": "ip_address:203.0.113.1",
+      "relation": "resolves_to"
+    },
+    {
+      "source_id": "ip_address:203.0.113.1",
+      "target_id": "service:203.0.113.1:443",
+      "relation": "exposes_service"
+    },
+    {
+      "source_id": "subdomain:www.example.com",
+      "target_id": "web_tech:nginx",
+      "relation": "runs_tech"
+    },
+    {
+      "source_id": "subdomain:www.example.com",
+      "target_id": "ip_address:203.0.113.1",
+      "relation": "resolves_to"
+    },
+    {
+      "source_id": "ip_address:203.0.113.1",
+      "target_id": "service:203.0.113.1:443",
+      "relation": "exposes_service"
+    },
+    {
+      "source_id": "subdomain:www.example.com",
+      "target_id": "web_tech:nginx",
+      "relation": "runs_tech"
+    },
+    {
+      "source_id": "subdomain:cdn.example.com",
+      "target_id": "ip_address:203.0.113.3",
+      "relation": "resolves_to"
+    },
+    {
+      "source_id": "ip_address:203.0.113.3",
+      "target_id": "service:203.0.113.3:443",
+      "relation": "exposes_service"
+    },
+    {
+      "source_id": "subdomain:cdn.example.com",
+      "target_id": "web_tech:wordpress",
+      "relation": "runs_tech"
+    },
+    {
+      "source_id": "subdomain:noport.example.com",
+      "target_id": "ip_address:203.0.113.5",
+      "relation": "resolves_to"
+    },
+    {
+      "source_id": "subdomain:noport.example.com",
+      "target_id": "web_tech:apache",
+      "relation": "runs_tech"
+    }
+  ]
+}

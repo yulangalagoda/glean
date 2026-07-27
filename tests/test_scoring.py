@@ -386,3 +386,16 @@ def test_pilot_regression_orphaned_never_renewed_cert_is_not_a_finding() -> None
     scored = _score_of([never_renewed, dead_host])
 
     assert scored[never_renewed.id].priority.score == 0
+
+
+def test_pilot_regression_web_tech_entity_does_not_crash_scoring() -> None:
+    """2026-07-27 (httpx adapter) correction: `web_tech` was missing from
+    the D4 tie-break precedence table, so `score_graph` raised `KeyError`
+    the first time an adapter actually produced one. It must rank behind
+    every other entity type on a raw-score tie (it describes another
+    entity; it is never itself the finding)."""
+    tech = _entity("web_tech:nginx", "web_tech", "nginx")
+    sub = _entity("subdomain:z.example.com", "subdomain", "z.example.com")
+
+    ranked = score_graph([tech, sub], [], AS_OF)
+    assert [e.type for e in ranked] == ["subdomain", "web_tech"]

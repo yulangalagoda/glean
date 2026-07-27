@@ -71,6 +71,8 @@ A blanket positive "this resolves" signal for subdomains was considered and reje
 
 **Re-validated against the same real data:** re-scoring `yulan.me` with `cert_orphaned` added, `overlap@3` and `nDCG@3` improved substantially (see `_private/findings/yulan-me-ground-truth-validation.md` for the full before/after numbers) — the ~57 orphaned dead certificates now net to 0 and drop out of "Top priorities," and the live, human-flagged entities rise correspondingly. Full result, including what still doesn't match and why, recorded in that file rather than repeated here, per this ADR's own "report honestly either way" principle — a validation pass that only reported the fix without reporting the residual gap would defeat the point of doing this with a real blind annotator.
 
+**Pilot correction (2026-07-27) — resolved.** Wiring up the `httpx` adapter — the first tool ever to produce a `web_tech` entity in a real graph — crashed `score_graph` outright (`KeyError: 'web_tech'`) the first time one appeared: the D4 precedence tuple above was written when only 8 of the schema's 9 entity types had ever been instantiated by an adapter, and `web_tech` was simply missing. Fixed by appending `web_tech` at the very end of the precedence order — it describes another entity (a detected technology tag), it is never itself the actionable finding, so on a raw-score tie it should rank behind every entity type that can stand on its own. Also added a module-load-time assertion (`set(_TYPE_PRECEDENCE) == ALL_ENTITY_TYPES`) so a future 10th entity type fails immediately at import rather than crashing deep in `_tie_break_key` only once that type's adapter finally ships real data — the same "surfaced only by finally running real data through it" pattern as every other correction in this section, just caught by a code path instead of a hand-scored target.
+
 ### D3 — Normalisation to a 0–10 scale
 
 Raw summed scores are clamped to `[0, 10]` for display and cross-scan comparability:
@@ -86,7 +88,7 @@ The pre-clamp raw score is kept internally for tie-breaking. Clamping is a displ
 Entities are ranked by raw score, descending. Ties are broken **deterministically** so the ordering is stable across runs:
 
 1. Higher raw score first.
-2. Then a fixed entity-type precedence: `breach_exposure` > `service` > `subdomain` > `certificate` > `ip_address` > `email_address` > `dns_record` > `domain`.
+2. Then a fixed entity-type precedence: `breach_exposure` > `service` > `subdomain` > `certificate` > `ip_address` > `email_address` > `dns_record` > `domain` > `web_tech`.
 3. Then more provenance sources first (more-corroborated wins).
 4. Then lexicographic `id` (final, guarantees total order).
 

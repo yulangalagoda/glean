@@ -82,6 +82,26 @@ point is a real release, just pre-dev groundwork.
   confirmation, never absence-as-evidence). Wildcard-prefixed candidates
   (`*.example.com`) are excluded entirely per ADR-0001 D4, not asserted
   true or false.
+- Fourth adapter, `HttpxAdapter` (ADR-0002), parsing ProjectDiscovery
+  httpx's real `-json` line schema. This project's first *active*-method
+  adapter — it sends real HTTP requests directly at the target, unlike
+  the first three (crt.sh, theHarvester, dnsx), which are all passive.
+  httpx's own `failed` field is emitted on every line, so a probe that
+  found nothing is reported honestly rather than merely absent (when run
+  with `-probe`); adds `service` (`exposes_service`) and `web_tech`
+  (`runs_tech`) entities/edges to the graph — the first adapter to use
+  either. Wiring this up surfaced a real bug: ADR-0004's D4 tie-break
+  precedence table was missing `web_tech` entirely (no adapter had ever
+  produced one before), crashing `score_graph` with `KeyError` the
+  moment one appeared. Fixed by adding `web_tech` at the end of the
+  precedence order plus a module-load-time completeness assertion so a
+  future missing entity type fails at import, not deep in a sort
+  comparator; documented as a dated pilot correction in the ADR itself,
+  consistent with every other correction already recorded there.
+- `dnsx` and `httpx` wired into the `glean scan` CLI (`--dnsx`,
+  `--httpx`), alongside the already-wired `--crtsh`/`--theharvester` —
+  `dnsx` had been built as an adapter in isolation but never actually
+  connected to the CLI entrypoint until now.
 - The `glean` CLI entrypoint (`glean_osint.cli`, roadmap Workstream E1),
   built on Typer: `glean scan <domain> --crtsh FILE --theharvester FILE`
   runs the full pipeline end to end and renders a brief to stdout or
@@ -96,7 +116,7 @@ point is a real release, just pre-dev groundwork.
   invocation otherwise.
 
 ### Notes
-- Development has started (`crtsh`, `theharvester`, `dnsx` adapters, dedup,
+- Development has started (`crtsh`, `theharvester`, `dnsx`, `httpx` adapters, dedup,
   scoring, brief, evaluation, CLI). All seven ADRs now have real code,
   except the LLM synthesis step itself (no Ollama wiring yet) and its
   dependent faithfulness stage 2 — the brief's narration is template-based

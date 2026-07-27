@@ -21,14 +21,16 @@ Existing OSINT automation excels at *collection* but fails at *judgment*: result
 pip install -e ".[dev]"
 glean scan example.com \
   --crtsh path/to/crtsh-output.json \
-  --theharvester path/to/theharvester-output.json
+  --theharvester path/to/theharvester-output.json \
+  --dnsx path/to/dnsx-envelope.json \
+  --httpx path/to/httpx-output.jsonl
 ```
 
-`glean scan` is ingest-only for now: it builds the brief from crt.sh /
-theHarvester JSON output you've already fetched yourself (e.g. `curl
-"https://crt.sh/?q=%25.example.com&output=json"` and `theHarvester -d
-example.com -b crtsh,otx,duckduckgo -f out`); live invocation isn't built
-yet.
+`glean scan` is ingest-only for now: it builds the brief from raw tool
+output you've already fetched yourself; live invocation isn't built yet.
+`--crtsh`/`--theharvester`/`--dnsx` are passive; `--httpx` is **active** —
+it sends real HTTP requests at the target, so only point it at hosts
+you're authorised to probe directly (see [`docs/ETHICS.md`](docs/ETHICS.md)).
 
 ## Scope & ethics
 
