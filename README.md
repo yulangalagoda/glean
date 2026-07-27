@@ -11,8 +11,9 @@ Existing OSINT automation excels at *collection* but fails at *judgment*: result
 1. **Collect** — run a curated set of maintained FOSS OSINT tools against a target.
 2. **Normalise** — merge findings into one provenance-tracked entity schema.
 3. **Correlate** — deterministic dedup and entity-linking (in code, not the LLM).
-4. **Synthesise** — a prioritised intelligence brief. Currently template-based;
-   local-LLM narration (via Ollama) is planned but not wired in yet.
+4. **Synthesise** — a prioritised intelligence brief. Template-based by
+   default; `--llm` narrates "Top priorities" with a real local model via
+   Ollama instead (ADR-0009).
 5. **Report** — one readable Markdown output; CLI first, GUI later.
 
 ## Quickstart
@@ -39,10 +40,19 @@ target, so it's never invoked without an explicit `--active` flag, and
 you should only use it against hosts you're authorised to probe directly
 (see [`docs/ETHICS.md`](docs/ETHICS.md)).
 
+Add `--llm [--model TAG]` to narrate "Top priorities" with a real local
+model via [Ollama](https://ollama.com) instead of the deterministic
+template (requires Ollama running locally with the model pulled).
+`headline` and everything else in the brief's structure stay
+template-generated regardless — the model only ever writes prose, never
+chooses what's included or how it's ordered (ADR-0005). A failed or
+malformed model response falls back to the template per-finding, never
+aborts the scan.
+
 ## Evaluation
 
 ```
-glean eval [--scans-dir eval/scans] [--top-n 5]
+glean eval [--scans-dir eval/scans] [--top-n 5] [--llm [--model TAG]]
 ```
 
 Runs the full pipeline against every target under `--scans-dir` that has
@@ -51,9 +61,12 @@ both raw tool output (`<slug>/raw/`) and a ground-truth ranking
 headline numbers per target and averaged across the set: faithfulness,
 provenance retention, and prioritisation quality (`overlap@N`/`nDCG@N`
 against an independent human ranking). Faithfulness/provenance-retention
-are trivially 1.0 until real LLM synthesis exists (the current brief is
-template-based, so it can't fabricate by construction) — prioritisation
-quality is the metric that's actually meaningful today.
+read 1.0 either way today — real LLM narration (`--llm`) doesn't change
+that, since stage 1 only checks whether a finding's entity exists at all
+(and invented entities are already filtered before they'd reach the
+brief); catching a real entity given a *false* detail in its prose needs
+a separate LLM-judge pass (stage 2) this project doesn't have yet.
+Prioritisation quality is the metric that's actually meaningful today.
 
 ## Scope & ethics
 

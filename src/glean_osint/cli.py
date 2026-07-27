@@ -20,7 +20,7 @@ from typing import Annotated
 
 import typer
 
-from glean_osint import __version__, runner
+from glean_osint import __version__, runner, synthesis
 from glean_osint.adapters.base import ParseResult, ScanContext
 from glean_osint.adapters.crtsh import CrtshAdapter
 from glean_osint.adapters.dnsx import DnsxAdapter
@@ -136,6 +136,17 @@ def scan(
     top_n: Annotated[
         int, typer.Option(help="Number of findings in 'Top priorities'.")
     ] = DEFAULT_TOP_N,
+    llm: Annotated[
+        bool,
+        typer.Option(
+            help="Narrate 'Top priorities' with a real local LLM via Ollama (ADR-0009) "
+            "instead of the deterministic template. Falls back to the template per-finding "
+            "on any failure; never invented, never touches ordering/skeleton."
+        ),
+    ] = False,
+    model: Annotated[
+        str, typer.Option(help="Ollama model tag to use with --llm.")
+    ] = synthesis.DEFAULT_MODEL,
     out: Annotated[
         Path | None, typer.Option(help="Write the brief to this file instead of stdout.")
     ] = None,
@@ -243,6 +254,16 @@ def scan(
         tools_run=tuple(tools_run),
     )
     brief = build_brief(scored, merged.edges, scan_meta, top_n=top_n)
+    if llm:
+        synthesis_result = synthesis.synthesize_brief(brief, scored, model=model)
+        brief = synthesis_result.brief
+        typer.secho(
+            f"[llm] model={model} narrated={synthesis_result.narrated_count} "
+            f"fell_back={synthesis_result.fell_back_count} "
+            f"invented_ids_dropped={synthesis_result.invented_ids_dropped}",
+            fg=typer.colors.CYAN,
+            err=True,
+        )
     rendered = render_markdown(brief)
 
     if out is not None:
@@ -282,7 +303,9 @@ _RAW_ADAPTERS = (
 )
 
 
-def _evaluate_target(target_dir: Path, top_n: int) -> _TargetEvalResult:
+def _evaluate_target(
+    target_dir: Path, top_n: int, *, llm: bool = False, model: str = synthesis.DEFAULT_MODEL
+) -> _TargetEvalResult:
     """Run the real pipeline (adapters -> dedup -> scoring -> brief) against
     one target's raw captures and compare it against its ground truth
     (ADR-0006/0007). Roadmap E4's single reproducible entrypoint."""
@@ -307,6 +330,8 @@ def _evaluate_target(target_dir: Path, top_n: int) -> _TargetEvalResult:
         target=ground_truth.target, started_at=collected_at, glean_version=__version__
     )
     brief = build_brief(scored, merged.edges, scan_meta, top_n=top_n)
+    if llm:
+        brief = synthesis.synthesize_brief(brief, scored, model=model).brief
 
     entity_ids = {e.id for e in scored}
     glean_ranked_ids = [e.id for e in scored]
@@ -327,14 +352,27 @@ def run_eval(
     top_n: Annotated[
         int, typer.Option(help="N for prioritisation-quality overlap@N/nDCG@N (ADR-0006 D2).")
     ] = DEFAULT_TOP_N,
+    llm: Annotated[
+        bool,
+        typer.Option(
+            help="Narrate 'Top priorities' with a real local LLM via Ollama (ADR-0009) before "
+            "scoring faithfulness/provenance-retention, instead of the trivially-faithful "
+            "template brief."
+        ),
+    ] = False,
+    model: Annotated[
+        str, typer.Option(help="Ollama model tag to use with --llm.")
+    ] = synthesis.DEFAULT_MODEL,
 ) -> None:
     """Run the evaluation harness (ADR-0006) across every target under
     SCANS_DIR that has both raw tool output and a ground_truth.yaml
     (ADR-0007), and report the three headline numbers.
 
-    No LLM synthesis exists yet, so faithfulness is stage 1 only (the
-    deterministic structural check) — stage 2 needs an LLM judge this
-    project doesn't have.
+    Faithfulness is stage 1 only (the deterministic structural check) —
+    stage 2 needs a separate LLM-judge pass this project doesn't have yet.
+    Without --llm, faithfulness/provenance-retention are trivially 1.0
+    (the template brief can't fabricate by construction); --llm is what
+    makes those two numbers measure something real.
     """
     if not scans_dir.is_dir():
         typer.secho(f"{scans_dir} is not a directory.", fg=typer.colors.RED, err=True)
@@ -354,7 +392,7 @@ def run_eval(
     results: list[_TargetEvalResult] = []
     for target_dir in target_dirs:
         try:
-            results.append(_evaluate_target(target_dir, top_n))
+            results.append(_evaluate_target(target_dir, top_n, llm=llm, model=model))
         except Exception as error:  # noqa: BLE001 -- one bad target must not abort the report
             typer.secho(
                 f"{target_dir.name}: evaluation failed ({error}), skipping.",

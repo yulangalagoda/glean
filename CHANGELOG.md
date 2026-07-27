@@ -207,28 +207,51 @@ point is a real release, just pre-dev groundwork.
   subdomain pattern flagged during annotation. Full numbers in
   ADR-0006's Validation section.
 
-- ADR-0009 (`docs/adr/0009-llm-synthesis.md`, Proposed — not yet
-  implemented): design for real Ollama-based LLM narration, replacing
-  `brief.py`'s template `body`/`why_ranked` text (`headline` and the rest
-  of the skeleton stay template-generated — ADR-0005 already fixed that
-  as contract, not a model choice). Only `top_priorities` gets narrated,
-  not the noisy `also_found` tail; invocation is a direct HTTP call to
-  Ollama's local API (`format: json`, `temperature: 0`, no new
-  dependency); a malformed or invented-entity response degrades
-  per-finding, never blanks the whole brief; `--llm [--model TAG]` is
-  opt-in on `glean scan`, same conservative rollout as `--live` (ADR-0008
-  D6). Ollama already installed and running locally with 5 models pulled
-  (`llama3.1:8b`, `llama3.2:latest`, `mistral:latest`, `phi3:latest`,
-  `phi3:medium`) — covers the roadmap's "compare across 2-3 local
-  models" ask with zero new setup.
+- ADR-0009 (`docs/adr/0009-llm-synthesis.md`, Accepted): `glean_osint.synthesis`
+  — real Ollama-based LLM narration, replacing `brief.py`'s template
+  `body`/`why_ranked` text (`headline` and the rest of the skeleton stay
+  template-generated — ADR-0005 already fixed that as contract, not a
+  model choice). Only `top_priorities` gets narrated, not the noisy
+  `also_found` tail. Invocation is a direct HTTP call to Ollama's local
+  API (`format: json`, `temperature: 0`, no new dependency). `--llm
+  [--model TAG]` is opt-in on both `glean scan` and `glean eval`, same
+  conservative rollout as `--live` (ADR-0008 D6).
+
+  Live-validating against a real target found a real bug on the first
+  call: Ollama's `format: json` mode constrains the grammar to a
+  top-level JSON *object*, so the originally-requested bare top-level
+  array was never actually achievable — all 4 models tested improvised a
+  different wrapping shape (one unrelated single-key wrap, two collapsed
+  to a single bare finding object ignoring the rest, one guessed
+  `{"findings": [...]}`). Fixed by changing the prompt to request that
+  exact shape and making the parser defensively unwrap all four real
+  shapes seen — regression-tested for each. After the fix:
+  `llama3.2:latest`/`llama3.1:8b`/`mistral:latest` all narrate 5/5
+  findings correctly; `phi3:latest` (smallest model tested) manages only
+  2/5 and gracefully falls back per-finding for the rest — a real,
+  legitimate small-model-faithfulness data point, not a bug.
+
+  Also found: running `glean eval --llm` across all 10 ground-truth
+  targets produced *identical* faithfulness/provenance-retention/
+  prioritisation numbers to the template-only run — not a bug, but a
+  real limitation worth having measured rather than assumed. Stage 1
+  faithfulness only checks entity-id existence, and `synthesize_brief`
+  already discards any invented id before it reaches the brief, so stage
+  1 structurally cannot read anything but 1.000 regardless of whether
+  the prose is template or real LLM output. The uncaught risk — a real
+  entity given a false attribute in its prose — is exactly what stage 2
+  (a separate LLM-judge pass, still not built) exists to catch. Full
+  writeup in ADR-0009's Validation section.
 
 ### Notes
 - Development has started (`crtsh`, `theharvester`, `dnsx`, `httpx` adapters, dedup,
-  scoring, brief, evaluation, CLI). All seven ADRs now have real code,
-  except the LLM synthesis step itself (no Ollama wiring yet) and its
-  dependent faithfulness stage 2 — the brief's narration is template-based
-  until that exists. Eval target list gate met: 10/10, all with real
+  scoring, brief, evaluation, CLI, LLM synthesis). All nine ADRs now have
+  real code. Faithfulness stage 2 (an LLM-judge pass for content-level
+  fabrication, not just entity-id existence) is the one piece of ADR-0006
+  still not built — real LLM narration exists now (ADR-0009), but stage 1
+  alone can't yet tell a faithful sentence from an unfaithful one about a
+  real entity. Eval target list gate met: 10/10, all with real
   ground-truth annotations (ADR-0007 F2 fully met), and `glean eval`
   (roadmap E4) now reproduces the three headline numbers from a clean
-  checkout on demand
-  (`_private/planning/ROADMAP_Pre-Development.md` Workstream D3/E4/F2).
+  checkout on demand, optionally through real LLM narration (`--llm`)
+  (`_private/planning/ROADMAP_Pre-Development.md` Workstream D1/D2/D3/E4/F2).
