@@ -60,13 +60,28 @@ _LIVE_INVOCATION_ERRORS = (
 # prints to stdout; --out always writes the complete brief.
 DEFAULT_ALSO_FOUND_LIMIT = 25
 
-app = typer.Typer(add_completion=False, no_args_is_help=True)
+app = typer.Typer(add_completion=False)
 
 
-@app.callback()
-def _main() -> None:
+@app.callback(invoke_without_command=True)
+def _main(
+    ctx: typer.Context,
+    host: Annotated[
+        str, typer.Option(help="Host to bind the web interface to (bare `glean` only).")
+    ] = "127.0.0.1",
+    port: Annotated[
+        int, typer.Option(help="Port to bind the web interface to (bare `glean` only).")
+    ] = 8420,
+) -> None:
     """Glean — unify open-source recon tools into a provenance-tracked,
     prioritised intelligence brief.
+
+    Bare `glean` (no subcommand) launches the local web interface
+    (ADR-0011) — additive, not a replacement: `glean scan ...` /
+    `glean eval ...` remain the CLI path, entirely unaffected. Binds to
+    localhost only by default (ADR-0011 D8): an unauthenticated control
+    plane that can trigger *active* recon must never be reachable from
+    the network by default.
 
     A callback (even a no-op one) is required here, not cosmetic: with
     only one registered command, Typer collapses to `glean <args>`
@@ -75,6 +90,14 @@ def _main() -> None:
     against once `glean eval` exists as a sibling command (roadmap
     Workstream E4).
     """
+    if ctx.invoked_subcommand is None:
+        # Imported lazily: FastAPI/uvicorn/jinja2 shouldn't add import
+        # weight to the common case (`glean scan ...`), which never
+        # touches the web interface at all.
+        from glean_osint.web.app import serve
+
+        typer.echo(f"Glean web interface: http://{host}:{port}")
+        serve(host=host, port=port)
 
 
 @app.command()

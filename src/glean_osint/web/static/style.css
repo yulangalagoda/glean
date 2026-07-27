@@ -1,0 +1,51 @@
+/* Glean web interface (ADR-0011) -- same visual language as the HTML
+   report (ADR-0010): plain, accessible, no colour-only signalling,
+   light/dark via prefers-color-scheme. */
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 4rem;
+  color: #1a1a1a;
+  background: #fdfdfd;
+}
+@media (prefers-color-scheme: dark) {
+  body { color: #e8e8e8; background: #16171a; }
+  input[type="text"], input[type="number"] { background: #202226; border-color: #34363b; color: #e8e8e8; }
+  .tool-card { background: #202226; border-color: #34363b; }
+  .preset-btn { background: #202226; border-color: #34363b; color: #e8e8e8; }
+  .error { background: #3a2222; border-color: #6b3232; color: #ffb4b4; }
+  .hint { color: #a3a3a3; }
+}
+h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+.hint { color: #666; font-size: 0.9rem; margin: 0 0 2rem; }
+form { display: flex; flex-direction: column; gap: 1.5rem; }
+label { font-weight: 600; display: block; margin-bottom: 0.4rem; }
+input[type="text"], input[type="number"] {
+  width: 100%; padding: 0.55rem 0.7rem; border: 1px solid #ccc; border-radius: 8px;
+  font-size: 1rem; font-family: inherit;
+}
+.presets { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.preset-btn {
+  border: 1px solid #ccc; border-radius: 999px; padding: 0.35rem 0.85rem;
+  background: #fff; cursor: pointer; font-size: 0.88rem; font-family: inherit;
+}
+.tools { display: flex; flex-direction: column; gap: 0.5rem; }
+.tool-card {
+  display: flex; align-items: center; gap: 0.6rem; border: 1px solid #ddd;
+  border-radius: 8px; padding: 0.6rem 0.8rem; background: #fff;
+}
+.tool-card .method { margin-left: auto; font-size: 0.8rem; color: #666; font-variant-numeric: tabular-nums; }
+@media (prefers-color-scheme: dark) { .tool-card .method { color: #a3a3a3; } }
+button[type="submit"] {
+  padding: 0.7rem 1.2rem; border-radius: 8px; border: none; background: #1a1a1a;
+  color: #fff; font-size: 1rem; font-weight: 600; cursor: pointer; align-self: flex-start;
+}
+@media (prefers-color-scheme: dark) { button[type="submit"] { background: #e8e8e8; color: #16171a; } }
+.error {
+  background: #fde8e8; border: 1px solid #f3b6b6; color: #8a2323;
+  border-radius: 8px; padding: 0.7rem 1rem; font-size: 0.92rem;
+}

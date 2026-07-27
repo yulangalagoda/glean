@@ -415,6 +415,54 @@ point is a real release, just pre-dev groundwork.
   terminal dump originally motivated this whole thread) and previewed
   as a published artifact for a human visual check, not just structural
   assertions.
+- Interactive web interface, Stage 1 (ADR-0011): bare `glean` (no
+  subcommand) now launches a local FastAPI + server-rendered HTML web
+  interface at `http://127.0.0.1:8420` — a scan form (target, tool
+  toggles + presets, authorisation), a synchronous run (no client-side
+  framework or build step; htmx is planned for Stage 2's live progress,
+  not needed yet), and a results page reusing `render_html()`
+  (ADR-0010) directly. `glean scan ...`/`glean eval ...` are completely
+  unaffected — this is additive.
+  First runtime dependencies beyond stdlib+typer+pyyaml (FastAPI,
+  uvicorn, jinja2, python-multipart) — a deliberate, named departure
+  from this project's stdlib-only discipline so far, not an accident.
+  New `registry.py` (a real adapter/tool registry, `tool_id`/
+  `default_method`/`requires` per tool — the direct enabler of the tool
+  list showing up automatically as adapters are added, and of the one
+  real structural constraint, httpx requiring dnsx, being enforced
+  rather than silently allowed to misbehave); `pipeline.py` (fresh
+  orchestration glue reusing every existing building block --
+  `runner.py`'s live invocation incl. crt.sh caching, each adapter's
+  `parse`, dedup, scoring, `build_brief` -- deliberately *not* a
+  refactor of the CLI's own already-tested `scan()` command);
+  `history.py` (scan history at a fixed `~/.local/share/glean/scans/`,
+  file-based manifests, no database). Server binds to `127.0.0.1` only,
+  no auth — a local single-operator tool, and an unauthenticated
+  control plane that can trigger active recon must never be reachable
+  from the network by default.
+
+  195/195 tests pass (new: registry/pipeline/web-app test files, the
+  latter via FastAPI's `TestClient` fully isolated from the real
+  `~/.local/share/glean/`), wheel build confirmed to actually package
+  the new templates/static assets. Real-data validated: ran real scans
+  against `larnby.com` through the actual HTTP form, all four tools
+  contributing, results/history/raw-archive all landing correctly.
+
+  Two real bugs found during that validation: (1) the web pipeline
+  never read `$GLEAN_THEHARVESTER_BIN`/`$GLEAN_DNSX_BIN`/
+  `$GLEAN_HTTPX_BIN` at all -- those env vars were only ever wired
+  through the CLI's Typer options, which the web app doesn't go
+  through, so a real scan through the form hit the exact same
+  binary-collision failures already solved once for the CLI. Fixed by
+  having `pipeline.py` read them directly. (2) A bound `from
+  glean_osint.pipeline import run_scan` in `web/app.py` would have
+  silently defeated test monkeypatching -- the exact class of bug
+  found in `fetch_crtsh_cached` earlier this session -- caught this
+  time by deliberately checking for the pattern before it caused a
+  real problem, not after.
+
+  Stage 2 (SSE live progress) and Stage 3 (history browsing UI) are
+  not yet built.
 
 ### Notes
 - Development has started (`crtsh`, `theharvester`, `dnsx`, `httpx` adapters, dedup,

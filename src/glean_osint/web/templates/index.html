@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Glean</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<h1>Glean</h1>
+<p class="hint">Unify open-source recon tools into one provenance-tracked, prioritised brief.</p>
+
+{% if error %}
+<p class="error">{{ error }}</p>
+{% endif %}
+
+<form method="post" action="/scan">
+  <div>
+    <label for="target">Target domain</label>
+    <input type="text" id="target" name="target" placeholder="example.com"
+           value="{{ form.get('target', '') }}" required autofocus>
+  </div>
+
+  <div>
+    <label>Presets</label>
+    <div class="presets">
+      {% for name, tool_ids in presets.items() %}
+      <button type="button" class="preset-btn" onclick="selectPreset('{{ tool_ids | join(',') }}')">{{ name }}</button>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div>
+    <label>Tools</label>
+    <div class="tools">
+      {% for tool_id, info in tools.items() %}
+      <div class="tool-card">
+        <input type="checkbox" id="tool-{{ tool_id }}" name="tools" value="{{ tool_id }}"
+               {% if tool_id in form.get('tools', []) %}checked{% endif %}>
+        <label for="tool-{{ tool_id }}" style="margin: 0; font-weight: 400;">{{ info.display_name }}</label>
+        <span class="method">{{ info.default_method }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div>
+    <label for="authorisation">Authorisation basis</label>
+    <input type="text" id="authorisation" name="authorisation"
+           placeholder="e.g. Domain owned by operator" value="{{ form.get('authorisation', '') }}">
+  </div>
+
+  <button type="submit">Run scan</button>
+</form>
+
+<script>
+function selectPreset(idsCsv) {
+  const ids = idsCsv.split(',');
+  document.querySelectorAll('input[name="tools"]').forEach(function (cb) {
+    cb.checked = ids.includes(cb.value);
+  });
+}
+const httpxBox = document.querySelector('input[name="tools"][value="httpx"]');
+const dnsxBox = document.querySelector('input[name="tools"][value="dnsx"]');
+if (httpxBox && dnsxBox) {
+  httpxBox.addEventListener('change', function () {
+    if (this.checked) { dnsxBox.checked = true; }
+  });
+}
+</script>
+</body>
+</html>
