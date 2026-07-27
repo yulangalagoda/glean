@@ -157,6 +157,38 @@ def test_render_markdown_has_the_fixed_sections_in_order() -> None:
     assert "Findings in this brief: 2." in rendered
 
 
+def test_render_markdown_also_found_limit_truncates_with_a_note() -> None:
+    """`also_found_limit` is display-only -- it caps a large target's
+    'Also found' bullet list for terminal readability without touching
+    the underlying Brief data or the footer counts (D6)."""
+    entities = [_entity("domain:example.com", "domain", "example.com")] + [
+        _entity(f"subdomain:h{i}.example.com", "subdomain", f"h{i}.example.com") for i in range(5)
+    ]
+    scored = score_graph(entities, [], AS_OF)
+    brief = build_brief(scored, [], SCAN)
+    assert len(brief.also_found) == 6  # nothing scores >0, so all 6 land in also_found
+
+    rendered = render_markdown(brief, also_found_limit=2)
+
+    assert rendered.count("- **`") == 2
+    assert "- _...and 4 more not shown here._" in rendered
+    # the footer stays the true, complete total -- truncation is display-only
+    assert "Findings in this brief: 6." in rendered
+
+
+def test_render_markdown_no_limit_shows_every_also_found_entry() -> None:
+    entities = [_entity("domain:example.com", "domain", "example.com")] + [
+        _entity(f"subdomain:h{i}.example.com", "subdomain", f"h{i}.example.com") for i in range(5)
+    ]
+    scored = score_graph(entities, [], AS_OF)
+    brief = build_brief(scored, [], SCAN)
+
+    rendered = render_markdown(brief)
+
+    assert rendered.count("- **`") == 6
+    assert "not shown here" not in rendered
+
+
 def test_check_brief_contract_passes_on_a_real_build_brief_output() -> None:
     entities = [
         _entity("domain:example.com", "domain", "example.com"),

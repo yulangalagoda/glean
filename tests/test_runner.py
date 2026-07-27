@@ -33,6 +33,13 @@ class _FakeResponse:
         return self._data
 
 
+def _pd_version_reply(argv: list[str]) -> subprocess.CompletedProcess[bytes]:
+    """A fake `<binary> -version` reply matching a real ProjectDiscovery
+    tool's banner — used to satisfy `_verify_projectdiscovery_binary`
+    (ADR-0008) in tests that exercise the real dnsx/httpx invocation path."""
+    return subprocess.CompletedProcess(argv, 0, stdout=b"projectdiscovery.io\n", stderr=b"")
+
+
 def _entity(entity_type: str, value: str, **attributes: object) -> Entity:
     return Entity(
         id=f"{entity_type}:{value}",
@@ -164,6 +171,27 @@ def test_run_theharvester_reads_the_output_file_the_subprocess_wrote(
     assert result == b'{"cmd": "...", "hosts": []}'
 
 
+def test_run_theharvester_uses_the_custom_binary_as_argv0(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real bug: `build_command` always hardcodes "theHarvester" as
+    argv[0], so a custom --theharvester-bin used to pass tool_available's
+    check but then still exec the bare name, failing with `[Errno 2] No
+    such file or directory: 'theHarvester'` even with the option set."""
+    monkeypatch.setattr(runner, "tool_available", lambda name: True)
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        assert argv[0] == "/opt/theharvester/theHarvester"
+        prefix = argv[argv.index("-f") + 1]
+        Path(f"{prefix}.json").write_bytes(b'{"cmd": "...", "hosts": []}')
+        return subprocess.CompletedProcess(argv, 0, stdout=b"", stderr=b"")
+
+    result = runner.run_theharvester(
+        "example.com", binary="/opt/theharvester/theHarvester", run=fake_run
+    )
+    assert result == b'{"cmd": "...", "hosts": []}'
+
+
 # --- run_dnsx -------------------------------------------------------------
 
 
@@ -174,6 +202,8 @@ def test_run_dnsx_wraps_candidates_and_resolved_into_envelope(
 
     def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
         assert argv[0] == "dnsx"
+        if argv[1] == "-version":
+            return _pd_version_reply(argv)
         stdout = b'{"host": "example.com", "a": ["203.0.113.1"]}\n'
         return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr=b"")
 
@@ -202,6 +232,21 @@ def test_run_dnsx_raises_tool_unavailable(monkeypatch: pytest.MonkeyPatch) -> No
         runner.run_dnsx(["example.com"])
 
 
+def test_run_dnsx_raises_tool_unavailable_for_an_impostor_binary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A same-named but unrelated program on PATH must not be silently
+    treated as ProjectDiscovery's dnsx (ADR-0008): its `-version` output
+    won't carry the real tool's "projectdiscovery.io" banner."""
+    monkeypatch.setattr(runner, "tool_available", lambda name: True)
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(argv, 2, stdout=b"", stderr=b"unrecognized option\n")
+
+    with pytest.raises(runner.ToolUnavailable, match="does not look like"):
+        runner.run_dnsx(["example.com"], run=fake_run)
+
+
 # --- run_httpx --------------------------------------------------------
 
 
@@ -210,6 +255,8 @@ def test_run_httpx_returns_stdout_directly(monkeypatch: pytest.MonkeyPatch) -> N
 
     def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
         assert argv[0] == "httpx"
+        if argv[1] == "-version":
+            return _pd_version_reply(argv)
         return subprocess.CompletedProcess(
             argv, 0, stdout=b'{"input": "example.com"}\n', stderr=b""
         )
@@ -236,6 +283,24 @@ def test_run_httpx_raises_tool_unavailable(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(runner, "tool_available", lambda name: False)
     with pytest.raises(runner.ToolUnavailable):
         runner.run_httpx(["example.com"])
+
+
+def test_run_httpx_raises_tool_unavailable_for_an_impostor_binary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Confirmed in practice on this project's own machine: the system
+    `httpx` is Python's HTTP-client CLI, not ProjectDiscovery's. It used
+    to be silently invoked and produce empty output, indistinguishable
+    from "ran fine, found nothing." It must now be rejected loudly."""
+    monkeypatch.setattr(runner, "tool_available", lambda name: True)
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(
+            argv, 2, stdout=b"", stderr=b"Error: No such option: -version\n"
+        )
+
+    with pytest.raises(runner.ToolUnavailable, match="does not look like"):
+        runner.run_httpx(["example.com"], run=fake_run)
 
 
 # --- extract_candidates / extract_resolved_hosts ---------------------

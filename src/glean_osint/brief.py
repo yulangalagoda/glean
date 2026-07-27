@@ -289,9 +289,19 @@ def _surface_line(entities: list[Entity]) -> str:
     return " · ".join(parts)
 
 
-def render_markdown(brief: Brief) -> str:
+def render_markdown(brief: Brief, *, also_found_limit: int | None = None) -> str:
     """Render the fixed D1 skeleton as Markdown: header, top priorities,
-    also found, provenance footer."""
+    also found, provenance footer.
+
+    `also_found_limit` is a display-only truncation of the "Also found"
+    bullet list -- `None` (the default) prints every entry, exactly as
+    before. It exists because "Also found" is deliberately unbounded
+    (unlike "Top priorities", which is capped by `top_n`), and a
+    large/historically-rich target can produce hundreds of entries that
+    are unreadable dumped straight to a terminal. This never touches
+    `Brief.also_found` itself or the footer counts (D6) -- both stay
+    complete; only how many bullets this one rendering prints changes.
+    """
     lines = [f"# Glean Brief — {brief.scan.target}", ""]
     scan_line = (
         f"**Scan:** {brief.scan.target} · {brief.scan.started_at} · "
@@ -324,9 +334,13 @@ def render_markdown(brief: Brief) -> str:
     lines.append("")
     lines.append("## Also found")
     lines.append("")
-    for finding in brief.also_found:
+    shown = brief.also_found if also_found_limit is None else brief.also_found[:also_found_limit]
+    for finding in shown:
         body = finding.body.rstrip(".")
         lines.append(f"- **`{finding.display_value}`** — {body} ({finding.seen_by}).")
+    omitted = len(brief.also_found) - len(shown)
+    if omitted > 0:
+        lines.append(f"- _...and {omitted} more not shown here._")
     lines.append("")
     lines.append("---")
     lines.append("")

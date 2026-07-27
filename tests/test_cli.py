@@ -100,17 +100,82 @@ def test_scan_records_authorisation_and_top_n() -> None:
     assert "**3." not in result.output  # top_n=2 caps "Top priorities" at 2
 
 
+def _many_hosts_crtsh_json(tmp_path: Path, count: int) -> Path:
+    """A synthetic crt.sh capture with `count` distinct subdomains -- enough
+    to exercise the "Also found" truncation (DEFAULT_ALSO_FOUND_LIMIT=25),
+    since the real fixtures only carry a handful of entries."""
+    records = [
+        {
+            "issuer_ca_id": 1,
+            "issuer_name": "C=US, O=Let's Encrypt, CN=R11",
+            "common_name": f"h{i}.example.com",
+            "name_value": f"h{i}.example.com",
+            "id": 7100000000 + i,
+            "entry_timestamp": "2026-06-01T08:00:00",
+            "not_before": "2026-06-01T07:00:00",
+            "not_after": "2026-08-30T08:00:00",
+            "serial_number": f"{i:014x}",
+            "result_count": 1,
+        }
+        for i in range(count)
+    ]
+    path = tmp_path / "crtsh-many.json"
+    path.write_text(json.dumps(records))
+    return path
+
+
+def test_scan_also_found_is_truncated_by_default(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["scan", "example.com", "--crtsh", str(_many_hosts_crtsh_json(tmp_path, 40))],
+    )
+    assert result.exit_code == 0
+    assert "- _...and " in result.output
+    assert "more not shown here._" in result.output
+
+
+def test_scan_show_all_prints_every_also_found_entry(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["scan", "example.com", "--crtsh", str(_many_hosts_crtsh_json(tmp_path, 40)), "--show-all"],
+    )
+    assert result.exit_code == 0
+    assert "not shown here" not in result.output
+    for i in range(40):
+        assert f"h{i}.example.com" in result.output
+
+
+def test_scan_out_file_is_always_complete_regardless_of_show_all(tmp_path: Path) -> None:
+    out_file = tmp_path / "brief.md"
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "example.com",
+            "--crtsh",
+            str(_many_hosts_crtsh_json(tmp_path, 40)),
+            "--out",
+            str(out_file),
+        ],
+    )
+    assert result.exit_code == 0
+    written = out_file.read_text()
+    assert "not shown here" not in written
+    for i in range(40):
+        assert f"h{i}.example.com" in written
+
+
 # --- --live / --active (ADR-0008: the runner) ---------------------------
 #
 # Every live-invocation function is monkeypatched here — no real network
 # access or subprocess execution happens in this suite.
 
 
-def _empty_dnsx_envelope(candidates: list[str]) -> bytes:
+def _empty_dnsx_envelope(candidates: list[str], **kwargs: object) -> bytes:
     return b'{"candidates": [], "resolved": []}'
 
 
-def _empty_theharvester(target: str) -> bytes:
+def _empty_theharvester(target: str, **kwargs: object) -> bytes:
     return b'{"cmd": "", "hosts": []}'
 
 
@@ -152,7 +217,7 @@ def test_scan_live_with_active_invokes_httpx_and_archives_raw_output(
         b'{"candidates": ["example.com"], '
         b'"resolved": [{"host": "example.com", "a": ["203.0.113.1"]}]}'
     )
-    monkeypatch.setattr(live_runner, "run_dnsx", lambda candidates: dnsx_envelope)
+    monkeypatch.setattr(live_runner, "run_dnsx", lambda candidates, **kwargs: dnsx_envelope)
     monkeypatch.setattr(
         live_runner,
         "run_httpx",
@@ -205,7 +270,7 @@ def test_scan_live_per_tool_file_overrides_live_invocation(
 def test_scan_live_degraded_tool_does_not_abort_the_scan(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    def _unavailable(target: str) -> bytes:
+    def _unavailable(target: str, **kwargs: object) -> bytes:
         raise live_runner.ToolUnavailable("theHarvester")
 
     monkeypatch.setattr(live_runner, "fetch_crtsh", lambda target: b"[]")

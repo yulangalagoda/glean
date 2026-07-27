@@ -279,6 +279,89 @@ point is a real release, just pre-dev groundwork.
   behaviour or test output (spinner never starts a background thread
   under non-tty/captured output).
 
+### Fixed
+- Spinner/warning race condition: a live-invocation failure (e.g.
+  theHarvester unavailable) was printed from *inside* the active
+  `Spinner`'s `with` block, so the spinner thread's own `\r`-driven
+  redraw raced the warning text and corrupted the terminal line (a real
+  target run produced a single garbled line mixing spinner text and the
+  warning message). `_invoke_live`/`_resolve_input` now return the
+  warning instead of printing it directly; every call site in `scan()`
+  prints it only after the `with Spinner(...):` block has exited and
+  cleanly cleared its own line.
+- "Also found" section flooding the terminal for history-rich targets:
+  `yulan.me` produced 529 findings after dedup, dumping hundreds of
+  unpaginated markdown bullets. `render_markdown` gained an optional,
+  display-only `also_found_limit` parameter (default: unlimited, so
+  existing behaviour and tests are unchanged) and `scan` now defaults to
+  showing 25 with a "...and N more not shown here." note; a new
+  `--show-all` flag prints every entry, and `--out` always writes the
+  complete brief regardless of `--show-all`. Both fixes re-verified live
+  against `yulan.me` (`--live --active --httpx-bin`): theHarvester
+  resolved once on `PATH`, output stayed clean and readable, "Also
+  found" truncated to 25/529 with the note, and — with the correct
+  ProjectDiscovery `httpx` binary — real IP/service/web-tech findings
+  appeared (two `exposed tcp service` findings ranked #1/#2, ahead of
+  every subdomain) and `--authorisation` populated the brief header,
+  confirming the earlier "no IPs, blank authorisation" report was a
+  wrong-`httpx`-binary and missing-flag issue, not a scoring bug — the
+  entity-type tie-break (ADR-0004 D4) is working as designed.
+- A follow-up plain `--live --active` run (no `--httpx-bin`/PATH
+  workarounds — the user's actual shell) surfaced three more real bugs
+  the flag-qualified re-verification above had masked:
+  1. `crt.sh: live invocation failed (The read operation timed out)` —
+     confirmed by hand (`curl` against crt.sh for `yulan.me`: 70s to
+     transfer 218KB of a 313-certificate history) that the 30s
+     `CRTSH_TIMEOUT_SECONDS` was simply too short for cert-heavy
+     targets; every retry attempt was doomed to time out identically,
+     since retrying never helps when the query itself is just slow.
+     Raised to 120s.
+  2. `theHarvester: live invocation failed (theHarvester)` — not a bug,
+     but a real usability gap: theHarvester's binary only lives in its
+     own venv (`_private/tools/theHarvester/.venv/bin/theHarvester`),
+     never on a normal shell's `PATH`. Added `--theharvester-bin`
+     (mirrors `--httpx-bin`) so it can be pointed at directly instead
+     of requiring a permanent `PATH` edit.
+  3. httpx silently produced zero service/web-tech findings with *no
+     warning at all* when `--httpx-bin` was omitted and the wrong
+     `httpx` resolved from `PATH` — the impostor exits non-zero on
+     ProjectDiscovery's flags with empty stdout, which the runner
+     previously read as an honest "ran fine, found nothing." Added
+     `_verify_projectdiscovery_binary` (`runner.py`): before trusting
+     dnsx/httpx output, run `<binary> -version` and require the real
+     tool's `projectdiscovery.io` banner; anything else raises
+     `ToolUnavailable` with the exact fix (`--httpx-bin`/`--dnsx-bin`)
+     instead of degrading silently — the same "positive confirmation,
+     never absence-as-evidence" discipline used throughout the
+     adapters, applied to tool discovery itself. Added `--dnsx-bin` for
+     symmetry/consistency, though dnsx wasn't observed to collide in
+     practice. Re-verified live end to end with all three fixes and no
+     manual flags beyond the three new `-bin` options: crt.sh,
+     theHarvester, dnsx, and httpx (real ProjectDiscovery binary) all
+     contributed findings in a single run; a deliberate omission of
+     `--httpx-bin` on a follow-up run reproduced the impostor rejection
+     on demand, printing the exact `--httpx-bin` fix cleanly (no
+     spinner corruption) instead of silently losing data again.
+- Plain `--live --active` still required 3 extra flags every run to
+  work around the two collisions above (`--theharvester-bin`,
+  `--httpx-bin`) — real friction reported immediately after the fixes
+  above landed. Gave `--theharvester-bin`/`--dnsx-bin`/`--httpx-bin`
+  matching `$GLEAN_THEHARVESTER_BIN`/`$GLEAN_DNSX_BIN`/`$GLEAN_HTTPX_BIN`
+  env-var defaults (native `typer`/`click` support) so they can be set
+  once in a shell profile instead of retyped every command; the flags
+  still work for one-off overrides and show the env var name in
+  `--help`. While wiring this up found one more real bug: theHarvester's
+  own `build_command` always hardcodes `"theHarvester"` as argv[0], so a
+  custom `--theharvester-bin` passed the `tool_available` PATH check but
+  then still executed the bare, unqualified name — `[Errno 2] No such
+  file or directory: 'theHarvester'` even with the option correctly
+  set. Fixed in `run_theharvester` by substituting the verified `binary`
+  back into argv[0] before invoking (the adapter's `build_command`
+  stays the source of truth for flags only, not the executable path).
+  Re-verified live with zero CLI flags, only the three env vars
+  exported: all four tools (crt.sh, theHarvester, dnsx, real
+  ProjectDiscovery httpx) contributed findings in one clean run.
+
 ### Notes
 - Development has started (`crtsh`, `theharvester`, `dnsx`, `httpx` adapters, dedup,
   scoring, brief, evaluation, CLI, LLM synthesis). All nine ADRs now have

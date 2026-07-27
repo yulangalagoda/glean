@@ -54,6 +54,12 @@ _LIVE_INVOCATION_ERRORS = (
     OSError,
 )
 
+# "Also found" is deliberately unbounded in the Brief itself (ADR-0005) --
+# a large/historically-rich target can produce hundreds of entries, which
+# is unreadable dumped straight to a terminal. This only caps what
+# prints to stdout; --out always writes the complete brief.
+DEFAULT_ALSO_FOUND_LIMIT = 25
+
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 
 
@@ -126,12 +132,32 @@ def scan(
             "Default: ./glean-output/<slug>-<timestamp>/raw/"
         ),
     ] = None,
+    theharvester_bin: Annotated[
+        str,
+        typer.Option(
+            envvar="GLEAN_THEHARVESTER_BIN",
+            help="Executable name/path for theHarvester. Override this if it isn't on PATH "
+            "(e.g. installed in its own venv) — pass the full path to its binary, or set "
+            "$GLEAN_THEHARVESTER_BIN once instead of passing this every time.",
+        ),
+    ] = "theHarvester",
+    dnsx_bin: Annotated[
+        str,
+        typer.Option(
+            envvar="GLEAN_DNSX_BIN",
+            help="Executable name/path for ProjectDiscovery's dnsx. Override this if a "
+            "different, unrelated 'dnsx' is on PATH first, or set $GLEAN_DNSX_BIN once "
+            "instead of passing this every time.",
+        ),
+    ] = "dnsx",
     httpx_bin: Annotated[
         str,
         typer.Option(
+            envvar="GLEAN_HTTPX_BIN",
             help="Executable name/path for ProjectDiscovery's httpx. Override this if a "
             "different, unrelated 'httpx' (e.g. the Python HTTP client CLI) is on PATH first — "
-            "this collision is common enough in practice to be worth a dedicated option."
+            "this collision is common enough in practice to be worth a dedicated option. Set "
+            "$GLEAN_HTTPX_BIN once instead of passing this every time.",
         ),
     ] = "httpx",
     authorisation: Annotated[
@@ -155,6 +181,14 @@ def scan(
     out: Annotated[
         Path | None, typer.Option(help="Write the brief to this file instead of stdout.")
     ] = None,
+    show_all: Annotated[
+        bool,
+        typer.Option(
+            help="Print every 'Also found' entry to the terminal instead of the default "
+            f"{DEFAULT_ALSO_FOUND_LIMIT}. A target with a lot of history can have hundreds; "
+            "--out always writes the complete brief regardless of this flag."
+        ),
+    ] = False,
 ) -> None:
     """Build a prioritised, provenance-tracked brief for DOMAIN.
 
@@ -181,9 +215,11 @@ def scan(
     # --- Stage 1: crt.sh + theHarvester (independent, ADR-0008 D1) ---
 
     with _maybe_spin(crtsh is None and live, "Searching certificate transparency logs (crt.sh)..."):
-        crtsh_raw, crtsh_ref = _resolve_input(
+        crtsh_raw, crtsh_ref, crtsh_warning = _resolve_input(
             crtsh, live, lambda: runner.fetch_crtsh(domain), "crt.sh"
         )
+    if crtsh_warning:
+        typer.secho(crtsh_warning, fg=typer.colors.YELLOW, err=True)
     if crtsh_raw is not None:
         if crtsh is None:
             crtsh_ref = runner.archive_raw(output_dir, f"crtsh-{domain}.json", crtsh_raw)
@@ -197,9 +233,14 @@ def scan(
         theharvester is None and live,
         "Searching public sources for hosts and emails (theHarvester)...",
     ):
-        theharvester_raw, theharvester_ref = _resolve_input(
-            theharvester, live, lambda: runner.run_theharvester(domain), "theHarvester"
+        theharvester_raw, theharvester_ref, theharvester_warning = _resolve_input(
+            theharvester,
+            live,
+            lambda: runner.run_theharvester(domain, binary=theharvester_bin),
+            "theHarvester",
         )
+    if theharvester_warning:
+        typer.secho(theharvester_warning, fg=typer.colors.YELLOW, err=True)
     if theharvester_raw is not None:
         if theharvester is None:
             theharvester_ref = runner.archive_raw(
@@ -219,7 +260,11 @@ def scan(
     with _maybe_spin(
         dnsx is None and live, f"Resolving {len(candidates)} candidate hostname(s) (dnsx)..."
     ):
-        dnsx_raw, dnsx_ref = _resolve_input(dnsx, live, lambda: runner.run_dnsx(candidates), "dnsx")
+        dnsx_raw, dnsx_ref, dnsx_warning = _resolve_input(
+            dnsx, live, lambda: runner.run_dnsx(candidates, binary=dnsx_bin), "dnsx"
+        )
+    if dnsx_warning:
+        typer.secho(dnsx_warning, fg=typer.colors.YELLOW, err=True)
     if dnsx_raw is not None:
         if dnsx is None:
             dnsx_ref = runner.archive_raw(output_dir, f"dnsx-{domain}.json", dnsx_raw)
@@ -238,9 +283,11 @@ def scan(
         resolved_hosts = runner.extract_resolved_hosts(results)
         label = f"Probing {len(resolved_hosts)} live host(s) for services and tech (httpx)..."
         with _maybe_spin(True, label):
-            httpx_raw = _invoke_live(
+            httpx_raw, httpx_warning = _invoke_live(
                 "httpx", lambda: runner.run_httpx(resolved_hosts, binary=httpx_bin)
             )
+        if httpx_warning:
+            typer.secho(httpx_warning, fg=typer.colors.YELLOW, err=True)
         httpx_ref = None
     else:
         if live:
@@ -282,14 +329,14 @@ def scan(
             fg=typer.colors.CYAN,
             err=True,
         )
-    rendered = render_markdown(brief)
-
     typer.echo(SECTION_BREAK)
     if out is not None:
-        out.write_text(rendered)
+        # A saved file is a complete archive copy regardless of --show-all.
+        out.write_text(render_markdown(brief, also_found_limit=None))
         typer.echo(f"Brief written to {out}")
     else:
-        typer.echo(rendered)
+        limit = None if show_all else DEFAULT_ALSO_FOUND_LIMIT
+        typer.echo(render_markdown(brief, also_found_limit=limit))
 
     typer.secho(
         f"\n[dedup] entities_before={merged.stats.entities_before} "
@@ -495,29 +542,38 @@ def _default_raw_dir(domain: str, collected_at: datetime) -> Path:
     return Path("glean-output") / f"{slug}-{timestamp}" / "raw"
 
 
-def _invoke_live(tool_name: str, fetch: Callable[[], bytes]) -> bytes | None:
-    """A degraded tool must never abort the scan (ADR-0002 D5, ADR-0008 D5)."""
+def _invoke_live(tool_name: str, fetch: Callable[[], bytes]) -> tuple[bytes | None, str | None]:
+    """A degraded tool must never abort the scan (ADR-0002 D5, ADR-0008 D5).
+
+    Returns the warning message rather than printing it directly: this is
+    always called from inside an active `Spinner`'s `with` block, and
+    printing here would race the spinner thread's own `\\r`-driven
+    animation and corrupt the terminal line (confirmed in practice —
+    `theHarvester: live invocation failed (...)` landing mid-spin, glued
+    onto the spinner's own text). The caller prints the warning after the
+    `with Spinner(...):` block has exited and cleanly cleared its line.
+    """
     try:
-        return fetch()
+        return fetch(), None
     except _LIVE_INVOCATION_ERRORS as error:
-        typer.secho(
-            f"{tool_name}: live invocation failed ({error}), skipping.",
-            fg=typer.colors.YELLOW,
-            err=True,
-        )
-        return None
+        return None, f"{tool_name}: live invocation failed ({error}), skipping."
 
 
 def _resolve_input(
     file: Path | None, live: bool, live_fetch: Callable[[], bytes], tool_name: str
-) -> tuple[bytes | None, str | None]:
+) -> tuple[bytes | None, str | None, str | None]:
     """A per-tool file always overrides live invocation for that tool
-    (ADR-0008 D6 mixed mode); otherwise fall back to --live if it's set."""
+    (ADR-0008 D6 mixed mode); otherwise fall back to --live if it's set.
+
+    Returns (raw, raw_output_ref, warning) -- the warning (if any) is only
+    ever meaningful for the live path and must be printed by the caller
+    once any active spinner has exited (see `_invoke_live`)."""
     if file is not None:
-        return file.read_bytes(), str(file)
+        return file.read_bytes(), str(file), None
     if live:
-        return _invoke_live(tool_name, live_fetch), None
-    return None, None
+        raw, warning = _invoke_live(tool_name, live_fetch)
+        return raw, None, warning
+    return None, None, None
 
 
 def _maybe_spin(active: bool, label: str) -> AbstractContextManager[object]:

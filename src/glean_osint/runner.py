@@ -35,7 +35,12 @@ CRTSH_BASE_DELAY_SECONDS = 10.0
 # result (an empty match is a 200 with `[]`, never a 404) — retrying on it
 # is what let those same requests succeed on a later attempt in practice.
 CRTSH_RETRYABLE_STATUSES = frozenset({404, 429, 502, 503, 504})
-CRTSH_TIMEOUT_SECONDS = 30.0
+# A domain with heavy certificate-transparency history genuinely takes a
+# while to transfer, not just to look up: a real request for yulan.me (313
+# certificates) measured ~70s end to end. The original 30s meant every
+# retry attempt timed out identically -- retrying never helps when the
+# query itself is just slow, only a longer per-attempt timeout does.
+CRTSH_TIMEOUT_SECONDS = 120.0
 
 # Generous default: theHarvester in particular queries several external
 # sources and can be slow; dnsx/httpx are usually much faster in practice.
@@ -48,6 +53,36 @@ class ToolUnavailable(Exception):
 
 def tool_available(name: str) -> bool:
     return shutil.which(name) is not None
+
+
+def _verify_projectdiscovery_binary(
+    binary: str,
+    tool_name: str,
+    *,
+    run: Callable[..., subprocess.CompletedProcess[bytes]],
+) -> None:
+    """Confirm `binary` is really ProjectDiscovery's `tool_name`, not an
+    unrelated program that happens to share the name -- confirmed in
+    practice on this project's own machine, where the system `httpx` is
+    Python's HTTP-client CLI. That impostor exits non-zero on ProjectDiscovery
+    flags with empty stdout, which previously looked identical to "ran fine,
+    found nothing": a real, silent data-loss bug (a live scan reported zero
+    services/web-tech findings with no warning at all). Every real
+    ProjectDiscovery tool prints a "projectdiscovery.io" banner on
+    `-version` and exits 0; anything else means the wrong binary is on
+    PATH. Same "positive confirmation, never absence-as-evidence"
+    discipline used throughout the adapters, applied to tool discovery
+    itself.
+    """
+    completed = run([binary, "-version"], capture_output=True, timeout=10.0, check=False)
+    combined = (completed.stdout + completed.stderr).decode("utf-8", errors="replace").lower()
+    if "projectdiscovery" not in combined:
+        raise ToolUnavailable(
+            f"{binary!r} does not look like ProjectDiscovery's {tool_name} (no "
+            "'projectdiscovery' banner in `-version` output) -- a different program with "
+            f"the same name is likely earlier on PATH; pass --{tool_name}-bin with the "
+            "correct path."
+        )
 
 
 def fetch_crtsh(
@@ -107,7 +142,14 @@ def run_theharvester(
     theHarvester only writes parseable output when given `-f <prefix>`
     (ADR-0008 D2) — that flag is supplied here via `TheHarvesterOptions`,
     not hardcoded separately, so the adapter's own `build_command` stays
-    the single source of truth for the tool's argv.
+    the single source of truth for the tool's *flags*. `build_command`
+    always hardcodes `"theHarvester"` as argv[0] though, so a custom
+    `binary` (e.g. a venv-local path passed via `--theharvester-bin`)
+    used to pass the `tool_available` check above but then still exec
+    the bare name -- a real bug found live (`[Errno 2] No such file or
+    directory: 'theHarvester'` even with the option set). argv[0] is
+    substituted with the real `binary` here so the executable actually
+    invoked matches the one just verified to exist.
     """
     if not tool_available(binary):
         raise ToolUnavailable(binary)
@@ -120,6 +162,7 @@ def run_theharvester(
             target, TheHarvesterOptions(output_prefix=prefix)
         )
         assert argv is not None
+        argv = [binary, *argv[1:]]
         run(argv, capture_output=True, timeout=timeout, check=True)
         return (Path(tmp) / "out.json").read_bytes()
 
@@ -145,6 +188,7 @@ def run_dnsx(
         raise ToolUnavailable(binary)
     if not candidates:
         return json.dumps({"candidates": [], "resolved": []}).encode("utf-8")
+    _verify_projectdiscovery_binary(binary, "dnsx", run=run)
 
     with tempfile.TemporaryDirectory() as tmp:
         hostsfile = Path(tmp) / "hosts.txt"
@@ -184,6 +228,7 @@ def run_httpx(
         raise ToolUnavailable(binary)
     if not resolved_hosts:
         return b""
+    _verify_projectdiscovery_binary(binary, "httpx", run=run)
 
     with tempfile.TemporaryDirectory() as tmp:
         hostsfile = Path(tmp) / "hosts.txt"
