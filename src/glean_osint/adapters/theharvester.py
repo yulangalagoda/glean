@@ -21,10 +21,20 @@ methodology.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 
 from glean_osint.adapters.base import Adapter, ParseResult, ScanContext
 from glean_osint.normalise import canon_email, canon_host
 from glean_osint.schema.entities import Edge, Entity, EntityType, Method, ProvenanceEntry, entity_id
+
+
+@dataclass(frozen=True, slots=True)
+class TheHarvesterOptions:
+    """theHarvester only emits parseable JSON when run with `-f <prefix>`
+    (ADR-0008 D2) — without it, `build_command`'s own output wouldn't
+    produce anything this adapter's `parse` could read."""
+
+    output_prefix: str
 
 
 class TheHarvesterAdapter:
@@ -32,7 +42,10 @@ class TheHarvesterAdapter:
     default_method: Method = "passive"
 
     def build_command(self, target: str, options: object | None = None) -> list[str] | None:
-        return ["theHarvester", "-d", target, "-b", "crtsh,duckduckgo,otx,certspotter"]
+        argv = ["theHarvester", "-d", target, "-b", "crtsh,duckduckgo,otx,certspotter"]
+        if isinstance(options, TheHarvesterOptions):
+            argv += ["-f", options.output_prefix]
+        return argv
 
     def parse(self, raw: bytes, ctx: ScanContext) -> ParseResult:
         try:

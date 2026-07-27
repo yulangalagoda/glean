@@ -1,6 +1,6 @@
 # ADR-0008 — The Runner (Live Tool Invocation)
 
-- **Status:** Proposed — not yet implemented
+- **Status:** Accepted — implemented and validated against a real owned target (`larnby.com`) 2026-07-27, two real bugs found and fixed in the process (see the D3/D8 correction notes below)
 - **Date:** 2026-07-27
 - **Scope:** Glean v1 — how `glean scan <domain>` invokes tools live instead of only ingesting pre-fetched files
 - **Depends on:** ADR-0002 (adapter contract: `build_command`, `ParseResult`, D5 degradation, D7 raw-output archival), ADR-0001 (entity schema — candidate/resolved host lists are built from *parsed* entities, not raw bytes)
@@ -45,6 +45,8 @@ crt.sh is a shared free public resource this project has already observed real r
 
 Subprocess tools (theHarvester, dnsx, httpx) get a **wall-clock timeout** instead, no retry. A subprocess that times out is treated as a degraded tool for this scan (D5), not silently retried — subprocess retries are less predictable than an idempotent HTTP GET and risk doubling an active tool's contact with the target, which is exactly the kind of thing the charter's authorisation rules care about.
 
+**Implementation correction (2026-07-27):** live-validating `fetch_crtsh` against a real owned target (`larnby.com`) surfaced two real bugs in the first cut. First, a response that times out mid-*read* (after the connection succeeds, while the body is still arriving) raises a bare `TimeoutError`/`socket.timeout`, not `urllib.error.URLError` — the original code's `except urllib.error.URLError` clause never caught it, so the retry loop was silently skipped entirely and the failure went straight to the CLI's outer catch-all instead. Fixed by catching `OSError` (which `URLError` itself subclasses, along with `TimeoutError`) instead of `URLError` specifically. Second, `404` was left out of the retryable-status set even though the real capture logs quoted above as evidence explicitly show `404` as one of the transient statuses a retry succeeded past — crt.sh returns `200` with an empty `[]` for a genuine zero-result query, never a `404`, so a `404` here is backend flakiness, not a real answer. Fixed by adding it to `CRTSH_RETRYABLE_STATUSES`. Both fixes are exactly the kind of thing this ADR's own validation section says to check for — this is why that check happens before considering the runner done, not after.
+
 ### D4 — Active-tool opt-in is a hard CLI gate, not a default
 
 `httpx` — the only active-method tool — never runs unless the caller explicitly passes `--active` **in addition to** `--live` (D6). `glean scan <domain> --live` alone only ever runs the three passive tools (crt.sh, theHarvester, dnsx). This is the literal, code-enforced version of the charter's "active requires explicit opt-in" — the first point where that sentence is actually backed by something other than policy, because it's the first point where the tool can actually reach the target's own infrastructure without the user having pre-fetched the data themselves.
@@ -66,6 +68,8 @@ Every fetched/subprocess-produced raw byte stream is written to disk **before** 
 ### D8 — Tool-availability preflight
 
 Before attempting invocation, the runner checks each subprocess tool (`theHarvester`, `dnsx`, and `httpx` if `--active`) is on `PATH`. Missing tools are reported once, upfront, in plain language — not as a raw "file not found" exception surfacing per-subprocess — and then skipped per D5.
+
+**Implementation correction (2026-07-27):** live-validating `--live --active` against a real owned target (`larnby.com`) surfaced a real bug this preflight check didn't catch: this machine also has the unrelated Python `httpx` HTTP-client library's CLI installed at `/usr/bin/httpx` — a genuinely common real-world collision, since `pip install httpx` for that popular async client is everywhere. `tool_available("httpx")` correctly found *something* named `httpx` on `PATH` and passed the preflight check, but it was the wrong program; it errored on ProjectDiscovery httpx's flags and silently returned empty output rather than raising, so the scan "succeeded" with zero service/web_tech findings and no warning at all — the one failure mode D5's degrade-and-warn design doesn't catch, because from the runner's point of view nothing failed. Fixed by adding a `--httpx-bin` CLI option (default `httpx`, overridable) so a user with this exact collision can point at the right binary explicitly, rather than the runner trying to guess. Not generalised to every subprocess tool speculatively — this is the one case with confirmed, real-world collision risk.
 
 ## Consequences
 

@@ -137,19 +137,39 @@ point is a real release, just pre-dev groundwork.
   through the adapter itself. Fixed the capture script and regenerated
   data for all 10 targets; full detail in `_private/planning/target-list.md`
   and `docs/target-list-policy.md` (new Profiles E/F).
-- ADR-0008 (`docs/adr/0008-runner.md`, Proposed — not yet implemented):
-  design for live tool invocation, closing ADR-0002's own open question
-  on whether the runner deserves its own ADR. Establishes the runner as
-  a 3-stage pipeline (crt.sh + theHarvester independent → dnsx fed their
-  parsed hostnames → httpx fed dnsx's resolved hosts, matching the real
-  dependency already visible in each adapter's `build_command()`), a
-  hard `--active` gate so `httpx` never runs without explicit opt-in
-  (the charter's "active requires explicit opt-in" made code-enforced
-  for the first time), crt.sh retry/backoff promoted from the private
-  capture scripts into real code, and raw-output archival under
-  `./glean-output/` for live runs. `--live` is opt-in for now, not a
-  silent new default — deliberately conservative until it has real
-  running experience behind it.
+- ADR-0008 (`docs/adr/0008-runner.md`, Accepted): the runner —
+  `glean_osint.runner`, live tool invocation — closing ADR-0002's own
+  open question on whether the runner deserves its own ADR. Implements
+  the 3-stage pipeline (crt.sh + theHarvester independent → dnsx fed
+  their parsed hostnames → httpx fed dnsx's resolved hosts, matching the
+  real dependency already visible in each adapter's `build_command()`),
+  wired into the CLI as `glean scan <domain> --live` (`--active`
+  additionally required to invoke `httpx`, the only active-method tool —
+  the charter's "active requires explicit opt-in" made code-enforced for
+  the first time), crt.sh retry/backoff promoted from the private capture
+  scripts into real, tested code, and raw-output archival under
+  `./glean-output/` for live runs. A per-tool file option still overrides
+  live invocation for that tool (mixed mode). `--live` is opt-in for now,
+  not a silent new default. `TheHarvesterAdapter.build_command()` gained
+  a `TheHarvesterOptions` parameter (`-f <prefix>`) so it produces a
+  genuinely complete, runnable command — it previously couldn't, since
+  theHarvester only writes parseable output with that flag.
+
+  Live-validating against a real owned target (`larnby.com`) found two
+  real bugs before any test suite could: a response timing out mid-read
+  raises a bare `TimeoutError`, not `urllib.error.URLError`, so the
+  original retry loop silently never triggered for it (fixed by catching
+  `OSError`, which both `URLError` and `TimeoutError` are instances of);
+  and `404` needed adding to the retryable-status set, since real capture
+  logs already on record show crt.sh returning it transiently under load,
+  never as a genuine zero-result answer. A third real issue surfaced the
+  same way: this machine also has the unrelated Python `httpx` HTTP-client
+  library's CLI on `PATH`, which the tool-availability preflight couldn't
+  distinguish from ProjectDiscovery's httpx — it silently ran the wrong
+  program and returned empty output with no warning at all. Fixed with a
+  `--httpx-bin` CLI option rather than trying to guess. All three
+  documented as dated corrections in the ADR itself, and the read-timeout
+  and 404 cases now have regression tests (`tests/test_runner.py`).
 
 ### Notes
 - Development has started (`crtsh`, `theharvester`, `dnsx`, `httpx` adapters, dedup,

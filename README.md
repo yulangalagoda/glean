@@ -19,6 +19,12 @@ Existing OSINT automation excels at *collection* but fails at *judgment*: result
 
 ```
 pip install -e ".[dev]"
+
+# Live: actually invoke tools (requires theHarvester/dnsx/httpx installed)
+glean scan example.com --live
+glean scan example.com --live --active   # also runs httpx (ACTIVE — see below)
+
+# Ingest-only: build the brief from raw output you've already fetched
 glean scan example.com \
   --crtsh path/to/crtsh-output.json \
   --theharvester path/to/theharvester-output.json \
@@ -26,11 +32,12 @@ glean scan example.com \
   --httpx path/to/httpx-output.jsonl
 ```
 
-`glean scan` is ingest-only for now: it builds the brief from raw tool
-output you've already fetched yourself; live invocation isn't built yet.
-`--crtsh`/`--theharvester`/`--dnsx` are passive; `--httpx` is **active** —
-it sends real HTTP requests at the target, so only point it at hosts
-you're authorised to probe directly (see [`docs/ETHICS.md`](docs/ETHICS.md)).
+A per-tool file option overrides live invocation for that specific tool,
+even with `--live` (mixed mode). `crt.sh`/`theHarvester`/`dnsx` are
+passive; `httpx` is **active** — it sends real HTTP requests at the
+target, so it's never invoked without an explicit `--active` flag, and
+you should only use it against hosts you're authorised to probe directly
+(see [`docs/ETHICS.md`](docs/ETHICS.md)).
 
 ## Scope & ethics
 
