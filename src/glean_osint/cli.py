@@ -27,7 +27,7 @@ from glean_osint.adapters.crtsh import CrtshAdapter
 from glean_osint.adapters.dnsx import DnsxAdapter
 from glean_osint.adapters.httpx import HttpxAdapter
 from glean_osint.adapters.theharvester import TheHarvesterAdapter
-from glean_osint.brief import DEFAULT_TOP_N, build_brief, render_markdown
+from glean_osint.brief import DEFAULT_TOP_N, build_brief, render_html, render_markdown
 from glean_osint.dedup import merge_graph
 from glean_osint.evaluation import (
     DEFAULT_JUDGE_MODEL,
@@ -197,7 +197,11 @@ def scan(
         str, typer.Option(help="Ollama model tag to use with --llm.")
     ] = synthesis.DEFAULT_MODEL,
     out: Annotated[
-        Path | None, typer.Option(help="Write the brief to this file instead of stdout.")
+        Path | None,
+        typer.Option(
+            help="Write the brief to this file instead of stdout. A .html extension writes a "
+            "self-contained HTML report (ADR-0010); anything else writes markdown."
+        ),
     ] = None,
     show_all: Annotated[
         bool,
@@ -355,8 +359,14 @@ def scan(
         )
     typer.echo(SECTION_BREAK)
     if out is not None:
-        # A saved file is a complete archive copy regardless of --show-all.
-        out.write_text(render_markdown(brief, also_found_limit=None))
+        # Format follows --out's extension (ADR-0010 D2): .html gets the
+        # self-contained report view, anything else stays markdown. A
+        # saved file is always a complete archive copy regardless of
+        # --show-all -- that flag only affects what prints to the terminal.
+        if out.suffix.lower() == ".html":
+            out.write_text(render_html(brief))
+        else:
+            out.write_text(render_markdown(brief, also_found_limit=None))
         typer.echo(f"Brief written to {out}")
     else:
         limit = None if show_all else DEFAULT_ALSO_FOUND_LIMIT

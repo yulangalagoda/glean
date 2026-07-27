@@ -9,7 +9,13 @@ import pytest
 from glean_osint.adapters.base import ScanContext
 from glean_osint.adapters.crtsh import CrtshAdapter
 from glean_osint.adapters.theharvester import TheHarvesterAdapter
-from glean_osint.brief import Finding, build_brief, check_brief_contract, render_markdown
+from glean_osint.brief import (
+    Finding,
+    build_brief,
+    check_brief_contract,
+    render_html,
+    render_markdown,
+)
 from glean_osint.dedup import merge_graph
 from glean_osint.schema.entities import Entity, ProvenanceEntry, ScanMeta, ToolRun
 from glean_osint.scoring import score_graph
@@ -187,6 +193,82 @@ def test_render_markdown_no_limit_shows_every_also_found_entry() -> None:
 
     assert rendered.count("- **`") == 6
     assert "not shown here" not in rendered
+
+
+def test_render_html_is_a_self_contained_document() -> None:
+    """ADR-0010 D3: no external requests, no JS -- opens via file:// as-is."""
+    entities = [
+        _entity("domain:example.com", "domain", "example.com"),
+        _entity("subdomain:admin.example.com", "subdomain", "admin.example.com"),
+    ]
+    scored = score_graph(entities, [], AS_OF)
+    brief = build_brief(scored, [], SCAN)
+
+    rendered = render_html(brief)
+
+    assert rendered.startswith("<!doctype html>")
+    assert rendered.rstrip().endswith("</html>")
+    assert "<style>" in rendered
+    assert "<script" not in rendered
+    assert "http://" not in rendered and "https://" not in rendered  # no external assets
+
+
+def test_render_html_reports_the_same_facts_as_render_markdown() -> None:
+    """ADR-0010 D4: a second presentation over identical data -- both
+    renderers must agree on every entity id/count, never just one."""
+    entities = [_entity("domain:example.com", "domain", "example.com")] + [
+        _entity(f"subdomain:h{i}.example.com", "subdomain", f"h{i}.example.com") for i in range(5)
+    ]
+    scored = score_graph(entities, [], AS_OF)
+    brief = build_brief(scored, [], SCAN)
+
+    markdown = render_markdown(brief)
+    rendered = render_html(brief)
+
+    assert brief.scan.target in rendered
+    for finding in brief.top_priorities + brief.also_found:
+        assert finding.display_value in markdown  # sanity: fixture actually exercises both
+        assert finding.display_value in rendered
+    assert f"Findings in this brief: {brief.findings_count}." in markdown
+    assert str(brief.findings_count) in rendered
+    assert str(brief.findings_with_valid_provenance) in rendered
+    assert str(brief.fabricated_findings) in rendered
+
+
+def test_render_html_also_found_is_never_truncated() -> None:
+    """Unlike the terminal (`also_found_limit`), HTML has no unbounded-
+    scrollback problem -- the full list always renders, just collapsed."""
+    entities = [_entity("domain:example.com", "domain", "example.com")] + [
+        _entity(f"subdomain:h{i}.example.com", "subdomain", f"h{i}.example.com") for i in range(30)
+    ]
+    scored = score_graph(entities, [], AS_OF)
+    brief = build_brief(scored, [], SCAN)
+
+    rendered = render_html(brief)
+
+    assert len(brief.also_found) == 31
+    for finding in brief.also_found:
+        assert finding.display_value in rendered
+    assert "not shown here" not in rendered
+    assert "<details>" in rendered and "</details>" in rendered
+
+
+def test_render_html_escapes_special_characters_in_finding_data() -> None:
+    """A certificate subject/SAN or other real-world field could contain
+    HTML-special characters -- must never be interpolated raw."""
+    entity = _entity(
+        "domain:example.com",
+        "domain",
+        "example.com",
+        attributes={"registrar": "<script>alert(1)</script> & Sons"},
+    )
+    scored = score_graph([entity], [], AS_OF)
+    brief = build_brief(scored, [], SCAN)
+
+    rendered = render_html(brief)
+
+    assert "<script>alert(1)</script>" not in rendered
+    assert "&lt;script&gt;" in rendered
 
 
 def test_check_brief_contract_passes_on_a_real_build_brief_output() -> None:

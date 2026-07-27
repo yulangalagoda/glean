@@ -86,6 +86,27 @@ def test_scan_writes_to_out_file(tmp_path: Path) -> None:
     assert out_file.read_text().startswith("# Glean Brief — example.com")
 
 
+def test_scan_writes_html_when_out_has_an_html_extension(tmp_path: Path) -> None:
+    """ADR-0010 D2: format follows --out's extension, no new flag."""
+    out_file = tmp_path / "brief.html"
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "example.com",
+            "--crtsh",
+            str(FIXTURES / "crtsh-example-com.json"),
+            "--out",
+            str(out_file),
+        ],
+    )
+    assert result.exit_code == 0
+    assert f"Brief written to {out_file}" in result.output
+    written = out_file.read_text()
+    assert written.startswith("<!doctype html>")
+    assert "Glean Brief — example.com" in written
+
+
 def test_scan_rejects_a_nonexistent_file() -> None:
     result = runner.invoke(app, ["scan", "example.com", "--crtsh", "/no/such/file.json"])
     assert result.exit_code != 0

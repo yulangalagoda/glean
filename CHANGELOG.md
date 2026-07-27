@@ -397,6 +397,24 @@ point is a real release, just pre-dev groundwork.
   monkeypatching does correctly redirect) instead of as bound defaults;
   added an `autouse` fixture in `tests/test_cli.py` redirecting the
   cache directory to a per-test `tmp_path` as defense in depth.
+- HTML report view (ADR-0010), the first real GUI-roadmap slice:
+  `render_html()` in `brief.py` renders the same `Brief` as
+  `render_markdown`, as a single self-contained HTML file (inline CSS,
+  no external requests, no JS). `scan --out report.html` writes it; any
+  other extension keeps writing markdown as before — no new flag.
+  "Also found" shows the *complete* list inside a collapsed
+  `<details>` disclosure rather than being truncated — HTML doesn't
+  have the terminal's unbounded-scrollback problem `also_found_limit`
+  was built for. Light/dark via `prefers-color-scheme`, no colour-only
+  signalling, no field not already present in `Finding`/`Brief`.
+  Deliberately scoped to the readable-report half of the charter's "GUI"
+  roadmap line only — not the separate, larger "prioritised entity
+  graph" idea, and not an interactive local server (considered and
+  explicitly deferred; see the ADR's Open questions). Validated against
+  a real live `yulan.me` scan (528 findings, the same target whose
+  terminal dump originally motivated this whole thread) and previewed
+  as a published artifact for a human visual check, not just structural
+  assertions.
 
 ### Notes
 - Development has started (`crtsh`, `theharvester`, `dnsx`, `httpx` adapters, dedup,

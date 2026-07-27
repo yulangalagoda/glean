@@ -18,6 +18,7 @@ deterministic pre-check, which *does* need to catch a real LLM's mistakes.
 
 from __future__ import annotations
 
+import html
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import get_args
@@ -356,6 +357,168 @@ def render_markdown(brief: Brief, *, also_found_limit: int | None = None) -> str
     )
     lines.append(footer)
     return "\n".join(lines)
+
+
+_HTML_STYLE = """
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 4rem;
+  color: #1a1a1a;
+  background: #fdfdfd;
+}
+@media (prefers-color-scheme: dark) {
+  body { color: #e8e8e8; background: #16171a; }
+  .card, details { background: #202226; border-color: #34363b; }
+  .pill { background: #2b2d32; }
+  a { color: #7db8ff; }
+  hr { border-color: #34363b; }
+}
+h1 { font-size: 1.6rem; margin-bottom: 0.25rem; }
+h2 { font-size: 1.15rem; border-bottom: 2px solid currentColor; padding-bottom: 0.3rem;
+     margin-top: 2.25rem; }
+.meta { color: #666; font-size: 0.92rem; margin: 0.15rem 0; }
+@media (prefers-color-scheme: dark) { .meta { color: #a3a3a3; } }
+hr { border: none; border-top: 1px solid #ddd; margin: 1.5rem 0; }
+.card {
+  border: 1px solid #ddd; border-radius: 10px; padding: 1rem 1.15rem;
+  margin: 0.9rem 0; background: #fff;
+}
+.card .rank {
+  display: inline-block; font-weight: 700; font-size: 0.8rem;
+  background: #eee; border-radius: 999px; padding: 0.1rem 0.55rem; margin-right: 0.4rem;
+}
+@media (prefers-color-scheme: dark) { .card .rank { background: #34363b; } }
+.card .headline { font-weight: 600; }
+.card .score { float: right; font-variant-numeric: tabular-nums; color: #666; font-size: 0.9rem; }
+@media (prefers-color-scheme: dark) { .card .score { color: #a3a3a3; } }
+.card .body { margin: 0.5rem 0; }
+.card .why, .card .seen-by { font-size: 0.88rem; color: #555; margin: 0.15rem 0; }
+@media (prefers-color-scheme: dark) { .card .why, .card .seen-by { color: #b5b5b5; } }
+ul.also-found { list-style: none; padding: 0; margin: 0.75rem 0; }
+ul.also-found li {
+  padding: 0.45rem 0; border-bottom: 1px solid #eee; font-size: 0.92rem;
+}
+@media (prefers-color-scheme: dark) { ul.also-found li { border-color: #2b2d32; } }
+ul.also-found .value { font-weight: 600; }
+ul.also-found .pill { font-size: 0.8rem; color: #666; }
+@media (prefers-color-scheme: dark) { ul.also-found .pill { color: #a3a3a3; } }
+details summary {
+  cursor: pointer; font-weight: 600; padding: 0.6rem 0.9rem;
+  border: 1px solid #ddd; border-radius: 10px; background: #fff;
+}
+details[open] summary { border-radius: 10px 10px 0 0; border-bottom: none; }
+details .also-found-body {
+  border: 1px solid #ddd; border-top: none; border-radius: 0 0 10px 10px;
+  padding: 0.25rem 0.9rem; max-height: 32rem; overflow-y: auto; background: #fff;
+}
+@media (prefers-color-scheme: dark) {
+  details summary { border-color: #34363b; }
+  details .also-found-body { border-color: #34363b; }
+}
+footer { margin-top: 2.5rem; font-size: 0.85rem; color: #666; }
+@media (prefers-color-scheme: dark) { footer { color: #a3a3a3; } }
+code { font-family: ui-monospace, "SF Mono", Consolas, monospace; }
+"""
+
+
+def _esc(value: str) -> str:
+    return html.escape(str(value))
+
+
+def _html_top_priority_card(index: int, finding: Finding) -> str:
+    assert finding.entity.priority is not None  # every top_priorities entry has one
+    headline = f"<code>{_esc(finding.display_value)}</code> — {_esc(finding.headline)}"
+    return f"""<div class="card">
+  <span class="score">priority {finding.entity.priority.score}</span>
+  <span class="rank">{index}</span>
+  <span class="headline">{headline}</span>
+  <p class="body">{_esc(finding.body)}</p>
+  <p class="why"><strong>Why ranked here:</strong> {_esc(finding.why_ranked)}.</p>
+  <p class="seen-by"><strong>Seen by:</strong> {_esc(finding.seen_by)}.</p>
+</div>"""
+
+
+def _html_also_found_item(finding: Finding) -> str:
+    body = _esc(finding.body.rstrip("."))
+    return (
+        f'<li><span class="value"><code>{_esc(finding.display_value)}</code></span>'
+        f' — {body} <span class="pill">({_esc(finding.seen_by)})</span></li>'
+    )
+
+
+def render_html(brief: Brief) -> str:
+    """Render the same D1 skeleton as `render_markdown`, as a single
+    self-contained HTML file (ADR-0010) — inline CSS only, no external
+    requests, no JS, opens directly via `file://` in any browser.
+
+    Deliberately the *same facts* as `render_markdown`, never new ones
+    (D4): identical `Brief` input, identical footer counts, identical
+    ordering. "Also found" (D5) shows the complete list inside a
+    collapsed `<details>` disclosure rather than truncating it — HTML
+    doesn't have a terminal's unbounded-scrollback problem, so there's
+    no need for `render_markdown`'s `also_found_limit` workaround here.
+    """
+    target = _esc(brief.scan.target)
+    tools_line = ""
+    if brief.scan.tools_run:
+        tools = ", ".join(
+            f"{_esc(TOOL_DISPLAY_NAMES.get(t.source_tool, t.source_tool))} ({_esc(t.method)})"
+            for t in brief.scan.tools_run
+        )
+        tools_line = f'<p class="meta"><strong>Tools:</strong> {tools}</p>'
+    authorisation = _esc(brief.scan.authorisation or "Not recorded")
+
+    top_cards = "\n".join(
+        _html_top_priority_card(i, f) for i, f in enumerate(brief.top_priorities, start=1)
+    )
+    also_found_items = "\n".join(_html_also_found_item(f) for f in brief.also_found)
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Glean Brief — {target}</title>
+<style>{_HTML_STYLE}</style>
+</head>
+<body>
+<header>
+  <h1>Glean Brief — {target}</h1>
+  <p class="meta"><strong>Scan:</strong> {target} · {_esc(brief.scan.started_at)} ·
+     Glean v{_esc(brief.scan.glean_version)}</p>
+  {tools_line}
+  <p class="meta"><strong>Authorisation:</strong> {authorisation}</p>
+  <p class="meta"><strong>Surface:</strong> {_esc(brief.surface_line)}</p>
+</header>
+<hr>
+<h2>Top priorities</h2>
+{top_cards or "<p>No findings scored above zero.</p>"}
+<hr>
+<h2>Also found</h2>
+<details>
+  <summary>{len(brief.also_found)} additional finding(s) — click to expand</summary>
+  <div class="also-found-body">
+    <ul class="also-found">
+{also_found_items}
+    </ul>
+  </div>
+</details>
+<hr>
+<h2>Provenance &amp; method</h2>
+<p>{_esc(_closing_statement(brief))}</p>
+<footer>
+  Findings in this brief: {brief.findings_count}.
+  Findings with valid provenance: {brief.findings_with_valid_provenance}/{brief.findings_count}.
+  Fabricated findings: {brief.fabricated_findings}.
+</footer>
+</body>
+</html>
+"""
 
 
 def _closing_statement(brief: Brief) -> str:
