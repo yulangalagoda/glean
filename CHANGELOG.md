@@ -362,6 +362,42 @@ point is a real release, just pre-dev groundwork.
   exported: all four tools (crt.sh, theHarvester, dnsx, real
   ProjectDiscovery httpx) contributed findings in one clean run.
 
+### Added
+- crt.sh response caching, doubling as a rate-limit failsafe (ADR-0008
+  D9). Real evidence: re-running `--live --active` against all 10
+  ground-truth targets back-to-back hit real crt.sh `502`/`404`
+  responses on 3 of 10 targets, each exhausting all 5 retry attempts —
+  timing suggests crt.sh's own rate-limiting under repeated querying in
+  a short window, exactly the shape of iterative dev/testing.
+  `fetch_crtsh_cached` (`runner.py`) serves a fresh-enough (default 1h)
+  cached response with no network call at all, and falls back to a
+  *stale* cached response as a last resort if the live fetch fails
+  after exhausting its own retries and any cache entry exists — never
+  silent, always reported to the operator via a plain-language message
+  printed after the spinner exits (same "return, don't print inside a
+  spinner" discipline as the earlier spinner-race fix). New
+  `--crtsh-cache-ttl SECONDS` / `--no-crtsh-cache` flags. Deliberately
+  scoped to crt.sh only — dnsx/httpx report the target's *current*
+  state, and caching either would silently mask real liveness/service
+  changes. Live-verified against `larnby.com`: a cache-hit second scan
+  ran ~3.5x faster (15s vs 52.5s) than the cold-cache first scan, purely
+  from skipping crt.sh's HTTP round trip.
+- Found while wiring up the tests for the cache: a real bug where
+  `fetch_crtsh_cached`'s `cache_dir`/`fetch` parameters used ordinary
+  bound default arguments (evaluated once at `runner.py`'s import time),
+  so `monkeypatch.setattr(runner, "fetch_crtsh", ...)` in the existing
+  `--live` test suite silently failed to intercept them — every `--live`
+  CLI test was making a real network call to crt.sh for `example.com`
+  and writing real cache files to the operator's actual
+  `~/.cache/glean/crtsh/`, despite the test file's own docstring
+  promising zero real network access. Caught by noticing the directory
+  existed on disk after a routine test run, not by a failing assertion.
+  Fixed by resolving both parameters from `None` sentinels inside the
+  function body (a fresh module-global lookup on every call, which
+  monkeypatching does correctly redirect) instead of as bound defaults;
+  added an `autouse` fixture in `tests/test_cli.py` redirecting the
+  cache directory to a per-test `tmp_path` as defense in depth.
+
 ### Notes
 - Development has started (`crtsh`, `theharvester`, `dnsx`, `httpx` adapters, dedup,
   scoring, brief, evaluation, CLI, LLM synthesis). All nine ADRs now have

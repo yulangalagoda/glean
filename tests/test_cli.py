@@ -15,6 +15,18 @@ runner = CliRunner()
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
+@pytest.fixture(autouse=True)
+def _isolate_crtsh_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Every test in this file must stay fully network-free (see the
+    module docstring on the --live section below) -- without this,
+    `fetch_crtsh_cached`'s cache directory defaults to the real
+    `~/.cache/glean/crtsh/`, which a real bug once let slip through
+    undetected (writing fake-but-cache-shaped test data into the
+    operator's actual cache directory on every `pytest` run, found only
+    by noticing the directory existed after a routine test run)."""
+    monkeypatch.setattr(live_runner, "DEFAULT_CRTSH_CACHE_DIR", tmp_path / "crtsh-cache")
+
+
 def test_top_level_help_lists_scan_as_a_subcommand() -> None:
     """Guards the deliberate `glean scan <domain>` shape (not bare
     `glean <domain>`) — see the module docstring on the callback."""
@@ -189,6 +201,53 @@ def test_scan_live_alone_satisfies_the_input_guard(
     result = runner.invoke(app, ["scan", "example.com", "--live", "--raw-dir", str(tmp_path)])
     assert result.exit_code == 0
     assert "# Glean Brief" in result.output
+
+
+def test_scan_live_reports_a_crtsh_cache_hit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fetch_calls = []
+
+    def fake_fetch(target: str) -> bytes:
+        fetch_calls.append(target)
+        return b"[]"
+
+    monkeypatch.setattr(live_runner, "fetch_crtsh", fake_fetch)
+    monkeypatch.setattr(live_runner, "run_theharvester", _empty_theharvester)
+    monkeypatch.setattr(live_runner, "run_dnsx", _empty_dnsx_envelope)
+
+    # First scan: cold cache, real (fake) fetch happens once.
+    result1 = runner.invoke(app, ["scan", "example.com", "--live", "--raw-dir", str(tmp_path)])
+    assert result1.exit_code == 0
+    assert fetch_calls == ["example.com"]
+
+    # Second scan of the same target: must be served from cache, not re-fetched.
+    result2 = runner.invoke(app, ["scan", "example.com", "--live", "--raw-dir", str(tmp_path)])
+    assert result2.exit_code == 0
+    assert fetch_calls == ["example.com"]  # still just the one call
+    assert "crt.sh: using cached response from" in result2.output
+
+
+def test_scan_live_no_crtsh_cache_always_refetches(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fetch_calls = []
+
+    def fake_fetch(target: str) -> bytes:
+        fetch_calls.append(target)
+        return b"[]"
+
+    monkeypatch.setattr(live_runner, "fetch_crtsh", fake_fetch)
+    monkeypatch.setattr(live_runner, "run_theharvester", _empty_theharvester)
+    monkeypatch.setattr(live_runner, "run_dnsx", _empty_dnsx_envelope)
+
+    for _ in range(2):
+        result = runner.invoke(
+            app,
+            ["scan", "example.com", "--live", "--no-crtsh-cache", "--raw-dir", str(tmp_path)],
+        )
+        assert result.exit_code == 0
+    assert fetch_calls == ["example.com", "example.com"]  # cache never consulted
 
 
 def test_scan_live_without_active_never_invokes_httpx(

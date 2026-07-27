@@ -146,6 +146,147 @@ def test_fetch_crtsh_raises_after_exhausting_all_attempts() -> None:
         )
 
 
+# --- fetch_crtsh_cached (ADR-0008 D9) -----------------------------------
+
+
+def test_fetch_crtsh_cached_calls_live_fetch_on_a_cold_cache(tmp_path: Path) -> None:
+    calls = []
+
+    def fake_fetch(target: str) -> bytes:
+        calls.append(target)
+        return b"[]"
+
+    info: list[str] = []
+    raw = runner.fetch_crtsh_cached(
+        "example.com", cache_dir=tmp_path, fetch=fake_fetch, info=info, now=lambda: 1000.0
+    )
+    assert raw == b"[]"
+    assert calls == ["example.com"]
+    assert info == []  # a normal cold-cache live fetch is not a notable event
+
+
+def test_fetch_crtsh_cached_writes_a_cache_entry_after_a_live_fetch(tmp_path: Path) -> None:
+    runner.fetch_crtsh_cached(
+        "example.com", cache_dir=tmp_path, fetch=lambda target: b'[{"id":1}]', now=lambda: 1000.0
+    )
+    assert (tmp_path / "example.com.json").read_bytes() == b'[{"id":1}]'
+    meta = json.loads((tmp_path / "example.com.meta.json").read_text())
+    assert meta["fetched_at"] == 1000.0
+
+
+def test_fetch_crtsh_cached_serves_a_fresh_entry_without_calling_fetch(tmp_path: Path) -> None:
+    def fail_if_called(target: str) -> bytes:
+        raise AssertionError("must not re-fetch a fresh cache entry")
+
+    runner.fetch_crtsh_cached(
+        "example.com", cache_dir=tmp_path, fetch=lambda target: b'["first"]', now=lambda: 1000.0
+    )
+
+    info: list[str] = []
+    raw = runner.fetch_crtsh_cached(
+        "example.com",
+        cache_dir=tmp_path,
+        ttl=3600.0,
+        fetch=fail_if_called,
+        info=info,
+        now=lambda: 1000.0 + 60.0,  # 1 minute later, well within the 1h ttl
+    )
+    assert raw == b'["first"]'
+    assert info == ["crt.sh: using cached response from 1m ago."]
+
+
+def test_fetch_crtsh_cached_refetches_once_the_ttl_expires(tmp_path: Path) -> None:
+    calls = []
+
+    def fake_fetch(target: str) -> bytes:
+        calls.append(target)
+        return b'["second"]'
+
+    runner.fetch_crtsh_cached(
+        "example.com", cache_dir=tmp_path, fetch=lambda target: b'["first"]', now=lambda: 1000.0
+    )
+
+    raw = runner.fetch_crtsh_cached(
+        "example.com",
+        cache_dir=tmp_path,
+        ttl=3600.0,
+        fetch=fake_fetch,
+        now=lambda: 1000.0 + 3601.0,  # just past the 1h ttl
+    )
+    assert raw == b'["second"]'
+    assert calls == ["example.com"]
+
+
+def test_fetch_crtsh_cached_falls_back_to_a_stale_entry_when_the_live_fetch_fails(
+    tmp_path: Path,
+) -> None:
+    """The rate-limit failsafe: a real crt.sh outage must not lose the
+    source entirely if we've successfully fetched this target before."""
+
+    def failing_fetch(target: str) -> bytes:
+        raise urllib.error.HTTPError("url", 502, "Bad Gateway", {}, None)  # type: ignore[arg-type]
+
+    runner.fetch_crtsh_cached(
+        "example.com", cache_dir=tmp_path, fetch=lambda target: b'["cached"]', now=lambda: 1000.0
+    )
+
+    info: list[str] = []
+    raw = runner.fetch_crtsh_cached(
+        "example.com",
+        cache_dir=tmp_path,
+        ttl=0.0,  # force the cache to be considered stale so the live path is tried
+        fetch=failing_fetch,
+        info=info,
+        now=lambda: 1000.0 + 7200.0,  # 2h later
+    )
+    assert raw == b'["cached"]'
+    assert len(info) == 1
+    assert "live fetch failed" in info[0]
+    assert "stale cached response from 2.0h ago" in info[0]
+
+
+def test_fetch_crtsh_cached_raises_when_the_live_fetch_fails_with_no_cache_at_all(
+    tmp_path: Path,
+) -> None:
+    def failing_fetch(target: str) -> bytes:
+        raise urllib.error.HTTPError("url", 502, "Bad Gateway", {}, None)  # type: ignore[arg-type]
+
+    with pytest.raises(urllib.error.HTTPError):
+        runner.fetch_crtsh_cached("example.com", cache_dir=tmp_path, fetch=failing_fetch)
+
+
+def test_fetch_crtsh_cached_ignores_a_corrupt_cache_entry(tmp_path: Path) -> None:
+    (tmp_path / "example.com.json").write_bytes(b"not valid json actually doesn't matter here")
+    (tmp_path / "example.com.meta.json").write_text("not valid json")
+
+    calls = []
+
+    def fake_fetch(target: str) -> bytes:
+        calls.append(target)
+        return b"[]"
+
+    raw = runner.fetch_crtsh_cached("example.com", cache_dir=tmp_path, fetch=fake_fetch)
+    assert raw == b"[]"
+    assert calls == ["example.com"]
+
+
+def test_fetch_crtsh_cached_uses_canon_host_as_the_cache_key(tmp_path: Path) -> None:
+    """Same target, differently cased/trailing-dotted, must hit the same
+    cache entry -- consistent with every adapter's own identity rule
+    (ADR-0001 D3)."""
+    runner.fetch_crtsh_cached(
+        "Example.com.", cache_dir=tmp_path, fetch=lambda target: b'["first"]', now=lambda: 1000.0
+    )
+
+    def fail_if_called(target: str) -> bytes:
+        raise AssertionError("must reuse the cache entry keyed by the canonical hostname")
+
+    raw = runner.fetch_crtsh_cached(
+        "example.com", cache_dir=tmp_path, fetch=fail_if_called, now=lambda: 1000.0 + 1.0
+    )
+    assert raw == b'["first"]'
+
+
 # --- run_theharvester ---------------------------------------------------
 
 

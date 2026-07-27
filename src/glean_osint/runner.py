@@ -16,6 +16,7 @@ it never inspects or interprets tool output itself.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -27,6 +28,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from glean_osint.adapters.base import ParseResult
+from glean_osint.normalise import canon_host
 
 CRTSH_MAX_ATTEMPTS = 5
 CRTSH_BASE_DELAY_SECONDS = 10.0
@@ -128,6 +130,112 @@ def fetch_crtsh(
         delay *= 2
 
     raise RuntimeError("unreachable")  # pragma: no cover — loop always returns or raises
+
+
+# Cert-transparency data for a given target doesn't meaningfully change
+# minute to minute -- 1h balances "avoid re-querying crt.sh for the same
+# target during a short test/dev session" (the observed rate-limit trigger,
+# ADR-0008 D9) against "still see a newly-issued cert reasonably soon."
+DEFAULT_CRTSH_CACHE_TTL_SECONDS = 3600.0
+DEFAULT_CRTSH_CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", "~/.cache")).expanduser() / (
+    "glean/crtsh"
+)
+
+
+def _read_crtsh_cache(cache_dir: Path, key: str) -> tuple[bytes, float] | None:
+    data_path, meta_path = cache_dir / f"{key}.json", cache_dir / f"{key}.meta.json"
+    try:
+        meta = json.loads(meta_path.read_text())
+        return data_path.read_bytes(), float(meta["fetched_at"])
+    except (OSError, ValueError, KeyError):
+        # Missing, partially-written, or corrupt cache entry -- degrade to
+        # "no cache", never crash the scan over it (ADR-0002 D5's rule
+        # applied to the cache layer itself).
+        return None
+
+
+def _write_crtsh_cache(cache_dir: Path, key: str, raw: bytes, fetched_at: float) -> None:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    (cache_dir / f"{key}.json").write_bytes(raw)
+    (cache_dir / f"{key}.meta.json").write_text(json.dumps({"fetched_at": fetched_at}))
+
+
+def _format_age(seconds: float) -> str:
+    if seconds < 3600:
+        return f"{seconds / 60:.0f}m"
+    return f"{seconds / 3600:.1f}h"
+
+
+def fetch_crtsh_cached(
+    target: str,
+    *,
+    cache_dir: Path | None = None,
+    ttl: float = DEFAULT_CRTSH_CACHE_TTL_SECONDS,
+    info: list[str] | None = None,
+    fetch: Callable[[str], bytes] | None = None,
+    now: Callable[[], float] = time.time,
+) -> bytes:
+    """`fetch_crtsh`, wrapped with an on-disk cache that doubles as a
+    rate-limit failsafe (ADR-0008 D9).
+
+    A cache entry fresh enough (within `ttl`) is served directly, no
+    network call -- this is what actually reduces load on crt.sh across
+    repeated scans of the same target, the observed trigger for real
+    `502`/`404` responses in practice. If the live fetch then fails after
+    exhausting its own retries (`fetch_crtsh`'s own D3 backoff) and *any*
+    cache entry exists, even a stale one, it's served as a last resort
+    rather than losing the source for this scan entirely.
+
+    Never prints anything itself -- the spinner-race lesson from earlier
+    this session applies here too. A human-readable status string is
+    appended to `info` (if given) whenever cache data is actually used
+    (fresh hit or stale failsafe), for the caller to report *after* its
+    spinner has exited. A normal live fetch with no cache involvement
+    appends nothing, keeping output uncluttered on the common path.
+
+    `cache_dir`/`fetch` default to `None` and are resolved to the real
+    module-level `DEFAULT_CRTSH_CACHE_DIR`/`fetch_crtsh` *inside* the
+    function body, not as bound default-argument values -- a real bug
+    found here: a bound default captures the function object/path that
+    existed at `runner.py`'s import time, so `monkeypatch.setattr(runner,
+    "fetch_crtsh", ...)` in a test silently failed to intercept it,
+    making a real network call and writing to the real `~/.cache/glean/`
+    during what the test suite's own docstring promises is a fully
+    network-free run. Resolving inside the body performs a fresh
+    module-global lookup on every call, which monkeypatching *does*
+    correctly redirect.
+    """
+    if cache_dir is None:
+        cache_dir = DEFAULT_CRTSH_CACHE_DIR
+    if fetch is None:
+        fetch = fetch_crtsh
+    key = canon_host(target)
+    cached = _read_crtsh_cache(cache_dir, key)
+
+    if cached is not None:
+        raw, fetched_at = cached
+        age = now() - fetched_at
+        if age <= ttl:
+            if info is not None:
+                info.append(f"crt.sh: using cached response from {_format_age(age)} ago.")
+            return raw
+
+    try:
+        raw = fetch(target)
+    except OSError as error:
+        if cached is None:
+            raise
+        stale_raw, fetched_at = cached
+        if info is not None:
+            info.append(
+                f"crt.sh: live fetch failed ({error}); using stale cached response from "
+                f"{_format_age(now() - fetched_at)} ago instead (real-time cert data may be "
+                "out of date)."
+            )
+        return stale_raw
+
+    _write_crtsh_cache(cache_dir, key, raw, now())
+    return raw
 
 
 def run_theharvester(

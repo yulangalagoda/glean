@@ -132,6 +132,24 @@ def scan(
             "Default: ./glean-output/<slug>-<timestamp>/raw/"
         ),
     ] = None,
+    crtsh_cache_ttl: Annotated[
+        float,
+        typer.Option(
+            help="How long (seconds) a cached crt.sh response is served without re-querying "
+            "(ADR-0008 D9) — reduces load on crt.sh across repeated scans of the same target, "
+            "the observed trigger for real 502/404 responses in practice. 0 forces a live "
+            "fetch every time while still allowing the stale-cache failsafe below."
+        ),
+    ] = runner.DEFAULT_CRTSH_CACHE_TTL_SECONDS,
+    no_crtsh_cache: Annotated[
+        bool,
+        typer.Option(
+            "--no-crtsh-cache",
+            help="Bypass crt.sh caching entirely (no read, no write, no stale-data failsafe) "
+            "for a guaranteed fresh-or-nothing answer — e.g. reproducing a bug or confirming "
+            "a fix just went live at crt.sh's end.",
+        ),
+    ] = False,
     theharvester_bin: Annotated[
         str,
         typer.Option(
@@ -214,10 +232,16 @@ def scan(
 
     # --- Stage 1: crt.sh + theHarvester (independent, ADR-0008 D1) ---
 
+    crtsh_info: list[str] = []
+    crtsh_fetch: Callable[[], bytes] = (
+        (lambda: runner.fetch_crtsh(domain))
+        if no_crtsh_cache
+        else (lambda: runner.fetch_crtsh_cached(domain, ttl=crtsh_cache_ttl, info=crtsh_info))
+    )
     with _maybe_spin(crtsh is None and live, "Searching certificate transparency logs (crt.sh)..."):
-        crtsh_raw, crtsh_ref, crtsh_warning = _resolve_input(
-            crtsh, live, lambda: runner.fetch_crtsh(domain), "crt.sh"
-        )
+        crtsh_raw, crtsh_ref, crtsh_warning = _resolve_input(crtsh, live, crtsh_fetch, "crt.sh")
+    for message in crtsh_info:
+        typer.secho(message, fg=typer.colors.CYAN, err=True)
     if crtsh_warning:
         typer.secho(crtsh_warning, fg=typer.colors.YELLOW, err=True)
     if crtsh_raw is not None:
