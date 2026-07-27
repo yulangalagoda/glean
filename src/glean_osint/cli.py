@@ -13,6 +13,7 @@ from __future__ import annotations
 import subprocess
 import urllib.error
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +40,7 @@ from glean_osint.evaluation import (
     prioritisation_quality,
     provenance_retention,
 )
+from glean_osint.progress import SECTION_BREAK, Spinner
 from glean_osint.schema.entities import ScanMeta, ToolRun
 from glean_osint.scoring import score_graph
 
@@ -178,7 +180,10 @@ def scan(
 
     # --- Stage 1: crt.sh + theHarvester (independent, ADR-0008 D1) ---
 
-    crtsh_raw, crtsh_ref = _resolve_input(crtsh, live, lambda: runner.fetch_crtsh(domain), "crt.sh")
+    with _maybe_spin(crtsh is None and live, "Searching certificate transparency logs (crt.sh)..."):
+        crtsh_raw, crtsh_ref = _resolve_input(
+            crtsh, live, lambda: runner.fetch_crtsh(domain), "crt.sh"
+        )
     if crtsh_raw is not None:
         if crtsh is None:
             crtsh_ref = runner.archive_raw(output_dir, f"crtsh-{domain}.json", crtsh_raw)
@@ -188,9 +193,13 @@ def scan(
         tools_run.append(ToolRun(source_tool="crtsh", method="passive", raw_output_ref=crtsh_ref))
         _warn_skipped("crt.sh", result.skipped)
 
-    theharvester_raw, theharvester_ref = _resolve_input(
-        theharvester, live, lambda: runner.run_theharvester(domain), "theHarvester"
-    )
+    with _maybe_spin(
+        theharvester is None and live,
+        "Searching public sources for hosts and emails (theHarvester)...",
+    ):
+        theharvester_raw, theharvester_ref = _resolve_input(
+            theharvester, live, lambda: runner.run_theharvester(domain), "theHarvester"
+        )
     if theharvester_raw is not None:
         if theharvester is None:
             theharvester_ref = runner.archive_raw(
@@ -207,7 +216,10 @@ def scan(
     # --- Stage 2: dnsx, fed Stage 1's parsed hostnames (ADR-0008 D1) ---
 
     candidates = runner.extract_candidates(domain, results)
-    dnsx_raw, dnsx_ref = _resolve_input(dnsx, live, lambda: runner.run_dnsx(candidates), "dnsx")
+    with _maybe_spin(
+        dnsx is None and live, f"Resolving {len(candidates)} candidate hostname(s) (dnsx)..."
+    ):
+        dnsx_raw, dnsx_ref = _resolve_input(dnsx, live, lambda: runner.run_dnsx(candidates), "dnsx")
     if dnsx_raw is not None:
         if dnsx is None:
             dnsx_ref = runner.archive_raw(output_dir, f"dnsx-{domain}.json", dnsx_raw)
@@ -224,9 +236,11 @@ def scan(
         httpx_ref: str | None = str(httpx)
     elif live and active:
         resolved_hosts = runner.extract_resolved_hosts(results)
-        httpx_raw = _invoke_live(
-            "httpx", lambda: runner.run_httpx(resolved_hosts, binary=httpx_bin)
-        )
+        label = f"Probing {len(resolved_hosts)} live host(s) for services and tech (httpx)..."
+        with _maybe_spin(True, label):
+            httpx_raw = _invoke_live(
+                "httpx", lambda: runner.run_httpx(resolved_hosts, binary=httpx_bin)
+            )
         httpx_ref = None
     else:
         if live:
@@ -258,7 +272,8 @@ def scan(
     )
     brief = build_brief(scored, merged.edges, scan_meta, top_n=top_n)
     if llm:
-        synthesis_result = synthesis.synthesize_brief(brief, scored, model=model)
+        with Spinner(f"Narrating top priorities with {model} (Ollama)..."):
+            synthesis_result = synthesis.synthesize_brief(brief, scored, model=model)
         brief = synthesis_result.brief
         typer.secho(
             f"[llm] model={model} narrated={synthesis_result.narrated_count} "
@@ -269,6 +284,7 @@ def scan(
         )
     rendered = render_markdown(brief)
 
+    typer.echo(SECTION_BREAK)
     if out is not None:
         out.write_text(rendered)
         typer.echo(f"Brief written to {out}")
@@ -415,11 +431,15 @@ def run_eval(
         raise typer.Exit(code=1)
 
     results: list[_TargetEvalResult] = []
-    for target_dir in target_dirs:
+    for index, target_dir in enumerate(target_dirs, start=1):
+        label = f"Evaluating {target_dir.name} ({index}/{len(target_dirs)})..."
         try:
-            results.append(
-                _evaluate_target(target_dir, top_n, llm=llm, model=model, judge_model=judge_model)
-            )
+            with Spinner(label):
+                results.append(
+                    _evaluate_target(
+                        target_dir, top_n, llm=llm, model=model, judge_model=judge_model
+                    )
+                )
         except Exception as error:  # noqa: BLE001 -- one bad target must not abort the report
             typer.secho(
                 f"{target_dir.name}: evaluation failed ({error}), skipping.",
@@ -427,6 +447,7 @@ def run_eval(
                 err=True,
             )
 
+    typer.echo(SECTION_BREAK)
     if not results:
         typer.secho("No targets evaluated successfully.", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
@@ -497,6 +518,14 @@ def _resolve_input(
     if live:
         return _invoke_live(tool_name, live_fetch), None
     return None, None
+
+
+def _maybe_spin(active: bool, label: str) -> AbstractContextManager[object]:
+    """A spinner only when we're actually about to do the slow thing --
+    reading an already-given file is instant and shouldn't flash a
+    progress line, so callers pass the exact condition that means 'this
+    call is really about to hit the network/a subprocess/an LLM'."""
+    return Spinner(label) if active else nullcontext()
 
 
 def main() -> None:

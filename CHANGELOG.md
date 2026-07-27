@@ -266,6 +266,19 @@ point is a real release, just pre-dev groundwork.
   limitation in ADR-0006's Validation section rather than quietly
   prompt-tuned away same-day.
 
+- Live progress feedback (`glean_osint.progress.Spinner`): `glean scan
+  --live`/`--llm` and `glean eval --llm` previously printed nothing at
+  all while crt.sh/theHarvester/dnsx/httpx/Ollama calls ran — on a slow
+  target (`yulan.me`, ~200 candidate hostnames) this looked identical to
+  a hung process. Each stage now announces what it's doing (candidate/
+  host counts included where known) with an animated spinner on a real
+  terminal, falling back to a single static line when output isn't a tty
+  (redirected output, the test suite). A `====` separator marks where
+  status output ends and the actual brief/report begins. Pure
+  presentation, no business logic — verified not to affect any existing
+  behaviour or test output (spinner never starts a background thread
+  under non-tty/captured output).
+
 ### Notes
 - Development has started (`crtsh`, `theharvester`, `dnsx`, `httpx` adapters, dedup,
   scoring, brief, evaluation, CLI, LLM synthesis). All nine ADRs now have
