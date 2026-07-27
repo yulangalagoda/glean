@@ -83,6 +83,7 @@ def run_scan(
     *,
     raw_dir: Path,
     on_status: Callable[[str], None] | None = None,
+    on_warning: Callable[[str], None] | None = None,
 ) -> ScanOutcome:
     """Run `request.tools` live against `request.target` and return a
     scored `Brief`. Mirrors the CLI's 3-stage pipeline (ADR-0008 D1)
@@ -91,15 +92,23 @@ def run_scan(
 
     `on_status` (optional) is called with a short plain-language status
     string before each stage -- the same shape the terminal `Spinner`
-    labels already use. Never called with a warning/error itself; those
-    are collected into the returned `warnings` tuple instead, so a
-    caller streaming this to a browser (ADR-0011 D5) can distinguish
-    "here's what's happening" from "here's what went wrong" without
-    parsing strings.
+    labels already use. `on_warning` (optional, added for ADR-0011
+    Stage 2's live progress) is called at the same point each warning
+    is recorded, so a caller streaming this to a browser can show it
+    the moment it happens rather than only once the whole scan
+    finishes. Both are independent of the returned `warnings` tuple,
+    which always holds the complete set regardless of whether either
+    callback was given -- streaming is additive, never the only record.
     """
     tools = normalise_selection(request.tools)
     status = on_status or (lambda _: None)
+    warn = on_warning or (lambda _: None)
     warnings: list[str] = []
+
+    def add_warning(message: str) -> None:
+        warnings.append(message)
+        warn(message)
+
     collected_at_dt = datetime.now(timezone.utc)
     collected_at = collected_at_dt.isoformat()
     results: list[ParseResult] = []
@@ -113,15 +122,16 @@ def run_scan(
         try:
             raw = runner.fetch_crtsh_cached(request.target, info=info)
         except _LIVE_INVOCATION_ERRORS as error:
-            warnings.append(f"crt.sh: live invocation failed ({error}), skipping.")
+            add_warning(f"crt.sh: live invocation failed ({error}), skipping.")
         else:
-            warnings.extend(info)
+            for message in info:
+                add_warning(message)
             ref = runner.archive_raw(raw_dir, f"crtsh-{request.target}.json", raw)
             ctx = ScanContext(target=request.target, collected_at=collected_at, raw_output_ref=ref)
             result = CrtshAdapter().parse(raw, ctx)
             results.append(result)
             tools_run.append(ToolRun(source_tool="crtsh", method="passive", raw_output_ref=ref))
-            _warn_skipped(warnings, "crt.sh", result.skipped)
+            _warn_skipped(add_warning, "crt.sh", result.skipped)
 
     if "theharvester" in tools:
         status("Searching public sources for hosts and emails (theHarvester)...")
@@ -130,7 +140,7 @@ def run_scan(
                 request.target, binary=_tool_binary("GLEAN_THEHARVESTER_BIN", "theHarvester")
             )
         except _LIVE_INVOCATION_ERRORS as error:
-            warnings.append(f"theHarvester: live invocation failed ({error}), skipping.")
+            add_warning(f"theHarvester: live invocation failed ({error}), skipping.")
         else:
             ref = runner.archive_raw(raw_dir, f"theharvester-{request.target}.json", raw)
             ctx = ScanContext(target=request.target, collected_at=collected_at, raw_output_ref=ref)
@@ -139,7 +149,7 @@ def run_scan(
             tools_run.append(
                 ToolRun(source_tool="theharvester", method="passive", raw_output_ref=ref)
             )
-            _warn_skipped(warnings, "theHarvester", result.skipped)
+            _warn_skipped(add_warning, "theHarvester", result.skipped)
 
     # --- Stage 2: dnsx, fed Stage 1's parsed hostnames (ADR-0008 D1) ---
 
@@ -149,14 +159,14 @@ def run_scan(
         try:
             raw = runner.run_dnsx(candidates, binary=_tool_binary("GLEAN_DNSX_BIN", "dnsx"))
         except _LIVE_INVOCATION_ERRORS as error:
-            warnings.append(f"dnsx: live invocation failed ({error}), skipping.")
+            add_warning(f"dnsx: live invocation failed ({error}), skipping.")
         else:
             ref = runner.archive_raw(raw_dir, f"dnsx-{request.target}.json", raw)
             ctx = ScanContext(target=request.target, collected_at=collected_at, raw_output_ref=ref)
             result = DnsxAdapter().parse(raw, ctx)
             results.append(result)
             tools_run.append(ToolRun(source_tool="dnsx", method="passive", raw_output_ref=ref))
-            _warn_skipped(warnings, "dnsx", result.skipped)
+            _warn_skipped(add_warning, "dnsx", result.skipped)
 
     # --- Stage 3: httpx, fed Stage 2's resolved hosts, ACTIVE ---
     # normalise_selection already guarantees dnsx is present whenever
@@ -170,14 +180,14 @@ def run_scan(
         try:
             raw = runner.run_httpx(resolved_hosts, binary=_tool_binary("GLEAN_HTTPX_BIN", "httpx"))
         except _LIVE_INVOCATION_ERRORS as error:
-            warnings.append(f"httpx: live invocation failed ({error}), skipping.")
+            add_warning(f"httpx: live invocation failed ({error}), skipping.")
         else:
             ref = runner.archive_raw(raw_dir, f"httpx-{request.target}.jsonl", raw)
             ctx = ScanContext(target=request.target, collected_at=collected_at, raw_output_ref=ref)
             result = HttpxAdapter().parse(raw, ctx)
             results.append(result)
             tools_run.append(ToolRun(source_tool="httpx", method="active", raw_output_ref=ref))
-            _warn_skipped(warnings, "httpx", result.skipped)
+            _warn_skipped(add_warning, "httpx", result.skipped)
 
     status("Scoring and building the brief...")
     merged = merge_graph(results)
@@ -193,6 +203,6 @@ def run_scan(
     return ScanOutcome(brief=brief, warnings=tuple(warnings))
 
 
-def _warn_skipped(warnings: list[str], tool_name: str, skipped: int) -> None:
+def _warn_skipped(add_warning: Callable[[str], None], tool_name: str, skipped: int) -> None:
     if skipped:
-        warnings.append(f"{tool_name}: skipped {skipped} malformed record(s).")
+        add_warning(f"{tool_name}: skipped {skipped} malformed record(s).")

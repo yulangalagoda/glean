@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Glean — scanning {{ target }}</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<h1>Scanning {{ target }}</h1>
+<p class="hint" id="status-line">Starting…</p>
+<ul id="log" class="log"></ul>
+
+<script>
+const events = new EventSource("/scan/{{ scan_id }}/events");
+const statusLine = document.getElementById("status-line");
+const log = document.getElementById("log");
+
+function addEntry(text, cls) {
+  const li = document.createElement("li");
+  li.textContent = text;
+  if (cls) { li.className = cls; }
+  log.appendChild(li);
+}
+
+events.addEventListener("status", function (e) {
+  statusLine.textContent = e.data;
+  addEntry(e.data, "status");
+});
+events.addEventListener("warning", function (e) {
+  addEntry(e.data, "warning");
+});
+events.addEventListener("done", function (e) {
+  events.close();
+  window.location = e.data;
+});
+events.addEventListener("error", function (e) {
+  events.close();
+  statusLine.textContent = "Scan failed: " + e.data;
+  addEntry(e.data, "warning");
+});
+</script>
+</body>
+</html>

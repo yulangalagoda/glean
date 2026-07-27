@@ -49,3 +49,15 @@ button[type="submit"] {
   background: #fde8e8; border: 1px solid #f3b6b6; color: #8a2323;
   border-radius: 8px; padding: 0.7rem 1rem; font-size: 0.92rem;
 }
+#status-line { font-weight: 600; color: #1a1a1a; font-size: 1rem; }
+@media (prefers-color-scheme: dark) { #status-line { color: #e8e8e8; } }
+.log { list-style: none; padding: 0; margin: 1rem 0 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.log li {
+  padding: 0.5rem 0.8rem; border-radius: 8px; background: #fff; border: 1px solid #eee;
+  font-size: 0.9rem;
+}
+.log li.warning { border-color: #f3b6b6; color: #8a2323; background: #fde8e8; }
+@media (prefers-color-scheme: dark) {
+  .log li { background: #202226; border-color: #2b2d32; color: #e8e8e8; }
+  .log li.warning { background: #3a2222; border-color: #6b3232; color: #ffb4b4; }
+}

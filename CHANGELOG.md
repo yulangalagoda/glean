@@ -463,6 +463,31 @@ point is a real release, just pre-dev groundwork.
 
   Stage 2 (SSE live progress) and Stage 3 (history browsing UI) are
   not yet built.
+- Interactive web interface, Stage 2 (ADR-0011): `POST /scan` no longer
+  blocks until the whole scan finishes -- it now starts the scan as a
+  background task and redirects immediately to a new `/scan/{id}/watch`
+  page, which opens a Server-Sent Events connection
+  (`/scan/{id}/events`) and shows real status updates ("Searching
+  certificate transparency logs (crt.sh)...", etc.) as they happen,
+  redirecting to the real results page once done. `pipeline.run_scan`
+  gained a matching `on_warning` hook alongside the existing
+  `on_status`, so degraded-tool warnings stream live too, not just in
+  the final summary.
+
+  203/203 tests pass (8 new), ruff/mypy/pre-commit all clean.
+  Real-data validated with genuine concurrent timing (not just
+  `TestClient`, whose background tasks run synchronously before
+  `.post()` returns and so can't exercise a scan actually "still
+  running"): fetched the watch page from a real server while a
+  `carrowen.xyz` scan was genuinely still executing and confirmed it
+  rendered live, and streamed real ordered events via `curl -N` against
+  `hazelmoor.org`. The slowest real run (`carrowen.xyz`, all four
+  tools) took ~75s, dominated by theHarvester -- exactly the scenario
+  this exists for: previously indistinguishable from a hang, now
+  visibly progressing.
+
+  Stage 3 (history browsing UI, CLI `--raw-dir` unification) is not
+  yet built.
 
 ### Notes
 - Development has started (`crtsh`, `theharvester`, `dnsx`, `httpx` adapters, dedup,

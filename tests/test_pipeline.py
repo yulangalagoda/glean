@@ -95,6 +95,50 @@ def test_run_scan_reports_a_degraded_tool_as_a_warning_not_a_crash(
     assert [t.source_tool for t in outcome.brief.scan.tools_run] == ["crtsh"]
 
 
+def test_run_scan_streams_warnings_via_on_warning_as_well_as_the_final_tuple(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ADR-0011 Stage 2: a caller streaming progress to a browser needs
+    warnings live, not just in the final ScanOutcome once everything's
+    already done."""
+    _stub_all_tools(monkeypatch)
+
+    def _unavailable(target: str, **kwargs: object) -> bytes:
+        raise runner.ToolUnavailable("theHarvester")
+
+    monkeypatch.setattr(runner, "run_theharvester", _unavailable)
+    streamed: list[str] = []
+
+    outcome = pipeline.run_scan(
+        ScanRequest(target="example.com", tools=frozenset({"crtsh", "theharvester"})),
+        raw_dir=tmp_path,
+        on_warning=streamed.append,
+    )
+
+    assert streamed == list(outcome.warnings)
+    assert "theHarvester: live invocation failed" in streamed[0]
+
+
+def test_run_scan_without_on_warning_still_populates_the_final_tuple(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """on_warning is purely additive -- omitting it must not lose anything
+    from the returned warnings tuple."""
+    _stub_all_tools(monkeypatch)
+
+    def _unavailable(target: str, **kwargs: object) -> bytes:
+        raise runner.ToolUnavailable("theHarvester")
+
+    monkeypatch.setattr(runner, "run_theharvester", _unavailable)
+
+    outcome = pipeline.run_scan(
+        ScanRequest(target="example.com", tools=frozenset({"crtsh", "theharvester"})),
+        raw_dir=tmp_path,
+    )
+
+    assert "theHarvester: live invocation failed" in outcome.warnings[0]
+
+
 def test_run_scan_folds_crtsh_cache_info_into_warnings(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
