@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Glean — history{% endblock %}
+{% block content %}
+<h1>Scan history</h1>
+
+{% if not scans %}
+<p class="hint">No scans yet — <a href="/">run one</a>.</p>
+{% else %}
+<ul class="history-list">
+  {% for scan in scans %}
+  <li class="history-row">
+    <a class="history-target" href="/scan/{{ scan.scan_id }}">{{ scan.target }}</a>
+    <span class="history-meta">{{ scan.started_at[:19] | replace("T", " ") }} UTC</span>
+    <span class="history-meta">
+      {% for tid in scan.tools_run %}{{ tool_names[tid].display_name if tid in tool_names else tid }}{% if not loop.last %}, {% endif %}{% endfor %}
+    </span>
+    <span class="history-meta">{{ scan.findings_count }} finding{{ "s" if scan.findings_count != 1 else "" }}</span>
+    {% if scan.warnings %}
+    <span class="history-meta warning-pill">{{ scan.warnings | length }} warning{{ "s" if scan.warnings | length != 1 else "" }}</span>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

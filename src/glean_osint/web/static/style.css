@@ -20,6 +20,9 @@ body {
   .error { background: #3a2222; border-color: #6b3232; color: #ffb4b4; }
   .hint { color: #a3a3a3; }
 }
+.nav { display: flex; gap: 1rem; margin-bottom: 2rem; font-size: 0.9rem; }
+.nav a { color: inherit; text-decoration: none; border-bottom: 1px solid transparent; }
+.nav a:hover { border-bottom-color: currentColor; }
 h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
 .hint { color: #666; font-size: 0.9rem; margin: 0 0 2rem; }
 form { display: flex; flex-direction: column; gap: 1.5rem; }
@@ -60,4 +63,21 @@ button[type="submit"] {
 @media (prefers-color-scheme: dark) {
   .log li { background: #202226; border-color: #2b2d32; color: #e8e8e8; }
   .log li.warning { background: #3a2222; border-color: #6b3232; color: #ffb4b4; }
+}
+.history-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.history-row {
+  display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap;
+  border: 1px solid #ddd; border-radius: 8px; padding: 0.7rem 0.9rem; background: #fff;
+}
+.history-target { font-weight: 600; color: inherit; text-decoration: none; }
+.history-target:hover { text-decoration: underline; }
+.history-meta { font-size: 0.85rem; color: #666; font-variant-numeric: tabular-nums; }
+.warning-pill {
+  margin-left: auto; background: #fde8e8; color: #8a2323; border-radius: 999px;
+  padding: 0.1rem 0.6rem;
+}
+@media (prefers-color-scheme: dark) {
+  .history-row { background: #202226; border-color: #34363b; }
+  .history-meta { color: #a3a3a3; }
+  .warning-pill { background: #3a2222; color: #ffb4b4; }
 }

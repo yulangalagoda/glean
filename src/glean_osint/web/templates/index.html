@@ -1,12 +1,6 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Glean</title>
-<link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
+{% extends "base.html" %}
+{% block title %}Glean{% endblock %}
+{% block content %}
 <h1>Glean</h1>
 <p class="hint">Unify open-source recon tools into one provenance-tracked, prioritised brief.</p>
 
@@ -68,5 +62,4 @@ if (httpxBox && dnsxBox) {
   });
 }
 </script>
-</body>
-</html>
+{% endblock %}

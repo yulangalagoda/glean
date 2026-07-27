@@ -7,15 +7,10 @@ explicit operator decision, not a default picked without asking. File-based
 other piece of state this project already keeps as files (raw archives,
 eval scans, ground truth), nothing to migrate as the schema evolves.
 
-Only the web interface writes here in v1 (ADR-0011 stage 1) -- the CLI's
-own `--raw-dir` default is deliberately left unchanged for now; unifying
-the two is ADR-0011 D6's own follow-up, sequenced into a later stage so it
-doesn't risk the CLI's already-validated behaviour for a UI feature that
-doesn't exist yet.
-
-Read-side browsing (`list_scans` etc.) is stage 3's job (ADR-0011), not
-built here -- this module is deliberately write-only until something
-actually reads it back.
+Stage 3 (ADR-0011): the CLI's own `--raw-dir` default now also points
+here (`cli.py`'s `_default_raw_dir`), and `--live` scans write a manifest
+too -- a scan run from the terminal and one run from the web UI now land
+in the same history, browsable from either surface.
 """
 
 from __future__ import annotations
@@ -51,3 +46,27 @@ class ScanManifest:
 def write_manifest(scan_dir: Path, manifest: ScanManifest) -> None:
     scan_dir.mkdir(parents=True, exist_ok=True)
     (scan_dir / "manifest.json").write_text(json.dumps(asdict(manifest), indent=2))
+
+
+def read_manifest(scan_dir: Path) -> ScanManifest | None:
+    path = scan_dir / "manifest.json"
+    try:
+        data = json.loads(path.read_text())
+        data["tools_run"] = tuple(data.get("tools_run", ()))
+        data["warnings"] = tuple(data.get("warnings", ()))
+        return ScanManifest(**data)
+    except (OSError, ValueError, TypeError, KeyError):
+        # Missing, partially-written, or corrupt manifest -- degrade to
+        # "not listed", never crash the history page over one bad entry
+        # (ADR-0002 D5's discipline applied to history browsing).
+        return None
+
+
+def list_scans(history_root: Path = DEFAULT_HISTORY_ROOT) -> list[ScanManifest]:
+    """Newest first -- `scan_id` embeds a sortable timestamp
+    (`scan_id_for`), so a plain reverse name sort is exact, no need to
+    parse `started_at` back out of each manifest."""
+    if not history_root.is_dir():
+        return []
+    manifests = (read_manifest(d) for d in sorted(history_root.iterdir(), reverse=True))
+    return [m for m in manifests if m is not None]

@@ -21,7 +21,7 @@ from typing import Annotated
 
 import typer
 
-from glean_osint import __version__, runner, synthesis
+from glean_osint import __version__, history, runner, synthesis
 from glean_osint.adapters.base import ParseResult, ScanContext
 from glean_osint.adapters.crtsh import CrtshAdapter
 from glean_osint.adapters.dnsx import DnsxAdapter
@@ -380,6 +380,36 @@ def scan(
             fg=typer.colors.CYAN,
             err=True,
         )
+    if live and raw_dir is None:
+        # ADR-0011 D6: only the default history location gets a manifest
+        # -- an explicit --raw-dir signals "put output somewhere else,
+        # on my own terms," which opts out of the shared-history
+        # bookkeeping too. Created explicitly rather than relied on as a
+        # side effect of archive_raw() -- a --live scan where every tool
+        # is *also* overridden by a per-tool file never calls
+        # archive_raw at all (the exact bug already found once in the
+        # web app's own history writing).
+        scan_dir = history.DEFAULT_HISTORY_ROOT / history.scan_id_for(domain, collected_at_dt)
+        scan_dir.mkdir(parents=True, exist_ok=True)
+        (scan_dir / "brief.html").write_text(render_html(brief))
+        history.write_manifest(
+            scan_dir,
+            history.ScanManifest(
+                scan_id=scan_dir.name,
+                target=domain,
+                started_at=collected_at,
+                tools_run=tuple(t.source_tool for t in brief.scan.tools_run),
+                authorisation=authorisation,
+                findings_count=brief.findings_count,
+                # The CLI prints each tool's warning directly (typer.secho)
+                # rather than collecting them into a list the way
+                # pipeline.run_scan does for the web UI -- a real, accepted
+                # gap: CLI-run history entries never show a warning pill,
+                # even if something degraded. Not chased further here.
+                warnings=(),
+            ),
+        )
+
     typer.echo(SECTION_BREAK)
     if out is not None:
         # Format follows --out's extension (ADR-0010 D2): .html gets the
@@ -591,12 +621,15 @@ def run_eval(
 
 
 def _default_raw_dir(domain: str, collected_at: datetime) -> Path:
-    """ADR-0008 D7: raw output from a live run is archived under a fresh
-    location, distinct from `eval/scans/` (which is specifically the
-    private ground-truth set, not general end-user scan output)."""
-    slug = domain.replace(".", "-")
-    timestamp = collected_at.strftime("%Y%m%dT%H%M%SZ")
-    return Path("glean-output") / f"{slug}-{timestamp}" / "raw"
+    """ADR-0008 D7, amended by ADR-0011 D6: raw output from a live run is
+    archived under the same fixed history location the web interface
+    uses (`~/.local/share/glean/scans/<scan_id>/raw/`), distinct from
+    `eval/scans/` (the private ground-truth set, not general end-user
+    scan output) -- so a scan run from the terminal and one run from
+    the web UI land in one shared, browsable history rather than two
+    disconnected ones. Still fully overridable via `--raw-dir`; only
+    the default moved."""
+    return history.DEFAULT_HISTORY_ROOT / history.scan_id_for(domain, collected_at) / "raw"
 
 
 def _invoke_live(tool_name: str, fetch: Callable[[], bytes]) -> tuple[bytes | None, str | None]:

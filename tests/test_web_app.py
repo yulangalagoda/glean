@@ -253,6 +253,51 @@ def test_view_an_unknown_scan_id_is_404(tmp_path: Path) -> None:
     assert response.status_code == 404
 
 
+def test_history_page_shows_the_empty_state_when_no_scans_exist(tmp_path: Path) -> None:
+    response = _client(tmp_path).get("/history")
+    assert response.status_code == 200
+    assert "No scans yet" in response.text
+
+
+def test_history_page_lists_a_completed_scan(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(pipeline, "run_scan", lambda request, **kw: _fake_outcome(request))
+
+    client = _client(tmp_path)
+    redirect = client.post(
+        "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
+    )
+    scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
+
+    response = client.get("/history")
+
+    assert response.status_code == 200
+    assert "example.com" in response.text
+    assert f'href="/scan/{scan_id}"' in response.text
+
+
+def test_history_page_shows_a_warning_pill_when_a_scan_had_warnings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def fake_run_scan(request, *, raw_dir, on_status=None, on_warning=None):
+        if on_warning is not None:
+            on_warning("crt.sh: live invocation failed (boom), skipping.")
+        return ScanOutcome(
+            brief=_fake_outcome(request).brief,
+            warnings=("crt.sh: live invocation failed (boom), skipping.",),
+        )
+
+    monkeypatch.setattr(pipeline, "run_scan", fake_run_scan)
+
+    client = _client(tmp_path)
+    client.post("/scan", data={"target": "example.com", "tools": ["crtsh"]})
+
+    response = client.get("/history")
+
+    assert "1 warning" in response.text
+
+
 def test_is_safe_scan_id_rejects_traversal_and_path_separators() -> None:
     """A literal ".."/"/" can't actually reach view_scan through a normal
     HTTP client (both browsers and httpx normalise `/scan/..` to `/`

@@ -488,6 +488,38 @@ point is a real release, just pre-dev groundwork.
 
   Stage 3 (history browsing UI, CLI `--raw-dir` unification) is not
   yet built.
+- Interactive web interface, Stage 3 (ADR-0011) — all three stages now
+  complete. `history.py` gained its read side (`list_scans`, newest
+  first, a corrupt/missing manifest degrades to "not listed" rather
+  than crashing); a new `GET /history` page lists every past scan with
+  a link to its results; a shared `base.html` + nav bar once three
+  pages needed consistent navigation. The real payoff: `cli.py`'s
+  `_default_raw_dir` now points at the same fixed
+  `~/.local/share/glean/scans/` location the web UI uses instead of
+  `./glean-output/`, and a `--live` scan with no explicit `--raw-dir`
+  writes a manifest + `brief.html` there too -- a scan run from the
+  terminal and one run from the web UI now land in one shared,
+  browsable history. `--raw-dir` remains fully overridable, and an
+  explicit one opts out of the shared-history bookkeeping entirely,
+  not just the raw-archive location. Ingest-only CLI usage (no
+  `--live`) is completely unaffected -- zero new side effects, exactly
+  as before.
+
+  218/218 tests pass (13 new), ruff/mypy/pre-commit all clean.
+  Real-data validated against the actual six scans already accumulated
+  on disk from earlier in this session (including one the operator ran
+  themselves) -- `/history` correctly listed all of them with working
+  links, deliberately checked against real pre-existing state rather
+  than a clean slate. Then ran a real `glean scan larnby.com --live`
+  from the terminal and confirmed it appeared in the same running
+  server's `/history` immediately, no restart needed -- concrete proof
+  the shared-history promise holds across both surfaces.
+
+  One accepted limitation: CLI-run manifests always have an empty
+  `warnings` list (the CLI prints each warning directly rather than
+  collecting them into a list the way the web pipeline does) --
+  CLI-run history entries never show the warning pill, even if
+  something degraded. Not chased further.
 
 ### Notes
 - Development has started (`crtsh`, `theharvester`, `dnsx`, `httpx` adapters, dedup,

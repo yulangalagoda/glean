@@ -26,7 +26,13 @@ from starlette.concurrency import run_in_threadpool
 
 from glean_osint import pipeline
 from glean_osint.brief import DEFAULT_TOP_N, render_html
-from glean_osint.history import DEFAULT_HISTORY_ROOT, ScanManifest, scan_id_for, write_manifest
+from glean_osint.history import (
+    DEFAULT_HISTORY_ROOT,
+    ScanManifest,
+    list_scans,
+    scan_id_for,
+    write_manifest,
+)
 from glean_osint.pipeline import ScanRequest
 from glean_osint.registry import PRESETS, TOOL_REGISTRY, normalise_selection
 
@@ -209,6 +215,14 @@ def create_app(history_root: Path = DEFAULT_HISTORY_ROOT) -> FastAPI:
         if not brief_path.is_file():
             raise HTTPException(status_code=404, detail="Scan not found.")
         return HTMLResponse(brief_path.read_text())
+
+    @app.get("/history", response_class=HTMLResponse)
+    def history(request: Request) -> HTMLResponse:
+        return _templates.TemplateResponse(
+            request,
+            "history.html",
+            {"scans": list_scans(history_root), "tool_names": TOOL_REGISTRY},
+        )
 
     return app
 

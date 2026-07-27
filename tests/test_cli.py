@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from glean_osint import evaluation, synthesis
+from glean_osint import evaluation, history, synthesis
 from glean_osint import runner as live_runner
 from glean_osint.cli import app
 
@@ -25,6 +25,11 @@ def _isolate_crtsh_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
     operator's actual cache directory on every `pytest` run, found only
     by noticing the directory existed after a routine test run)."""
     monkeypatch.setattr(live_runner, "DEFAULT_CRTSH_CACHE_DIR", tmp_path / "crtsh-cache")
+    # Same discipline for ADR-0011 D6: a --live scan with no explicit
+    # --raw-dir now defaults into the shared history location -- without
+    # this, any such test here would write real manifest/brief files
+    # into the operator's actual ~/.local/share/glean/scans/.
+    monkeypatch.setattr(history, "DEFAULT_HISTORY_ROOT", tmp_path / "history")
 
 
 def test_top_level_help_lists_scan_as_a_subcommand() -> None:
@@ -222,6 +227,48 @@ def test_scan_live_alone_satisfies_the_input_guard(
     result = runner.invoke(app, ["scan", "example.com", "--live", "--raw-dir", str(tmp_path)])
     assert result.exit_code == 0
     assert "# Glean Brief" in result.output
+
+
+def test_scan_live_without_raw_dir_writes_a_manifest_to_the_shared_history(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ADR-0011 D6: a --live scan with no explicit --raw-dir now lands in
+    the same shared history location the web interface uses, so it's
+    browsable from either surface."""
+    monkeypatch.setattr(live_runner, "fetch_crtsh", lambda target: b"[]")
+    monkeypatch.setattr(live_runner, "run_theharvester", _empty_theharvester)
+    monkeypatch.setattr(live_runner, "run_dnsx", _empty_dnsx_envelope)
+
+    result = runner.invoke(app, ["scan", "example.com", "--live"])
+
+    assert result.exit_code == 0
+    scan_dirs = list((history.DEFAULT_HISTORY_ROOT).iterdir())
+    assert len(scan_dirs) == 1
+    scan_dir = scan_dirs[0]
+    assert scan_dir.name.startswith("example-com-")
+    manifest = json.loads((scan_dir / "manifest.json").read_text())
+    assert manifest["target"] == "example.com"
+    assert manifest["scan_id"] == scan_dir.name
+    assert (scan_dir / "brief.html").read_text().startswith("<!doctype html>")
+    assert (scan_dir / "raw").is_dir()  # the usual raw archive still lands alongside it
+
+
+def test_scan_live_with_explicit_raw_dir_skips_the_shared_history(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An explicit --raw-dir signals "put output somewhere else, on my
+    own terms" -- it opts out of the shared-history bookkeeping too,
+    not just the raw-archive location."""
+    monkeypatch.setattr(live_runner, "fetch_crtsh", lambda target: b"[]")
+    monkeypatch.setattr(live_runner, "run_theharvester", _empty_theharvester)
+    monkeypatch.setattr(live_runner, "run_dnsx", _empty_dnsx_envelope)
+
+    result = runner.invoke(
+        app, ["scan", "example.com", "--live", "--raw-dir", str(tmp_path / "custom")]
+    )
+
+    assert result.exit_code == 0
+    assert not history.DEFAULT_HISTORY_ROOT.exists()
 
 
 def test_scan_live_reports_a_crtsh_cache_hit(
