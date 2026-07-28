@@ -520,6 +520,9 @@ def scan(
                 warnings=(),
             ),
         )
+        history.write_entities_snapshot(
+            scan_dir, [f.entity.to_dict() for f in brief.top_priorities + brief.also_found]
+        )
 
     typer.echo(SECTION_BREAK)
     if out is not None:

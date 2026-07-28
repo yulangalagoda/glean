@@ -328,6 +328,7 @@ def test_scan_live_without_raw_dir_writes_a_manifest_to_the_shared_history(
     assert manifest["scan_id"] == scan_dir.name
     assert (scan_dir / "brief.html").read_text().startswith("<!doctype html>")
     assert (scan_dir / "raw").is_dir()  # the usual raw archive still lands alongside it
+    assert (scan_dir / "entities.json").is_file()  # feeds web-side JSON/CSV export
 
 
 def test_scan_live_with_explicit_raw_dir_skips_the_shared_history(

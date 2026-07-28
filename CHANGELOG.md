@@ -627,6 +627,88 @@ point is a real release, just pre-dev groundwork.
   (crt.sh cache-hit, theHarvester and subfinder invoked live) completed
   in 30.6s wall-clock with all three tools' raw output correctly
   archived and no regressions in the resulting brief.
+- A batch of real UI feedback addressed across four phases, all
+  live-validated against real scans (`hazelmoor.org`), not just tests.
+  ADR-0010 D3 (the standalone brief file stays zero-JS, self-contained)
+  held throughout -- every interactive element is either inert `data-*`
+  markup in the shared `render_html()` output or injected only into the
+  web response (`_wrap_scan_result_for_web`), the same pattern already
+  established for the nav bar.
+
+  **Brief page interactivity:** copy-to-clipboard buttons on every
+  finding value (web-injected, reads the existing `<code>` markup);
+  a filter/toggle bar (type, tool, signal-derived facets, active-only)
+  driving both the top-priority cards and a new "Also found" *table*
+  (replacing the old flat bullet list, still inside the same collapsed
+  `<details>`) via `data-type`/`data-tools`/`data-methods`/
+  `data-signals` attributes now carried by every finding's markup;
+  score-breakdown tooltips (native `title=`, works in the standalone
+  file too, zero JS) built from `scoring.WEIGHTS` -- "exposed_service
+  (+2), active_only_finding (+1) = 3." instead of an opaque number;
+  clickable provenance -- each "Seen by" source is now a
+  `<span data-tool>` the web view turns into a link to a new
+  `/scan/{id}/raw/{tool}` route serving that tool's whole archived raw
+  output, pretty-printed (JSON or JSON-lines, detected not hardcoded);
+  and export buttons (HTML/JSON/CSV) wired to new `/scan/{id}/download/*`
+  routes. JSON/CSV export needed the underlying entity graph to survive
+  past one request's lifetime, so every completed scan (both `cli.py`
+  `--live` and the web app) now also writes an `entities.json` snapshot
+  (`history.write_entities_snapshot`) alongside `manifest.json`/
+  `brief.html` -- this snapshot is also what later powers the diff
+  feature below.
+- **Scan form**: an inline ethics warning appears the moment an
+  active-method tool (per the registry's own `default_method`, not a
+  hardcoded tool-id check) is selected -- "this sends real requests
+  directly to the target." A target-format hint plus a light,
+  non-blocking client-side check flags a pasted URL or path
+  ("https://example.com" / "example.com/admin") without ever probing
+  the target itself to validate it.
+- **Live progress**: turned out most of this was already built (ADR-0011
+  Stage 2's SSE stream) -- the real gap was smaller than it looked.
+  Added a 3-stage checklist above the existing scrolling log
+  (Passive discovery / DNS resolution / Active probing / Scoring,
+  showing only the stages this scan's own tool selection will actually
+  reach), driven by pattern-matching the same status text the backend
+  already sends. Real live testing surfaced an actual bug in the
+  existing SSE route while validating this: an early client disconnect
+  (tab closed, refresh, network blip) unconditionally popped the scan
+  out of `active_scans`, so a reconnect to a genuinely still-running
+  scan 404'd as "not found" even though `execute_scan` was still
+  working (it holds its own queue reference, so it was never actually
+  affected). Fixed by only popping on a genuine terminal `done`/`error`
+  event. Confirmed live: cut a real SSE connection short mid-scan,
+  reconnected, got a clean `200` and the eventual `done` event instead
+  of a `404`.
+- **History workspace**: repeat scans of the same target now collapse
+  under one heading (`history.group_scans_by_target`) instead of
+  reading as unrelated rows, with all-but-the-most-recent tucked behind
+  a "N earlier scans" disclosure; a client-side search box filters
+  groups by target; the warning pill is now a `<details>` disclosure
+  showing the actual warning text, not just a count; and each scan row
+  has a delete button (`POST /scan/{id}/delete`, `history.delete_scan`)
+  with a native `confirm()` guard before the irreversible removal.
+- **Scan-to-scan diff** (new `glean_osint/diff.py`, `diff_entities`):
+  the highest-value item from the feedback -- turns history from a log
+  into a monitoring tool. Compares two scans' `entities.json` snapshots
+  by entity id (ADR-0001's own deterministic id scheme, so "same id"
+  really does mean "same real-world thing," not a heuristic match) into
+  New / Removed / Changed, where "changed" means a different score,
+  signal set, or attributes -- provenance and first/last-seen
+  timestamps are deliberately excluded from that comparison, since
+  those differ on every real scan by construction and would otherwise
+  make every unchanged finding look "changed." `history.previous_scan_for`
+  finds the scan immediately older than whichever one you're looking at
+  (not always "vs. latest"), and a "Compare to previous scan" link
+  appears on a scan's page whenever one exists. Live-validated with two
+  real back-to-back scans of `hazelmoor.org` (crt.sh-only, then
+  crt.sh+subfinder): correctly reported 0 new/0 removed and 3 changed
+  -- subfinder corroborating three subdomains crt.sh had already found,
+  each gaining `multi_tool_corroboration` and a real score bump
+  (3.0 -> 4.0), exactly the kind of signal this feature exists to surface.
+
+  284/284 tests pass (45 new across `test_brief.py`, `test_history.py`,
+  `test_web_app.py`, and a new `test_diff.py`), ruff/mypy/
+  pre-commit `--all-files` and a wheel build all clean.
 
 ### Notes
 - Development has started (`crtsh`, `theharvester`, `dnsx`, `httpx` adapters, dedup,

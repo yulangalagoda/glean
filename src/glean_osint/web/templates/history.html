@@ -1,25 +1,68 @@
 {% extends "base.html" %}
 {% block title %}Glean — history{% endblock %}
+
+{% macro scan_row(scan) %}
+<li class="history-row">
+  <a class="history-target" href="/scan/{{ scan.scan_id }}">{{ scan.started_at[:19] | replace("T", " ") }} UTC</a>
+  <span class="history-meta">
+    {% for tid in scan.tools_run %}{{ tool_names[tid].display_name if tid in tool_names else tid }}{% if not loop.last %}, {% endif %}{% endfor %}
+  </span>
+  <span class="history-meta">{{ scan.findings_count }} finding{{ "s" if scan.findings_count != 1 else "" }}</span>
+  {% if scan.warnings %}
+  <details class="warning-pill">
+    <summary>{{ scan.warnings | length }} warning{{ "s" if scan.warnings | length != 1 else "" }}</summary>
+    <ul class="warning-list">
+      {% for w in scan.warnings %}<li>{{ w }}</li>{% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+  <form method="post" action="/scan/{{ scan.scan_id }}/delete" class="delete-form"
+        onsubmit="return confirm('Delete this scan? This cannot be undone.');">
+    <button type="submit" class="delete-btn">Delete</button>
+  </form>
+</li>
+{% endmacro %}
+
 {% block content %}
 <h1>Scan history</h1>
 
-{% if not scans %}
+{% if not groups %}
 <p class="hint">No scans yet — <a href="/">run one</a>.</p>
 {% else %}
-<ul class="history-list">
-  {% for scan in scans %}
-  <li class="history-row">
-    <a class="history-target" href="/scan/{{ scan.scan_id }}">{{ scan.target }}</a>
-    <span class="history-meta">{{ scan.started_at[:19] | replace("T", " ") }} UTC</span>
-    <span class="history-meta">
-      {% for tid in scan.tools_run %}{{ tool_names[tid].display_name if tid in tool_names else tid }}{% if not loop.last %}, {% endif %}{% endfor %}
-    </span>
-    <span class="history-meta">{{ scan.findings_count }} finding{{ "s" if scan.findings_count != 1 else "" }}</span>
-    {% if scan.warnings %}
-    <span class="history-meta warning-pill">{{ scan.warnings | length }} warning{{ "s" if scan.warnings | length != 1 else "" }}</span>
+<input type="search" id="history-search" class="filter-search history-search"
+       placeholder="Search by target…">
+
+<div id="history-groups">
+  {% for target, scans in groups %}
+  <section class="target-group" data-target="{{ target | lower }}">
+    <h2 class="target-group-heading">
+      {{ target }}
+      <span class="hint">({{ scans | length }} scan{{ "s" if scans | length != 1 else "" }})</span>
+    </h2>
+    <ul class="history-list">
+      {{ scan_row(scans[0]) }}
+    </ul>
+    {% if scans | length > 1 %}
+    <details class="earlier-scans">
+      <summary>{{ (scans | length) - 1 }} earlier scan(s) of this target — click to expand</summary>
+      <ul class="history-list">
+        {% for scan in scans[1:] %}{{ scan_row(scan) }}{% endfor %}
+      </ul>
+    </details>
     {% endif %}
-  </li>
+  </section>
   {% endfor %}
-</ul>
+</div>
+
+<script>
+const search = document.getElementById("history-search");
+search.addEventListener("input", function () {
+  const query = search.value.trim().toLowerCase();
+  document.querySelectorAll(".target-group").forEach(function (group) {
+    const matches = !query || (group.dataset.target || "").indexOf(query) !== -1;
+    group.classList.toggle("hidden", !matches);
+  });
+});
+</script>
 {% endif %}
 {% endblock %}

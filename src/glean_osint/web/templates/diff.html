@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Glean — compare {{ target }}{% endblock %}
+{% block content %}
+<h1>Compare — {{ target }}</h1>
+<p class="hint">
+  {{ previous.started_at[:19] | replace("T", " ") }} UTC
+  &rarr;
+  {{ current.started_at[:19] | replace("T", " ") }} UTC
+</p>
+<p class="hint"><a href="/scan/{{ scan_id }}">&larr; Back to this scan</a></p>
+
+<h2>New <span class="diff-count">({{ diff.added | length }})</span></h2>
+{% if not diff.added %}
+<p class="hint">Nothing new since the previous scan.</p>
+{% else %}
+<ul class="diff-list diff-added">
+  {% for e in diff.added %}
+  <li>
+    <code>{{ e.value }}</code>
+    <span class="pill">{{ e.type }}</span>
+    {% if e.priority %}<span class="diff-score">priority {{ e.priority.score }}</span>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+<h2>Removed <span class="diff-count">({{ diff.removed | length }})</span></h2>
+{% if not diff.removed %}
+<p class="hint">Nothing disappeared since the previous scan.</p>
+{% else %}
+<ul class="diff-list diff-removed">
+  {% for e in diff.removed %}
+  <li><code>{{ e.value }}</code> <span class="pill">{{ e.type }}</span></li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+<h2>Changed <span class="diff-count">({{ diff.changed | length }})</span></h2>
+{% if not diff.changed %}
+<p class="hint">Nothing changed since the previous scan.</p>
+{% else %}
+<ul class="diff-list diff-changed">
+  {% for c in diff.changed %}
+  <li>
+    <code>{{ c.value }}</code>
+    <span class="pill">{{ c.entity_type }}</span>
+    {% if c.old_score != c.new_score %}
+    <span class="diff-score">priority {{ c.old_score }} &rarr; {{ c.new_score }}</span>
+    {% endif %}
+    {% if c.old_signals != c.new_signals %}
+    <div class="diff-signals">
+      signals: {{ c.old_signals | join(", ") or "none" }} &rarr; {{ c.new_signals | join(", ") or "none" }}
+    </div>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

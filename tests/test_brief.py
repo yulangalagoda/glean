@@ -17,7 +17,7 @@ from glean_osint.brief import (
     render_markdown,
 )
 from glean_osint.dedup import merge_graph
-from glean_osint.schema.entities import Entity, ProvenanceEntry, ScanMeta, ToolRun
+from glean_osint.schema.entities import Entity, Priority, ProvenanceEntry, ScanMeta, ToolRun
 from glean_osint.scoring import score_graph
 
 AS_OF = datetime(2026, 7, 26, tzinfo=timezone.utc)
@@ -353,3 +353,102 @@ def test_full_pipeline_produces_a_contract_passing_brief() -> None:
     rendered = render_markdown(brief)
     assert rendered.startswith("# Glean Brief — example.com")
     assert brief.findings_count == len(scored)
+
+
+def test_render_html_top_priority_card_carries_facet_data_for_the_web_filter_bar() -> None:
+    """The web view's own injected filter bar (tested in test_web_app.py's
+    JS-adjacent coverage, not here) reads these data-* attributes to
+    show/hide findings client-side; inert markup in the standalone file
+    (ADR-0010 D3 -- no JS there to ever read them)."""
+    entity = _entity(
+        "service:example.com:443",
+        "service",
+        "443/tcp",
+        provenance=(_prov(source_tool="httpx", method="active"),),
+        priority=Priority(score=3, rank=1, signals=("exposed_service", "active_only_finding")),
+    )
+    brief = build_brief([entity], [], SCAN)
+
+    rendered = render_html(brief)
+
+    assert 'data-type="service"' in rendered
+    assert 'data-tools="httpx"' in rendered
+    assert 'data-methods="active"' in rendered
+    assert 'data-signals="exposed_service active_only_finding"' in rendered
+
+
+def test_render_html_score_badge_has_a_hover_tooltip_with_the_signal_breakdown() -> None:
+    """Score transparency: the deterministic WEIGHTS table (ADR-0004 D2)
+    is real and additive -- surface the per-signal contribution as a
+    native tooltip, not just the opaque final number."""
+    entity = _entity(
+        "service:example.com:443",
+        "service",
+        "443/tcp",
+        provenance=(_prov(source_tool="httpx", method="active"),),
+        priority=Priority(score=3, rank=1, signals=("exposed_service", "active_only_finding")),
+    )
+    brief = build_brief([entity], [], SCAN)
+
+    rendered = render_html(brief)
+
+    assert "service is exposed (+2)" in rendered
+    assert "found only via active collection (+1)" in rendered
+    assert 'title="' in rendered
+
+
+def test_score_breakdown_tooltip_handles_a_finding_with_no_signals() -> None:
+    entity = _entity(
+        "domain:example.com",
+        "domain",
+        "example.com",
+        priority=Priority(score=0, rank=1, signals=()),
+    )
+    brief = build_brief([entity], [], SCAN)
+
+    rendered = render_html(brief)
+
+    assert "No individual scoring signal." in rendered
+
+
+def test_render_html_also_found_renders_as_a_table_not_a_bullet_list() -> None:
+    entities = [_entity("domain:example.com", "domain", "example.com")] + [
+        _entity(f"subdomain:h{i}.example.com", "subdomain", f"h{i}.example.com") for i in range(3)
+    ]
+    scored = score_graph(entities, [], AS_OF)
+    brief = build_brief(scored, [], SCAN)
+
+    rendered = render_html(brief)
+
+    assert '<table class="also-found">' in rendered
+    assert '<ul class="also-found">' not in rendered
+    for finding in brief.also_found:
+        assert finding.display_value in rendered
+
+
+def test_render_html_seen_by_wraps_each_source_in_a_data_tool_span() -> None:
+    """The web view's injected script turns these into links to
+    /scan/{id}/raw/{tool} -- the standalone file just shows plain
+    grouped text via the span's own content, same as before."""
+    entity = _entity(
+        "subdomain:admin.example.com",
+        "subdomain",
+        "admin.example.com",
+        provenance=(
+            _prov(source_tool="crtsh", method="passive"),
+            _prov(source_tool="dnsx", method="passive"),
+        ),
+        priority=Priority(score=1, rank=1, signals=("multi_tool_corroboration",)),
+    )
+    brief = build_brief([entity], [], SCAN)
+
+    rendered = render_html(brief)
+
+    assert '<span class="src" data-tool="crtsh">crt.sh (passive)</span>' in rendered
+    assert '<span class="src" data-tool="dnsx">dnsx (passive)</span>' in rendered
+
+    # render_markdown's plain-text "seen by" line must stay untouched --
+    # it's terminal/file output, never HTML.
+    markdown = render_markdown(brief)
+    assert "<span" not in markdown
+    assert "crt.sh (passive), dnsx (passive)" in markdown

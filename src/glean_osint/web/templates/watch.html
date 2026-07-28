@@ -2,10 +2,60 @@
 {% block title %}Glean — scanning {{ target }}{% endblock %}
 {% block content %}
 <h1>Scanning {{ target }}</h1>
-<p class="hint" id="status-line">Starting…</p>
-<ul id="log" class="log"></ul>
+<div id="watch-root" data-tools="{{ tools_csv }}">
+  <ol class="stage-checklist" id="stage-checklist"></ol>
+  <p class="hint" id="status-line">Starting…</p>
+  <ul id="log" class="log"></ul>
+</div>
 
 <script>
+const root = document.getElementById("watch-root");
+const selectedTools = (root.dataset.tools || "").split(",").filter(Boolean);
+
+// Stage boundaries mirror the pipeline's own status-line wording
+// (pipeline.py's on_status calls) -- not a separate source of truth,
+// just pattern-matched against the text the backend already sends.
+// Only stages this scan's own tool selection can actually reach get
+// shown, so a passive-only scan never displays a permanently-pending
+// "Active probing" line it will never emit a status for.
+const stages = [{ id: "passive", label: "Passive discovery", match: /^Searching/ }];
+if (selectedTools.includes("dnsx")) {
+  stages.push({ id: "dns", label: "DNS resolution (dnsx)", match: /^Resolving/ });
+}
+if (selectedTools.includes("httpx")) {
+  stages.push({ id: "active", label: "Active probing (httpx)", match: /^Probing/ });
+}
+stages.push({ id: "scoring", label: "Scoring and building the brief", match: /^Scoring/ });
+
+const checklist = document.getElementById("stage-checklist");
+stages.forEach(function (stage) {
+  const li = document.createElement("li");
+  li.id = "stage-" + stage.id;
+  li.className = "stage-pending";
+  li.textContent = stage.label;
+  checklist.appendChild(li);
+});
+
+function setStageState(index, state) {
+  const li = document.getElementById("stage-" + stages[index].id);
+  li.className = "stage-" + state;
+}
+
+function advanceToStage(text) {
+  const index = stages.findIndex(function (stage) { return stage.match.test(text); });
+  if (index === -1) {
+    return;
+  }
+  for (let i = 0; i < index; i++) {
+    setStageState(i, "done");
+  }
+  setStageState(index, "active");
+}
+
+function finishAllStages() {
+  stages.forEach(function (_, i) { setStageState(i, "done"); });
+}
+
 const events = new EventSource("/scan/{{ scan_id }}/events");
 const statusLine = document.getElementById("status-line");
 const log = document.getElementById("log");
@@ -20,11 +70,13 @@ function addEntry(text, cls) {
 events.addEventListener("status", function (e) {
   statusLine.textContent = e.data;
   addEntry(e.data, "status");
+  advanceToStage(e.data);
 });
 events.addEventListener("warning", function (e) {
   addEntry(e.data, "warning");
 });
 events.addEventListener("done", function (e) {
+  finishAllStages();
   events.close();
   window.location = e.data;
 });

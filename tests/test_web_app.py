@@ -29,11 +29,11 @@ from urllib.parse import urlparse
 import pytest
 from fastapi.testclient import TestClient
 
-from glean_osint import pipeline
-from glean_osint.brief import Brief
+from glean_osint import history, pipeline
+from glean_osint.brief import Brief, build_brief
 from glean_osint.pipeline import ScanOutcome, ScanRequest
 from glean_osint.registry import PRESETS, TOOL_REGISTRY
-from glean_osint.schema.entities import ScanMeta
+from glean_osint.schema.entities import Entity, Priority, ProvenanceEntry, ScanMeta
 from glean_osint.web.app import create_app
 
 
@@ -119,7 +119,9 @@ def test_submit_scan_redirects_to_the_watch_page_immediately(
     assert response.status_code == 303
     location = response.headers["location"]
     assert location.startswith("/scan/example-com-")
-    assert location.endswith("/watch?target=example.com")
+    assert "/watch?" in location
+    assert "target=example.com" in location
+    assert "tools=crtsh" in location
     assert calls[0].target == "example.com"
     assert calls[0].tools == frozenset({"crtsh"})
 
@@ -365,3 +367,399 @@ def test_is_safe_scan_id_rejects_traversal_and_path_separators() -> None:
     assert _is_safe_scan_id(".") is False
     assert _is_safe_scan_id("../etc/passwd") is False
     assert _is_safe_scan_id("foo/bar") is False
+
+
+def _fake_scored_entity_finding_outcome(request: ScanRequest) -> ScanOutcome:
+    """A scan outcome with one real, scored finding -- for tests that
+    need entities.json / raw-output / download routes to have something
+    to actually serve."""
+    entity = Entity(
+        id="subdomain:admin.example.com",
+        type="subdomain",
+        value="admin.example.com",
+        provenance=(
+            ProvenanceEntry(
+                source_tool="crtsh", method="passive", collected_at="2026-07-27T00:00:00Z"
+            ),
+        ),
+        priority=Priority(score=3, rank=1, signals=("sensitive_hostname_pattern",)),
+    )
+    scan_meta = ScanMeta(
+        target=request.target,
+        started_at="2026-07-27T00:00:00Z",
+        glean_version="0.0.2",
+        authorisation=request.authorisation,
+        tools_run=(),
+    )
+    brief = build_brief([entity], [], scan_meta)
+    return ScanOutcome(brief=brief, warnings=())
+
+
+def test_submit_scan_writes_an_entities_snapshot(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        pipeline, "run_scan", lambda request, **kw: _fake_scored_entity_finding_outcome(request)
+    )
+
+    redirect = _client(tmp_path).post(
+        "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
+    )
+    scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
+    entities = json.loads((tmp_path / scan_id / "entities.json").read_text())
+
+    assert len(entities) == 1
+    assert entities[0]["id"] == "subdomain:admin.example.com"
+
+
+def test_view_scan_response_carries_scan_id_and_report_script(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(pipeline, "run_scan", lambda request, **kw: _fake_outcome(request))
+
+    client = _client(tmp_path)
+    redirect = client.post(
+        "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
+    )
+    scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
+    result = client.get(f"/scan/{scan_id}")
+
+    assert f'data-scan-id="{scan_id}"' in result.text
+    assert '<script src="/static/report.js" defer></script>' in result.text
+    assert f"/scan/{scan_id}/download/json" in result.text
+    assert f"/scan/{scan_id}/download/csv" in result.text
+    assert f"/scan/{scan_id}/download/html" in result.text
+
+
+def test_download_html_serves_the_saved_report_as_an_attachment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(pipeline, "run_scan", lambda request, **kw: _fake_outcome(request))
+
+    client = _client(tmp_path)
+    redirect = client.post(
+        "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
+    )
+    scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
+    response = client.get(f"/scan/{scan_id}/download/html")
+
+    assert response.status_code == 200
+    assert response.headers["content-disposition"] == f'attachment; filename="{scan_id}.html"'
+    assert response.text.startswith("<!doctype html>")
+    # the download is the saved, chrome-free file -- not the wrapped web view
+    assert "nav-brand" not in response.text
+
+
+def test_download_json_returns_findings_and_scan_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        pipeline, "run_scan", lambda request, **kw: _fake_scored_entity_finding_outcome(request)
+    )
+
+    client = _client(tmp_path)
+    redirect = client.post(
+        "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
+    )
+    scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
+    response = client.get(f"/scan/{scan_id}/download/json")
+
+    assert response.status_code == 200
+    assert response.headers["content-disposition"] == f'attachment; filename="{scan_id}.json"'
+    payload = response.json()
+    assert payload["target"] == "example.com"
+    assert payload["findings"][0]["id"] == "subdomain:admin.example.com"
+
+
+def test_download_csv_flattens_findings_into_rows(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        pipeline, "run_scan", lambda request, **kw: _fake_scored_entity_finding_outcome(request)
+    )
+
+    client = _client(tmp_path)
+    redirect = client.post(
+        "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
+    )
+    scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
+    response = client.get(f"/scan/{scan_id}/download/csv")
+
+    assert response.status_code == 200
+    assert response.headers["content-disposition"] == f'attachment; filename="{scan_id}.csv"'
+    lines = response.text.strip().splitlines()
+    assert lines[0] == "id,type,value,score,rank,signals,tools,methods,first_seen"
+    assert "subdomain:admin.example.com" in lines[1]
+    assert "sensitive_hostname_pattern" in lines[1]
+
+
+def test_download_json_is_404_for_a_scan_with_no_entities_snapshot(tmp_path: Path) -> None:
+    """A scan run before this feature existed (or any other scan
+    missing entities.json) degrades to 404, not a crash."""
+    scan_id = "example-com-20260101T000000Z"
+    history.write_manifest(
+        tmp_path / scan_id,
+        history.ScanManifest(
+            scan_id=scan_id,
+            target="example.com",
+            started_at="2026-01-01T00:00:00Z",
+            tools_run=(),
+            authorisation=None,
+            findings_count=0,
+        ),
+    )
+
+    response = _client(tmp_path).get(f"/scan/{scan_id}/download/json")
+
+    assert response.status_code == 404
+
+
+def test_view_raw_serves_the_archived_output_for_a_tool(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def fake_run_scan(request, *, raw_dir, on_status=None, on_warning=None):
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        (raw_dir / "crtsh-example.com.json").write_text('[{"name_value": "admin.example.com"}]')
+        return _fake_outcome(request)
+
+    monkeypatch.setattr(pipeline, "run_scan", fake_run_scan)
+
+    client = _client(tmp_path)
+    redirect = client.post(
+        "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
+    )
+    scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
+    response = client.get(f"/scan/{scan_id}/raw/crtsh")
+
+    assert response.status_code == 200
+    assert "admin.example.com" in response.text
+    assert f'href="/scan/{scan_id}"' in response.text  # back link
+
+
+def test_view_raw_is_404_for_an_unknown_tool_id(tmp_path: Path) -> None:
+    response = _client(tmp_path).get("/scan/does-not-exist/raw/not-a-real-tool")
+    assert response.status_code == 404
+
+
+def test_view_raw_is_404_when_no_raw_output_was_archived_for_that_tool(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(pipeline, "run_scan", lambda request, **kw: _fake_outcome(request))
+
+    client = _client(tmp_path)
+    redirect = client.post(
+        "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
+    )
+    scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
+    response = client.get(f"/scan/{scan_id}/raw/subfinder")
+
+    assert response.status_code == 404
+
+
+def test_index_marks_active_tool_checkboxes_for_the_ethics_warning(tmp_path: Path) -> None:
+    """The client-side warning banner (index.html's own JS) reads this
+    data-method attribute -- httpx is currently the only active-method
+    tool in the registry."""
+    response = _client(tmp_path).get("/")
+
+    assert 'data-method="active"' in response.text
+    assert 'id="active-warning"' in response.text
+
+
+def test_index_has_a_target_format_hint_and_a_conditional_format_warning(
+    tmp_path: Path,
+) -> None:
+    response = _client(tmp_path).get("/")
+
+    assert "not a URL or IP address" in response.text
+    assert 'id="target-format-hint"' in response.text
+
+
+def _manifest(scan_id: str, target: str = "example.com") -> history.ScanManifest:
+    return history.ScanManifest(
+        scan_id=scan_id,
+        target=target,
+        started_at="2026-07-27T00:00:00Z",
+        tools_run=("crtsh",),
+        authorisation=None,
+        findings_count=1,
+    )
+
+
+def test_history_page_groups_repeat_scans_of_the_same_target(tmp_path: Path) -> None:
+    # Two distinct manifests written directly (rather than two real POST
+    # /scan calls) -- scan_id_for's timestamp is second-granularity, so
+    # two real scans of the same target within the same test's wall-clock
+    # second would collide on scan_id, which is a real, separate, known
+    # characteristic of scan_id_for, not something this test is about.
+    history.write_manifest(
+        tmp_path / "example-com-20260727T120000Z", _manifest("example-com-20260727T120000Z")
+    )
+    history.write_manifest(
+        tmp_path / "example-com-20260727T110000Z", _manifest("example-com-20260727T110000Z")
+    )
+
+    response = _client(tmp_path).get("/history")
+
+    assert response.status_code == 200
+    assert "2 scans" in response.text
+    assert "1 earlier scan(s) of this target" in response.text
+
+
+def test_history_page_has_a_search_input(tmp_path: Path) -> None:
+    response = _client(tmp_path).get("/history")
+    assert response.status_code == 200  # empty state -- no groups, no search box
+    assert 'id="history-search"' not in response.text
+
+
+def test_history_page_shows_a_search_input_once_scans_exist(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(pipeline, "run_scan", lambda request, **kw: _fake_outcome(request))
+    client = _client(tmp_path)
+    client.post("/scan", data={"target": "example.com", "tools": ["crtsh"]})
+
+    response = client.get("/history")
+
+    assert 'id="history-search"' in response.text
+    assert 'data-target="example.com"' in response.text
+
+
+def test_history_page_shows_the_actual_warning_text(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def fake_run_scan(request, *, raw_dir, on_status=None, on_warning=None):
+        return ScanOutcome(
+            brief=_fake_outcome(request).brief,
+            warnings=("crt.sh: live invocation failed (boom), skipping.",),
+        )
+
+    monkeypatch.setattr(pipeline, "run_scan", fake_run_scan)
+    client = _client(tmp_path)
+    client.post("/scan", data={"target": "example.com", "tools": ["crtsh"]})
+
+    response = client.get("/history")
+
+    assert "crt.sh: live invocation failed (boom), skipping." in response.text
+
+
+def test_deleting_a_scan_removes_it_from_history(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(pipeline, "run_scan", lambda request, **kw: _fake_outcome(request))
+    client = _client(tmp_path)
+    redirect = client.post(
+        "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
+    )
+    scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
+    assert (tmp_path / scan_id).is_dir()
+
+    response = client.post(f"/scan/{scan_id}/delete", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/history"
+    assert not (tmp_path / scan_id).exists()
+    assert "No scans yet" in client.get("/history").text
+
+
+def test_deleting_an_unsafe_scan_id_is_404(tmp_path: Path) -> None:
+    response = _client(tmp_path).post("/scan/../etc/delete")
+    assert response.status_code == 404
+
+
+def _seed_scan_with_entities(
+    tmp_path: Path, scan_id: str, target: str, entities: list[dict], warnings: tuple = ()
+) -> None:
+    scan_dir = tmp_path / scan_id
+    history.write_manifest(
+        scan_dir,
+        history.ScanManifest(
+            scan_id=scan_id,
+            target=target,
+            started_at="2026-07-27T00:00:00Z",
+            tools_run=("crtsh",),
+            authorisation="Owned",
+            findings_count=len(entities),
+            warnings=warnings,
+        ),
+    )
+    history.write_entities_snapshot(scan_dir, entities)
+    (scan_dir / "brief.html").write_text(
+        f"<!doctype html><html><body><h1>{target}</h1></body></html>"
+    )
+
+
+def _diff_entity(entity_id: str, value: str, score: float = 3) -> dict:
+    return {
+        "id": entity_id,
+        "type": "subdomain",
+        "value": value,
+        "attributes": {},
+        "provenance": [{"source_tool": "crtsh", "method": "passive", "collected_at": "x"}],
+        "priority": {"score": score, "rank": 1, "signals": ["sensitive_hostname_pattern"]},
+    }
+
+
+def test_view_diff_shows_added_removed_and_changed_findings(tmp_path: Path) -> None:
+    _seed_scan_with_entities(
+        tmp_path,
+        "example-com-20260727T090000Z",
+        "example.com",
+        [
+            _diff_entity("subdomain:old.example.com", "old.example.com"),
+            _diff_entity("subdomain:api.example.com", "api.example.com", score=2),
+        ],
+    )
+    _seed_scan_with_entities(
+        tmp_path,
+        "example-com-20260727T120000Z",
+        "example.com",
+        [
+            _diff_entity("subdomain:new.example.com", "new.example.com"),
+            _diff_entity("subdomain:api.example.com", "api.example.com", score=5),
+        ],
+    )
+
+    response = _client(tmp_path).get("/scan/example-com-20260727T120000Z/diff")
+
+    assert response.status_code == 200
+    assert "new.example.com" in response.text  # added
+    assert "old.example.com" in response.text  # removed
+    assert "api.example.com" in response.text  # changed
+    assert "priority 2 &rarr; 5" in response.text or "priority 2" in response.text
+
+
+def test_view_diff_is_404_when_no_previous_scan_exists(tmp_path: Path) -> None:
+    _seed_scan_with_entities(
+        tmp_path,
+        "example-com-20260727T120000Z",
+        "example.com",
+        [_diff_entity("x", "x.example.com")],
+    )
+
+    response = _client(tmp_path).get("/scan/example-com-20260727T120000Z/diff")
+
+    assert response.status_code == 404
+
+
+def test_view_scan_shows_a_compare_link_only_when_a_previous_scan_exists(
+    tmp_path: Path,
+) -> None:
+    _seed_scan_with_entities(
+        tmp_path,
+        "example-com-20260727T090000Z",
+        "example.com",
+        [_diff_entity("x", "x.example.com")],
+    )
+
+    response_without_previous = _client(tmp_path).get("/scan/example-com-20260727T090000Z")
+    assert "/diff" not in response_without_previous.text
+
+    _seed_scan_with_entities(
+        tmp_path,
+        "example-com-20260727T120000Z",
+        "example.com",
+        [_diff_entity("x", "x.example.com")],
+    )
+    response_with_previous = _client(tmp_path).get("/scan/example-com-20260727T120000Z")
+    assert "/scan/example-com-20260727T120000Z/diff" in response_with_previous.text

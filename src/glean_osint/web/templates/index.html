@@ -13,6 +13,8 @@
     <label for="target">Target domain</label>
     <input type="text" id="target" name="target" placeholder="example.com"
            value="{{ form.get('target', '') }}" required autofocus>
+    <p class="field-hint">A bare domain, e.g. <code>example.com</code> — not a URL or IP address.</p>
+    <p class="error field-hint" id="target-format-hint" hidden></p>
   </div>
 
   <div>
@@ -30,12 +32,18 @@
       {% for tool_id, info in tools.items() %}
       <div class="tool-card">
         <input type="checkbox" id="tool-{{ tool_id }}" name="tools" value="{{ tool_id }}"
+               data-method="{{ info.default_method }}"
                {% if tool_id in form.get('tools', []) %}checked{% endif %}>
         <label for="tool-{{ tool_id }}" style="margin: 0; font-weight: 400;">{{ info.display_name }}</label>
         <span class="method">{{ info.default_method }}</span>
       </div>
       {% endfor %}
     </div>
+    <p class="warning active-warning" id="active-warning" hidden>
+      <strong>Active collection selected.</strong> This sends real requests directly to the
+      target, not just third-party lookups. Only run this against a target you're authorised
+      to test — see the authorisation field below.
+    </p>
   </div>
 
   <div>
@@ -53,13 +61,43 @@ function selectPreset(idsCsv) {
   document.querySelectorAll('input[name="tools"]').forEach(function (cb) {
     cb.checked = ids.includes(cb.value);
   });
+  updateActiveWarning();
 }
+
+const activeWarning = document.getElementById('active-warning');
+function updateActiveWarning() {
+  const anyActive = Array.from(document.querySelectorAll('input[name="tools"]:checked'))
+    .some(function (cb) { return cb.dataset.method === 'active'; });
+  activeWarning.hidden = !anyActive;
+}
+document.querySelectorAll('input[name="tools"]').forEach(function (cb) {
+  cb.addEventListener('change', updateActiveWarning);
+});
+updateActiveWarning();
+
 const httpxBox = document.querySelector('input[name="tools"][value="httpx"]');
 const dnsxBox = document.querySelector('input[name="tools"][value="dnsx"]');
 if (httpxBox && dnsxBox) {
   httpxBox.addEventListener('change', function () {
     if (this.checked) { dnsxBox.checked = true; }
+    updateActiveWarning();
   });
 }
+
+const targetField = document.getElementById('target');
+const targetHint = document.getElementById('target-format-hint');
+function checkTargetFormat() {
+  const value = targetField.value.trim();
+  let message = '';
+  if (/^https?:\/\//i.test(value)) {
+    message = 'Looks like a URL — enter just the domain, e.g. "example.com" not "https://example.com".';
+  } else if (value.includes('/')) {
+    message = 'Looks like it includes a path — enter just the bare domain.';
+  }
+  targetHint.textContent = message;
+  targetHint.hidden = !message;
+}
+targetField.addEventListener('input', checkTargetFormat);
+targetField.addEventListener('blur', checkTargetFormat);
 </script>
 {% endblock %}

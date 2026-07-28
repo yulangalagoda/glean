@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Glean — {{ tool_name }} raw output{% endblock %}
+{% block content %}
+<h1>Raw output — {{ tool_name }}</h1>
+<p class="hint"><a href="/scan/{{ scan_id }}">&larr; Back to scan</a></p>
+<pre class="raw-output">{{ content }}</pre>
+{% endblock %}

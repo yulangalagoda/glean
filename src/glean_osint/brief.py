@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from typing import get_args
 
 from glean_osint.schema.entities import Edge, Entity, EntityType, ScanMeta
+from glean_osint.scoring import WEIGHTS
 
 DEFAULT_TOP_N = 5
 
@@ -273,6 +274,23 @@ def _seen_by(entity: Entity) -> str:
     return ", ".join(parts)
 
 
+def _score_breakdown(entity: Entity) -> str:
+    """The individual signal -> point contributions behind `priority.score`
+    (ADR-0004 D2's own `WEIGHTS` table, not a re-derivation of it) --
+    surfaced as a hover tooltip (`title=`) on the score badge in both
+    renderers' HTML output. Deliberately native-tooltip, not a JS
+    disclosure widget: it works identically in the self-contained
+    standalone file (ADR-0010 D3, no JS there) and the web view, with
+    zero extra markup either surface has to carry."""
+    assert entity.priority is not None
+    if not entity.priority.signals:
+        return "No individual scoring signal."
+    parts = [
+        f"{SIGNAL_PHRASES.get(s, s)} ({WEIGHTS.get(s, 0):+d})" for s in entity.priority.signals
+    ]
+    return ", ".join(parts) + f" = {entity.priority.score:g}."
+
+
 def _surface_line(entities: list[Entity]) -> str:
     # A fixed canonical order (matching EntityType's own declaration order),
     # not whatever order `entities` happens to arrive in — the surface line
@@ -399,14 +417,20 @@ hr { border: none; border-top: 1px solid #ddd; margin: 1.5rem 0; }
 .card .body { margin: 0.5rem 0; }
 .card .why, .card .seen-by { font-size: 0.88rem; color: #555; margin: 0.15rem 0; }
 @media (prefers-color-scheme: dark) { .card .why, .card .seen-by { color: #b5b5b5; } }
-ul.also-found { list-style: none; padding: 0; margin: 0.75rem 0; }
-ul.also-found li {
-  padding: 0.45rem 0; border-bottom: 1px solid #eee; font-size: 0.92rem;
+.card .score { cursor: help; }
+table.also-found { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+table.also-found th, table.also-found td {
+  text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid #eee; vertical-align: top;
 }
-@media (prefers-color-scheme: dark) { ul.also-found li { border-color: #2b2d32; } }
-ul.also-found .value { font-weight: 600; }
-ul.also-found .pill { font-size: 0.8rem; color: #666; }
-@media (prefers-color-scheme: dark) { ul.also-found .pill { color: #a3a3a3; } }
+@media (prefers-color-scheme: dark) {
+  table.also-found th, table.also-found td { border-color: #2b2d32; }
+}
+table.also-found th {
+  font-weight: 600; color: #666; font-size: 0.78rem; text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+@media (prefers-color-scheme: dark) { table.also-found th { color: #a3a3a3; } }
+table.also-found td[title] { cursor: help; }
 details summary {
   cursor: pointer; font-weight: 600; padding: 0.6rem 0.9rem;
   border: 1px solid #ddd; border-radius: 10px; background: #fff;
@@ -414,7 +438,7 @@ details summary {
 details[open] summary { border-radius: 10px 10px 0 0; border-bottom: none; }
 details .also-found-body {
   border: 1px solid #ddd; border-top: none; border-radius: 0 0 10px 10px;
-  padding: 0.25rem 0.9rem; max-height: 32rem; overflow-y: auto; background: #fff;
+  padding: 0.25rem 0.9rem; max-height: 32rem; overflow: auto; background: #fff;
 }
 @media (prefers-color-scheme: dark) {
   details summary { border-color: #34363b; }
@@ -430,25 +454,64 @@ def _esc(value: str) -> str:
     return html.escape(str(value))
 
 
+def _facet_attrs(entity: Entity) -> str:
+    """`data-*` attributes carrying this finding's type/tools/methods/
+    signals -- inert in the standalone file (no JS there to read them,
+    ADR-0010 D3), the hook the web view's injected filter bar reads to
+    show/hide `.card`/table-row elements without a second server round
+    trip."""
+    assert entity.priority is not None
+    tools = " ".join(sorted({p.source_tool for p in entity.provenance}))
+    methods = " ".join(sorted({p.method for p in entity.provenance}))
+    signals = " ".join(entity.priority.signals)
+    return (
+        f'data-type="{_esc(entity.type)}" data-tools="{_esc(tools)}" '
+        f'data-methods="{_esc(methods)}" data-signals="{_esc(signals)}"'
+    )
+
+
+def _html_seen_by(entity: Entity) -> str:
+    """Same grouping as `_seen_by`, but each source wrapped in a
+    `<span data-tool="...">` -- inert markup standalone, the hook the web
+    view's injected script uses to turn each source into a link to that
+    tool's archived raw output (`/scan/{id}/raw/{tool}`) without ever
+    putting a link into the offline file (which has no server to point
+    at)."""
+    seen: dict[tuple[str, str], None] = {}
+    for prov in entity.provenance:
+        seen.setdefault((prov.source_tool, prov.method), None)
+    parts = [
+        f'<span class="src" data-tool="{_esc(tool)}">'
+        f"{_esc(TOOL_DISPLAY_NAMES.get(tool, tool))} ({_esc(method)})</span>"
+        for tool, method in seen
+    ]
+    return ", ".join(parts)
+
+
 def _html_top_priority_card(index: int, finding: Finding) -> str:
     assert finding.entity.priority is not None  # every top_priorities entry has one
     headline = f"<code>{_esc(finding.display_value)}</code> — {_esc(finding.headline)}"
-    return f"""<div class="card">
-  <span class="score">priority {finding.entity.priority.score}</span>
+    breakdown = _esc(_score_breakdown(finding.entity))
+    return f"""<div class="card" {_facet_attrs(finding.entity)}>
+  <span class="score" title="{breakdown}">priority {finding.entity.priority.score}</span>
   <span class="rank">{index}</span>
   <span class="headline">{headline}</span>
   <p class="body">{_esc(finding.body)}</p>
   <p class="why"><strong>Why ranked here:</strong> {_esc(finding.why_ranked)}.</p>
-  <p class="seen-by"><strong>Seen by:</strong> {_esc(finding.seen_by)}.</p>
+  <p class="seen-by"><strong>Seen by:</strong> {_html_seen_by(finding.entity)}.</p>
 </div>"""
 
 
-def _html_also_found_item(finding: Finding) -> str:
-    body = _esc(finding.body.rstrip("."))
-    return (
-        f'<li><span class="value"><code>{_esc(finding.display_value)}</code></span>'
-        f' — {body} <span class="pill">({_esc(finding.seen_by)})</span></li>'
-    )
+def _html_also_found_row(finding: Finding) -> str:
+    assert finding.entity.priority is not None
+    breakdown = _esc(_score_breakdown(finding.entity))
+    return f"""<tr {_facet_attrs(finding.entity)}>
+  <td><code>{_esc(finding.display_value)}</code></td>
+  <td>{_esc(finding.headline)}</td>
+  <td title="{breakdown}">{finding.entity.priority.score:g}</td>
+  <td>{_esc(finding.body)}</td>
+  <td>{_html_seen_by(finding.entity)}</td>
+</tr>"""
 
 
 def render_html(brief: Brief) -> str:
@@ -476,7 +539,7 @@ def render_html(brief: Brief) -> str:
     top_cards = "\n".join(
         _html_top_priority_card(i, f) for i, f in enumerate(brief.top_priorities, start=1)
     )
-    also_found_items = "\n".join(_html_also_found_item(f) for f in brief.also_found)
+    also_found_rows = "\n".join(_html_also_found_row(f) for f in brief.also_found)
 
     return f"""<!doctype html>
 <html lang="en">
@@ -503,9 +566,14 @@ def render_html(brief: Brief) -> str:
 <details>
   <summary>{len(brief.also_found)} additional finding(s) — click to expand</summary>
   <div class="also-found-body">
-    <ul class="also-found">
-{also_found_items}
-    </ul>
+    <table class="also-found">
+      <thead>
+        <tr><th>Value</th><th>Type</th><th>Score</th><th>Detail</th><th>Seen by</th></tr>
+      </thead>
+      <tbody>
+{also_found_rows}
+      </tbody>
+    </table>
   </div>
 </details>
 <hr>
