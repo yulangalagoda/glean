@@ -21,6 +21,7 @@ import os
 import subprocess
 import urllib.error
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -115,34 +116,39 @@ def run_scan(
     results: list[ParseResult] = []
     tools_run: list[ToolRun] = []
 
-    # --- Stage 1: crt.sh + theHarvester (independent, ADR-0008 D1) ---
+    # --- Stage 1: crt.sh + theHarvester + subfinder, run concurrently ---
+    # (independent, ADR-0008 D1). All three are independent I/O-bound
+    # calls; theHarvester/subfinder can each individually take minutes
+    # querying live external sources, so running them one after another
+    # is additive wall-clock time for no reason (same reasoning, same
+    # change, as cli.py's own scan() command). status()/add_warning()
+    # calls happen live from inside each worker thread here -- unlike
+    # the CLI there's no local terminal spinner to race, and an SSE
+    # stream showing genuinely-concurrent events as they really happen
+    # is the more honest live-progress experience anyway.
 
-    if "crtsh" in tools:
+    def _run_crtsh_stage1() -> None:
         status("Searching certificate transparency logs (crt.sh)...")
         info: list[str] = []
         try:
             raw = runner.fetch_crtsh_cached(request.target, info=info)
         except _LIVE_INVOCATION_ERRORS as error:
             add_warning(f"crt.sh: live invocation failed ({error}), skipping.")
-        else:
-            # Cache-hit/stale-failsafe notices are informational, not a
-            # problem -- routed through status() (shown live, no history
-            # warning pill), matching the CLI's own cyan-vs-yellow
-            # treatment of the same messages (cli.py prints crtsh_info
-            # in CYAN, separate from the YELLOW crtsh_warning bucket).
-            # A real bug: this used to fold them into add_warning(),
-            # so a perfectly healthy cache hit showed up as "1 warning"
-            # on the history page.
-            for message in info:
-                status(message)
-            ref = runner.archive_raw(raw_dir, f"crtsh-{request.target}.json", raw)
-            ctx = ScanContext(target=request.target, collected_at=collected_at, raw_output_ref=ref)
-            result = CrtshAdapter().parse(raw, ctx)
-            results.append(result)
-            tools_run.append(ToolRun(source_tool="crtsh", method="passive", raw_output_ref=ref))
-            _warn_skipped(add_warning, "crt.sh", result.skipped)
+            return
+        # Cache-hit/stale-failsafe notices are informational, not a
+        # problem -- routed through status() (shown live, no history
+        # warning pill), matching the CLI's own cyan-vs-yellow treatment
+        # of the same messages.
+        for message in info:
+            status(message)
+        ref = runner.archive_raw(raw_dir, f"crtsh-{request.target}.json", raw)
+        ctx = ScanContext(target=request.target, collected_at=collected_at, raw_output_ref=ref)
+        result = CrtshAdapter().parse(raw, ctx)
+        results.append(result)
+        tools_run.append(ToolRun(source_tool="crtsh", method="passive", raw_output_ref=ref))
+        _warn_skipped(add_warning, "crt.sh", result.skipped)
 
-    if "theharvester" in tools:
+    def _run_theharvester_stage1() -> None:
         status("Searching public sources for hosts and emails (theHarvester)...")
         try:
             raw = runner.run_theharvester(
@@ -150,17 +156,15 @@ def run_scan(
             )
         except _LIVE_INVOCATION_ERRORS as error:
             add_warning(f"theHarvester: live invocation failed ({error}), skipping.")
-        else:
-            ref = runner.archive_raw(raw_dir, f"theharvester-{request.target}.json", raw)
-            ctx = ScanContext(target=request.target, collected_at=collected_at, raw_output_ref=ref)
-            result = TheHarvesterAdapter().parse(raw, ctx)
-            results.append(result)
-            tools_run.append(
-                ToolRun(source_tool="theharvester", method="passive", raw_output_ref=ref)
-            )
-            _warn_skipped(add_warning, "theHarvester", result.skipped)
+            return
+        ref = runner.archive_raw(raw_dir, f"theharvester-{request.target}.json", raw)
+        ctx = ScanContext(target=request.target, collected_at=collected_at, raw_output_ref=ref)
+        result = TheHarvesterAdapter().parse(raw, ctx)
+        results.append(result)
+        tools_run.append(ToolRun(source_tool="theharvester", method="passive", raw_output_ref=ref))
+        _warn_skipped(add_warning, "theHarvester", result.skipped)
 
-    if "subfinder" in tools:
+    def _run_subfinder_stage1() -> None:
         status("Searching passive sources for subdomains (subfinder)...")
         try:
             raw = runner.run_subfinder(
@@ -168,13 +172,30 @@ def run_scan(
             )
         except _LIVE_INVOCATION_ERRORS as error:
             add_warning(f"subfinder: live invocation failed ({error}), skipping.")
-        else:
-            ref = runner.archive_raw(raw_dir, f"subfinder-{request.target}.jsonl", raw)
-            ctx = ScanContext(target=request.target, collected_at=collected_at, raw_output_ref=ref)
-            result = SubfinderAdapter().parse(raw, ctx)
-            results.append(result)
-            tools_run.append(ToolRun(source_tool="subfinder", method="passive", raw_output_ref=ref))
-            _warn_skipped(add_warning, "subfinder", result.skipped)
+            return
+        ref = runner.archive_raw(raw_dir, f"subfinder-{request.target}.jsonl", raw)
+        ctx = ScanContext(target=request.target, collected_at=collected_at, raw_output_ref=ref)
+        result = SubfinderAdapter().parse(raw, ctx)
+        results.append(result)
+        tools_run.append(ToolRun(source_tool="subfinder", method="passive", raw_output_ref=ref))
+        _warn_skipped(add_warning, "subfinder", result.skipped)
+
+    stage1_tasks = {
+        "crtsh": _run_crtsh_stage1,
+        "theharvester": _run_theharvester_stage1,
+        "subfinder": _run_subfinder_stage1,
+    }
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = [executor.submit(fn) for tool_id, fn in stage1_tasks.items() if tool_id in tools]
+        for future in futures:
+            future.result()  # propagate a genuinely unexpected exception, don't swallow it
+
+    # tools_run's append order is otherwise whichever thread finished
+    # first (non-deterministic) -- fixed here into a stable sequence,
+    # matching cli.py's own equivalent fix-up. merge_graph itself
+    # doesn't care (ADR-0003 D7); only this list's display order does.
+    _stage1_tool_order = {"crtsh": 0, "theharvester": 1, "subfinder": 2}
+    tools_run.sort(key=lambda t: _stage1_tool_order.get(t.source_tool, 99))
 
     # --- Stage 2: dnsx, fed Stage 1's parsed hostnames (ADR-0008 D1) ---
 

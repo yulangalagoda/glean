@@ -9,6 +9,7 @@ import`) so that pattern actually works here too.
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -87,6 +88,40 @@ def test_run_scan_subfinder_subdomains_feed_dnsx_candidates(
 
     assert "beta.example.com" in seen_candidates
     assert {t.source_tool for t in outcome.brief.scan.tools_run} == {"crtsh", "subfinder", "dnsx"}
+
+
+def test_run_scan_stage1_tools_actually_run_concurrently(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Proves genuine concurrency, not just that each tool still works in
+    isolation: a Barrier(3) can only release once crt.sh, theHarvester,
+    and subfinder's fetch calls are all genuinely in flight *at the same
+    time*. If Stage 1 ever regressed back to sequential execution, this
+    hangs until the timeout and fails instead of silently passing."""
+    barrier = threading.Barrier(3, timeout=2)
+
+    def fake_crtsh(target: str, **kwargs: object) -> bytes:
+        barrier.wait()
+        return b"[]"
+
+    def fake_theharvester(target: str, **kwargs: object) -> bytes:
+        barrier.wait()
+        return b'{"cmd": "", "hosts": []}'
+
+    def fake_subfinder(target: str, **kwargs: object) -> bytes:
+        barrier.wait()
+        return b""
+
+    monkeypatch.setattr(runner, "fetch_crtsh_cached", fake_crtsh)
+    monkeypatch.setattr(runner, "run_theharvester", fake_theharvester)
+    monkeypatch.setattr(runner, "run_subfinder", fake_subfinder)
+
+    outcome = pipeline.run_scan(
+        ScanRequest(target="example.com", tools=frozenset({"crtsh", "theharvester", "subfinder"})),
+        raw_dir=tmp_path,
+    )
+
+    assert outcome.warnings == ()
 
 
 def test_run_scan_httpx_selection_pulls_in_dnsx_even_without_going_through_the_web_layer(

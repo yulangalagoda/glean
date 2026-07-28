@@ -1,6 +1,6 @@
 # ADR-0008 — The Runner (Live Tool Invocation)
 
-- **Status:** Accepted — implemented and validated against a real owned target (`larnby.com`) 2026-07-27, two real bugs found and fixed in the process (see the D3/D8 correction notes below); extended 2026-07-27 with D9 (crt.sh response caching / rate-limit failsafe) after real flakiness observed across a full 10-target re-run
+- **Status:** Accepted — implemented and validated against a real owned target (`larnby.com`) 2026-07-27, two real bugs found and fixed in the process (see the D3/D8 correction notes below); extended 2026-07-27 with D9 (crt.sh response caching / rate-limit failsafe) after real flakiness observed across a full 10-target re-run; extended 2026-07-28 with D1's concurrency correction (Stage 1's three tools now run in parallel, resolving open question 1) after real validation against `hazelmoor.org`
 - **Date:** 2026-07-27
 - **Scope:** Glean v1 — how `glean scan <domain>` invokes tools live instead of only ingesting pre-fetched files
 - **Depends on:** ADR-0002 (adapter contract: `build_command`, `ParseResult`, D5 degradation, D7 raw-output archival), ADR-0001 (entity schema — candidate/resolved host lists are built from *parsed* entities, not raw bytes)
@@ -27,7 +27,9 @@ The charter's binding ethics section also matters directly here: "Passive and ac
 
 ### D1 — Three-stage pipeline, not a flat tool list
 
-1. **Stage 1 (independent, run concurrently):** `crtsh` (HTTP fetch) and `theharvester` (subprocess). Neither depends on the other or on any prior parse.
+1. **Stage 1 (independent, run concurrently):** `crtsh` (HTTP fetch), `theharvester` (subprocess), and `subfinder` (subprocess, added ADR-0002 Validation 2026-07-27). None depends on either of the others or on any prior parse.
+
+**Implementation correction (2026-07-28):** "run concurrently" above was the intended design from the start but was left as open question 1 (below) in the original decision, and the first cut of both `cli.py`'s `scan()` and `pipeline.py`'s `run_scan()` ran Stage 1's tools sequentially. With a third Stage 1 tool added (`subfinder`), the additive wall-clock cost of running independent, potentially slow, real-network tools one after another became concrete enough to fix rather than continue deferring. Implemented via `concurrent.futures.ThreadPoolExecutor(max_workers=3)` in both entry points — safe because these are blocking I/O calls (one HTTP fetch, two subprocesses), and `merge_graph`'s own proven order-independence (ADR-0003 D7) means the final entity graph cannot be affected by which thread finishes first; only `tools_run`'s *display* order needed a deterministic fix-up (a stable sort by a fixed canonical tool order, applied after the concurrent phase). `cli.py` batches each thread's status/warning messages into a list and prints them only after the shared terminal `Spinner` exits (the previously-established "never print from inside an active spinner" rule, extended to threads); `pipeline.py` has no such constraint and calls its `on_status`/`on_warning` callbacks live from each worker thread, since ADR-0011's SSE stream showing genuinely-concurrent events as they happen is the more honest live-progress experience. Proven with a dedicated test in both `tests/test_cli.py` and `tests/test_pipeline.py` using `threading.Barrier(3, timeout=2)` inside each of the three fake tool invocations — a real, meaningful concurrency proof: a regression back to sequential execution would deadlock and time out, not silently pass, since only one "party" would ever reach the barrier at a time under sequential execution.
 2. **Stage 2 (depends on Stage 1's parsed entities):** `dnsx`, fed a candidate hostname list built from every `domain`/`subdomain` entity Stage 1 produced (plus the apex target itself), deduplicated by canonical value. Wildcard-prefixed values are excluded before feeding dnsx — the adapter already treats them as unresolvable-in-principle (ADR-0001 D4), so there's no reason to ask.
 3. **Stage 3 (depends on Stage 2's parsed entities, active-only):** `httpx`, fed every host from Stage 2 where `attributes.dns_resolved is True`.
 
@@ -98,7 +100,7 @@ Considered and deferred: swapping crt.sh for an alternative CT-log API as a hedg
 
 ## Open questions
 
-1. Should Stage 1's two tools (crt.sh, theHarvester) run concurrently (threads) given they're independent and theHarvester in particular can be slow, or is sequential simpler to reason about and debug for v1? (Leaning concurrent, but sequential is an acceptable simpler first cut.)
+1. ~~Should Stage 1's tools (crt.sh, theHarvester, subfinder) run concurrently (threads) given they're independent and theHarvester/subfinder in particular can be slow, or is sequential simpler to reason about and debug for v1?~~ **Resolved 2026-07-28:** yes, concurrent — see D1's Implementation correction above.
 2. Should `--live` eventually become the default (closing MVP goal #1 fully), with something like `--offline` as the explicit opt-out? Deliberately not decided here — revisit once `--live` has real running experience behind it.
 3. Retry/backoff parameters (max attempts, base delay) are hardcoded constants in v1. Promote to a config file (like `config/priority-signals.v1.yaml`) only if a real need for tuning them shows up — avoid premature configurability.
 4. A `--dry-run` that prints what *would* be invoked (including whether the active-tool gate is open) without touching the network — useful for auditability before a live active scan, but not built here unless requested.

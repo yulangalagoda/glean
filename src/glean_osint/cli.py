@@ -13,6 +13,7 @@ from __future__ import annotations
 import subprocess
 import urllib.error
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -287,77 +288,133 @@ def scan(
     results: list[ParseResult] = []
     tools_run: list[ToolRun] = []
 
-    # --- Stage 1: crt.sh + theHarvester (independent, ADR-0008 D1) ---
+    # --- Stage 1: crt.sh + theHarvester + subfinder, run concurrently ---
+    # (independent, ADR-0008 D1). All three are independent I/O-bound
+    # calls (an HTTP fetch, two subprocesses) -- theHarvester/subfinder
+    # can each individually take minutes querying live external sources,
+    # so running them one after another is additive wall-clock time for
+    # no reason. Flagged as an open question in ADR-0008 when Stage 1
+    # only had two tools; a real enough cost now that it has three.
+    # merge_graph is proven order-independent (ADR-0003 D7), so which
+    # thread finishes first cannot affect the final entity graph -- only
+    # tools_run's *display* order is worth fixing up afterward, for a
+    # consistent "Tools:" line across runs.
+    #
+    # A single spinner spans the whole concurrent phase (there's no one
+    # "current stage" to label individually anymore); each tool's
+    # info/warning messages are collected into `stage1_messages` rather
+    # than printed directly, for the same reason `_invoke_live`'s own
+    # docstring already explains -- printing from inside an active
+    # spinner's `with` block races its `\r`-driven redraw thread.
 
-    crtsh_info: list[str] = []
-    crtsh_fetch: Callable[[], bytes] = (
-        (lambda: runner.fetch_crtsh(domain))
-        if no_crtsh_cache
-        else (lambda: runner.fetch_crtsh_cached(domain, ttl=crtsh_cache_ttl, info=crtsh_info))
-    )
-    with _maybe_spin(crtsh is None and live, "Searching certificate transparency logs (crt.sh)..."):
+    _Stage1Message = tuple[str, str]  # (colour, text)
+
+    def _run_crtsh_stage1(messages: list[_Stage1Message]) -> None:
+        crtsh_info: list[str] = []
+        crtsh_fetch: Callable[[], bytes] = (
+            (lambda: runner.fetch_crtsh(domain))
+            if no_crtsh_cache
+            else (lambda: runner.fetch_crtsh_cached(domain, ttl=crtsh_cache_ttl, info=crtsh_info))
+        )
         crtsh_raw, crtsh_ref, crtsh_warning = _resolve_input(crtsh, live, crtsh_fetch, "crt.sh")
-    for message in crtsh_info:
-        typer.secho(message, fg=typer.colors.CYAN, err=True)
-    if crtsh_warning:
-        typer.secho(crtsh_warning, fg=typer.colors.YELLOW, err=True)
-    if crtsh_raw is not None:
-        if crtsh is None:
-            crtsh_ref = runner.archive_raw(output_dir, f"crtsh-{domain}.json", crtsh_raw)
-        ctx = ScanContext(target=domain, collected_at=collected_at, raw_output_ref=crtsh_ref)
-        result = CrtshAdapter().parse(crtsh_raw, ctx)
-        results.append(result)
-        tools_run.append(ToolRun(source_tool="crtsh", method="passive", raw_output_ref=crtsh_ref))
-        _warn_skipped("crt.sh", result.skipped)
+        for message in crtsh_info:
+            messages.append((typer.colors.CYAN, message))
+        if crtsh_warning:
+            messages.append((typer.colors.YELLOW, crtsh_warning))
+        if crtsh_raw is not None:
+            ref = crtsh_ref
+            if crtsh is None:
+                ref = runner.archive_raw(output_dir, f"crtsh-{domain}.json", crtsh_raw)
+            ctx = ScanContext(target=domain, collected_at=collected_at, raw_output_ref=ref)
+            result = CrtshAdapter().parse(crtsh_raw, ctx)
+            results.append(result)
+            tools_run.append(ToolRun(source_tool="crtsh", method="passive", raw_output_ref=ref))
+            if result.skipped:
+                messages.append(
+                    (typer.colors.YELLOW, f"crt.sh: skipped {result.skipped} malformed record(s).")
+                )
 
-    with _maybe_spin(
-        theharvester is None and live,
-        "Searching public sources for hosts and emails (theHarvester)...",
-    ):
+    def _run_theharvester_stage1(messages: list[_Stage1Message]) -> None:
         theharvester_raw, theharvester_ref, theharvester_warning = _resolve_input(
             theharvester,
             live,
             lambda: runner.run_theharvester(domain, binary=theharvester_bin),
             "theHarvester",
         )
-    if theharvester_warning:
-        typer.secho(theharvester_warning, fg=typer.colors.YELLOW, err=True)
-    if theharvester_raw is not None:
-        if theharvester is None:
-            theharvester_ref = runner.archive_raw(
-                output_dir, f"theharvester-{domain}.json", theharvester_raw
+        if theharvester_warning:
+            messages.append((typer.colors.YELLOW, theharvester_warning))
+        if theharvester_raw is not None:
+            ref = theharvester_ref
+            if theharvester is None:
+                ref = runner.archive_raw(
+                    output_dir, f"theharvester-{domain}.json", theharvester_raw
+                )
+            ctx = ScanContext(target=domain, collected_at=collected_at, raw_output_ref=ref)
+            result = TheHarvesterAdapter().parse(theharvester_raw, ctx)
+            results.append(result)
+            tools_run.append(
+                ToolRun(source_tool="theharvester", method="passive", raw_output_ref=ref)
             )
-        ctx = ScanContext(target=domain, collected_at=collected_at, raw_output_ref=theharvester_ref)
-        result = TheHarvesterAdapter().parse(theharvester_raw, ctx)
-        results.append(result)
-        tools_run.append(
-            ToolRun(source_tool="theharvester", method="passive", raw_output_ref=theharvester_ref)
-        )
-        _warn_skipped("theHarvester", result.skipped)
+            if result.skipped:
+                messages.append(
+                    (
+                        typer.colors.YELLOW,
+                        f"theHarvester: skipped {result.skipped} malformed record(s).",
+                    )
+                )
 
-    with _maybe_spin(
-        subfinder is None and live, "Searching passive sources for subdomains (subfinder)..."
-    ):
+    def _run_subfinder_stage1(messages: list[_Stage1Message]) -> None:
         subfinder_raw, subfinder_ref, subfinder_warning = _resolve_input(
             subfinder,
             live,
             lambda: runner.run_subfinder(domain, binary=subfinder_bin),
             "subfinder",
         )
-    if subfinder_warning:
-        typer.secho(subfinder_warning, fg=typer.colors.YELLOW, err=True)
-    if subfinder_raw is not None:
-        if subfinder is None:
-            subfinder_ref = runner.archive_raw(
-                output_dir, f"subfinder-{domain}.jsonl", subfinder_raw
-            )
-        ctx = ScanContext(target=domain, collected_at=collected_at, raw_output_ref=subfinder_ref)
-        result = SubfinderAdapter().parse(subfinder_raw, ctx)
-        results.append(result)
-        tools_run.append(
-            ToolRun(source_tool="subfinder", method="passive", raw_output_ref=subfinder_ref)
-        )
-        _warn_skipped("subfinder", result.skipped)
+        if subfinder_warning:
+            messages.append((typer.colors.YELLOW, subfinder_warning))
+        if subfinder_raw is not None:
+            ref = subfinder_ref
+            if subfinder is None:
+                ref = runner.archive_raw(output_dir, f"subfinder-{domain}.jsonl", subfinder_raw)
+            ctx = ScanContext(target=domain, collected_at=collected_at, raw_output_ref=ref)
+            result = SubfinderAdapter().parse(subfinder_raw, ctx)
+            results.append(result)
+            tools_run.append(ToolRun(source_tool="subfinder", method="passive", raw_output_ref=ref))
+            if result.skipped:
+                messages.append(
+                    (
+                        typer.colors.YELLOW,
+                        f"subfinder: skipped {result.skipped} malformed record(s).",
+                    )
+                )
+
+    stage1_any_live = live and (crtsh is None or theharvester is None or subfinder is None)
+    stage1_messages: list[_Stage1Message] = []
+    with (
+        _maybe_spin(
+            stage1_any_live, "Running passive discovery (crt.sh, theHarvester, subfinder)..."
+        ),
+        ThreadPoolExecutor(max_workers=3) as executor,
+    ):
+        futures = [
+            executor.submit(_run_crtsh_stage1, stage1_messages),
+            executor.submit(_run_theharvester_stage1, stage1_messages),
+            executor.submit(_run_subfinder_stage1, stage1_messages),
+        ]
+        for future in futures:
+            future.result()  # propagate a genuinely unexpected exception, don't swallow it
+
+    for colour, message in stage1_messages:
+        typer.secho(message, fg=colour, err=True)
+
+    # tools_run's append order is otherwise whichever thread finished
+    # first (non-deterministic) -- fixed here into a stable sequence for
+    # a consistent "Tools:" line across runs. merge_graph itself doesn't
+    # care (ADR-0003 D7); only this list's own display order does. Safe
+    # to sort the whole list at this point -- Stage 2/3 haven't appended
+    # anything to it yet.
+    _stage1_tool_order = {"crtsh": 0, "theharvester": 1, "subfinder": 2}
+    tools_run.sort(key=lambda t: _stage1_tool_order.get(t.source_tool, 99))
 
     # --- Stage 2: dnsx, fed Stage 1's parsed hostnames (ADR-0008 D1) ---
 

@@ -598,6 +598,35 @@ point is a real release, just pre-dev groundwork.
   crt.sh/dnsx; the same scan submitted through the web form showed
   identical results, with `subfinder` appearing in `tools_run` and the
   rendered report on both the CLI and `/scan/{id}`.
+- Stage 1 (crt.sh, theHarvester, subfinder) now runs concurrently instead
+  of sequentially, resolving ADR-0008's own long-standing open question 1.
+  With a third Stage 1 tool now in place, running each one after another
+  had become additive wall-clock time for no real reason -- theHarvester
+  and subfinder can each individually take minutes against real targets.
+  Implemented with `concurrent.futures.ThreadPoolExecutor(max_workers=3)`
+  in both `cli.py`'s `scan()` and `pipeline.py`'s `run_scan()`. Safe by
+  construction: `merge_graph`'s own proven order-independence (ADR-0003
+  D7, "feeding the same adapter outputs in any order yields a
+  byte-identical graph") means concurrency cannot affect the final entity
+  graph, only `tools_run`'s cosmetic display order, fixed with a stable
+  sort by canonical tool order after the concurrent phase. `cli.py`
+  extends the existing "never print from inside an active spinner" rule
+  to threads by collecting each worker's status/warning messages into a
+  shared list and printing them only after the shared spinner exits;
+  `pipeline.py` has no such constraint and streams `on_status`/
+  `on_warning` live from each worker thread, since genuinely-concurrent
+  SSE events are the more honest live-progress picture for ADR-0011's web
+  UI. Proven (not just exercised) with a dedicated test in both
+  `tests/test_cli.py` and `tests/test_pipeline.py` using
+  `threading.Barrier(3, timeout=2)` inside each of the three fake tool
+  invocations -- a regression back to sequential execution would deadlock
+  and time out rather than silently pass.
+
+  239/239 tests pass (2 new), ruff/mypy/pre-commit `--all-files` all
+  clean. Live-validated: a real `--live` scan of `hazelmoor.org`
+  (crt.sh cache-hit, theHarvester and subfinder invoked live) completed
+  in 30.6s wall-clock with all three tools' raw output correctly
+  archived and no regressions in the resulting brief.
 
 ### Notes
 - Development has started (`crtsh`, `theharvester`, `dnsx`, `httpx` adapters, dedup,

@@ -2,6 +2,7 @@
 
 import json
 import re
+import threading
 from pathlib import Path
 
 import pytest
@@ -270,6 +271,38 @@ def test_scan_live_invokes_subfinder_and_records_it_in_tools_run(
     assert "subfinder (passive)" in result.output
     assert "beta.example.com" in result.output
     assert (tmp_path / "subfinder-example.com.jsonl").exists()
+
+
+def test_scan_live_stage1_tools_actually_run_concurrently(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Proves genuine concurrency, not just that each tool still works in
+    isolation: a Barrier(3) can only release once crt.sh, theHarvester,
+    and subfinder's fetch calls are all genuinely in flight *at the same
+    time*. If Stage 1 ever regressed back to sequential execution, this
+    hangs until the timeout and fails instead of silently passing."""
+    barrier = threading.Barrier(3, timeout=2)
+
+    def fake_crtsh(target: str) -> bytes:
+        barrier.wait()
+        return b"[]"
+
+    def fake_theharvester(target: str, **kwargs: object) -> bytes:
+        barrier.wait()
+        return b'{"cmd": "", "hosts": []}'
+
+    def fake_subfinder(target: str, **kwargs: object) -> bytes:
+        barrier.wait()
+        return b""
+
+    monkeypatch.setattr(live_runner, "fetch_crtsh", fake_crtsh)
+    monkeypatch.setattr(live_runner, "run_theharvester", fake_theharvester)
+    monkeypatch.setattr(live_runner, "run_subfinder", fake_subfinder)
+    monkeypatch.setattr(live_runner, "run_dnsx", _empty_dnsx_envelope)
+
+    result = runner.invoke(app, ["scan", "example.com", "--live", "--raw-dir", str(tmp_path)])
+
+    assert result.exit_code == 0
 
 
 def test_scan_live_without_raw_dir_writes_a_manifest_to_the_shared_history(
