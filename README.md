@@ -17,8 +17,45 @@ Existing OSINT automation excels at *collection* but fails at *judgment*: result
    Ollama instead (ADR-0009).
 5. **Report** — Markdown by default; `--out report.html` writes a
    self-contained HTML report instead (ADR-0010). Bare `glean` (no
-   subcommand) launches a local web interface — scan form, live
-   progress, browsable history (ADR-0011).
+   subcommand) launches a local web interface (ADR-0011).
+
+## Web interface
+
+```
+glean
+```
+
+Serves on `http://127.0.0.1:8420` — **localhost only by design**: an
+unauthenticated control plane that can trigger active reconnaissance must
+not be reachable from the network. Binding elsewhere with `--host` is
+possible and puts a standing warning banner on every page.
+
+It is additive, not a replacement — `glean scan` and `glean eval` are
+unaffected — and both surfaces write into one shared history, so a scan run
+from the terminal shows up in the browser and vice versa.
+
+- **Scan form** — tool selection with presets, an inline ethics warning the
+  moment an active-method tool is ticked, and a live preview of the
+  equivalent `glean scan ...` command so the UI is never a black box.
+- **Live progress** — per-stage checklist and a streaming log over SSE, with
+  degraded-tool warnings appearing as they happen.
+- **Brief** — the same report `--out report.html` writes, plus filtering by
+  type/tool/signal/triage, a sortable and paginated "Also found" table,
+  copy-to-clipboard on every value, score breakdowns, clickable provenance
+  that opens the tool's real archived output, and per-finding deep links.
+- **Relationships** (`/scan/<id>/graph`) — the correlation stage made
+  visible: each finding with its typed relations (`resolves_to`,
+  `subdomain_of`, `hosts`, …) fanning out beneath it.
+- **Triage** — mark findings reviewed / flagged / false-positive; the state
+  persists per scan and doubles as a filter.
+- **History** — scans grouped by target, filterable by tool, date and
+  has-warnings, with scan-to-scan diffing ("3 new subdomains since last
+  time"), re-run, and delete.
+- **Export** — HTML, JSON and CSV.
+
+Narration with a local LLM is available here too (see below); the model that
+actually wrote a brief's prose is recorded and shown against that scan in
+the history.
 
 ## Quickstart
 
@@ -55,7 +92,15 @@ template (requires Ollama running locally with the model pulled).
 template-generated regardless — the model only ever writes prose, never
 chooses what's included or how it's ordered (ADR-0005). A failed or
 malformed model response falls back to the template per-finding, never
-aborts the scan.
+aborts the scan — and because that fallback is silent by construction, it
+is reported explicitly: a run that asked for narration and got none says so
+rather than quietly handing back template prose. The same toggle exists on
+the web scan form.
+
+Scans run with `--live` (and every scan run from the web interface) are
+archived under `~/.local/share/glean/scans/<scan_id>/`: the raw tool output,
+the rendered brief, and structured `entities.json` / `edges.json` snapshots
+that power export, diffing and the relationships view.
 
 ## Evaluation
 

@@ -34,7 +34,8 @@ def raw_fixture() -> bytes:
 
 @pytest.fixture
 def expected() -> dict:
-    return json.loads((FIXTURES / "subfinder-example-com.expected.json").read_text())
+    path = FIXTURES / "subfinder-example-com.expected.json"
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def test_matches_golden_fixture(raw_fixture: bytes, expected: dict) -> None:
@@ -93,7 +94,7 @@ def test_apex_host_becomes_a_domain_entity_with_no_self_edge(raw_fixture: bytes)
 
 def test_entities_and_edges_are_schema_valid(raw_fixture: bytes) -> None:
     result = SubfinderAdapter().parse(raw_fixture, CTX)
-    schema = json.loads(SCHEMA_PATH.read_text())
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
 
     document = {
         "schema_version": SCHEMA_VERSION,

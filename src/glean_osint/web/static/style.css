@@ -14,6 +14,16 @@
   --danger-bg: #fde8e8;
   --danger-border: #f3b6b6;
   --danger-text: #8a2323;
+  --active-bg: #fff2e0;
+  --active-border: #e8c48a;
+  --active-text: #8a5a12;
+  /* One source of truth for the reading column. 640px was set when the
+     only page was a short form; it left most of a real desktop window
+     empty on every other page, worst of all on the findings table, which
+     has five columns to fit. Capped rather than fluid so prose keeps a
+     readable measure on an ultrawide display. */
+  --content-width: 1100px;
+  --gutter: 1.5rem;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -26,9 +36,45 @@
     --danger-bg: #3a2222;
     --danger-border: #6b3232;
     --danger-text: #ffb4b4;
+    --active-bg: #3a2e1c;
+    --active-border: #6b5326;
+    --active-text: #f0c785;
   }
 }
 * { box-sizing: border-box; }
+
+/* --- Accessibility baseline ------------------------------------------
+   Recon work is keyboard-heavy, and the browser default focus ring was
+   being lost against several of the custom controls here (pills, sort
+   headers, the hover-revealed copy/anchor buttons). One visible, consistent
+   ring everywhere, using :focus-visible so it appears for keyboard users
+   without ringing every mouse click. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.skip-link {
+  position: absolute; left: 0.5rem; top: -3rem; z-index: 20;
+  background: var(--surface); color: var(--text); border: 1px solid var(--accent);
+  border-radius: 6px; padding: 0.5rem 0.9rem; text-decoration: none; font-size: 0.9rem;
+  transition: top 0.15s ease;
+}
+.skip-link:focus { top: 0.5rem; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}
+/* Visible only to screen readers -- used for headings that give landmarks
+   an accessible name without adding visual noise. */
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+/* Always reserve the scrollbar gutter. Without it, a short page (history
+   with a few scans) is ~15px wider than a long one (a findings report), so
+   the centred nav shifted horizontally as you moved between them -- the
+   layout rules were identical, the viewport wasn't. */
+html { scrollbar-gutter: stable; }
 body {
   font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
   line-height: 1.5;
@@ -36,11 +82,23 @@ body {
   color: var(--text);
   background: var(--bg);
 }
-.page { max-width: 640px; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+.page { max-width: var(--content-width); margin: 0 auto; padding: 2.5rem var(--gutter) 4rem; }
+
+/* The form is the one page that genuinely reads better narrow -- it's a
+   single column of short fields, and stretching it to 1100px would strand
+   each label miles from its input. Everything else (history, findings,
+   diff) benefits from the full width. */
+.page.page-narrow { max-width: 680px; }
+
+.exposure-banner {
+  background: var(--danger-bg); border-bottom: 1px solid var(--danger-border);
+  color: var(--danger-text); padding: 0.7rem var(--gutter); font-size: 0.88rem; line-height: 1.45;
+}
+.exposure-banner code { background: none; font-size: 0.95em; }
 
 .site-header { border-bottom: 1px solid var(--border); background: var(--surface); }
 .nav {
-  max-width: 640px; margin: 0 auto; padding: 1.05rem 1.25rem;
+  max-width: var(--content-width); margin: 0 auto; padding: 1.05rem var(--gutter);
   display: flex; align-items: center; justify-content: space-between;
 }
 .nav-brand {
@@ -64,24 +122,63 @@ input[type="text"], input[type="number"] {
   width: 100%; padding: 0.55rem 0.7rem; border: 1px solid var(--border); border-radius: 8px;
   font-size: 1rem; font-family: inherit; background: var(--surface); color: var(--text);
 }
-.presets { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.presets { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
 .preset-btn {
   border: 1px solid var(--border); border-radius: 999px; padding: 0.35rem 0.85rem;
   background: var(--surface); color: var(--text); cursor: pointer; font-size: 0.88rem; font-family: inherit;
 }
+.preset-btn:hover { border-color: var(--accent); }
+.preset-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.preset-state { font-size: 0.82rem; color: var(--text-muted); }
 .tools { display: flex; flex-direction: column; gap: 0.5rem; }
 .tool-card {
   display: flex; align-items: center; gap: 0.6rem; border: 1px solid var(--border);
-  border-radius: 8px; padding: 0.6rem 0.8rem; background: var(--surface);
+  border-radius: 8px; padding: 0.6rem 0.8rem; background: var(--surface); cursor: pointer;
 }
-.tool-card .method { margin-left: auto; font-size: 0.8rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
-button[type="submit"] {
+.tool-card:hover { border-color: var(--accent); }
+.tool-card label { cursor: pointer; }
+/* The passive/active split is the ethical spine of this project, but both
+   badges rendered in the same grey -- ticking the one tool that sends real
+   packets at the target looked identical to ticking a CT-log lookup. The
+   distinction is carried by colour *and* border *and* weight, never colour
+   alone (same rule the HTML report already follows). */
+.tool-card .method {
+  margin-left: auto; font-size: 0.72rem; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--text-muted); border: 1px solid var(--border); background: var(--bg);
+  border-radius: 999px; padding: 0.1rem 0.55rem; font-weight: 600;
+}
+.tool-card .method-active {
+  color: var(--active-text); background: var(--active-bg); border-color: var(--active-border);
+}
+/* A checked active tool lifts the whole row, so the warning below has an
+   obvious visual antecedent rather than appearing from nowhere. */
+.tool-card:has(input:checked) .method-active { box-shadow: 0 0 0 2px var(--active-bg); }
+.tool-card:has(input[data-method="active"]:checked) { border-color: var(--active-border); }
+/* `:not(.delete-btn)` is load-bearing, not defensive noise. `button[type=
+   "submit"]` (0,1,1) out-specifies a bare `.delete-btn` (0,1,0), so the
+   history page's Delete -- also a submit button -- was silently inheriting
+   the solid, high-contrast primary treatment below. A destructive,
+   irreversible action was rendering as the most prominent control on the
+   page, which is exactly backwards. */
+button[type="submit"]:not(.delete-btn) {
   padding: 0.7rem 1.2rem; border-radius: 8px; border: none; background: var(--text);
   color: var(--bg); font-size: 1rem; font-weight: 600; cursor: pointer; align-self: flex-start;
 }
+button[type="submit"]:not(.delete-btn):hover { opacity: 0.88; }
 .error {
   background: var(--danger-bg); border: 1px solid var(--danger-border); color: var(--danger-text);
   border-radius: 8px; padding: 0.7rem 1rem; font-size: 0.92rem;
+}
+
+.cli-preview { border: 1px solid var(--border); border-radius: 10px; padding: 0.8rem 0.9rem; background: var(--surface); }
+.cli-preview-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.cli-preview-head label { margin-bottom: 0.4rem; }
+.cli-llm-toggle { font-weight: 400; font-size: 0.85rem; color: var(--text-muted); display: flex; align-items: center; gap: 0.35rem; }
+.cli-preview pre {
+  margin: 0; padding: 0.6rem 0.75rem; border-radius: 8px; background: var(--bg);
+  border: 1px solid var(--border); font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 0.82rem; line-height: 1.5; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+  color: var(--text);
 }
 .field-hint { margin: 0.35rem 0 0; font-size: 0.82rem; color: var(--text-muted); }
 .field-hint.error { padding: 0.35rem 0.6rem; border-radius: 6px; }
@@ -106,6 +203,7 @@ button[type="submit"] {
 .stage-checklist li.stage-done::before { content: "✓"; color: var(--accent); }
 
 #status-line { font-weight: 600; color: var(--text); font-size: 1rem; }
+#status-line.failed { color: var(--danger-text); }
 .log { list-style: none; padding: 0; margin: 1rem 0 0; display: flex; flex-direction: column; gap: 0.4rem; }
 .log li {
   padding: 0.5rem 0.8rem; border-radius: 8px; background: var(--surface); border: 1px solid var(--border);
@@ -118,9 +216,73 @@ button[type="submit"] {
    injects both the elements and this stylesheet link); the standalone
    brief.html/--out report.html never links this file, so none of this
    affects the self-contained file (ADR-0010 D3). */
-.export-bar { display: flex; gap: 1rem; padding: 0.7rem 1.25rem; font-size: 0.88rem; }
-.export-bar a { color: var(--text-muted); text-decoration: none; }
-.export-bar a:hover { color: var(--text); text-decoration: underline; }
+/* --- Web-served scan result -------------------------------------------
+   `render_html()` emits its own inline <style> with `body { max-width:
+   860px }`, and app.py injects this stylesheet *before* that block so the
+   report's own layout wins on a tie (deliberate -- see
+   _wrap_scan_result_for_web). `body[data-scan-id]` (0,1,1) out-specifies
+   the bare `body` (0,0,1), so these overrides apply to the web view only
+   and the standalone brief.html / `--out report.html` file on disk is left
+   byte-for-byte untouched, as ADR-0010 D3 requires. */
+/* The report's own inline CSS constrains `body` itself (`max-width: 860px;
+   margin: 0 auto`), which is right for a standalone file but means the nav
+   bar injected into <body> gets trapped inside that column -- its bottom
+   border stops mid-page instead of spanning the window, so the header on a
+   report looked like a floating box while the header on every other page
+   was full-bleed. Rather than fight it with negative margins (which only
+   ever offset by a fixed gutter, never the real remaining width), release
+   `body` and constrain its *children* instead. The header is the one child
+   left full-width, so it renders identically to `.site-header` on a
+   template-rendered page, and everything else lands in the same centred
+   column at the same gutter -- one nav geometry across the whole app. */
+body[data-scan-id] { max-width: none; margin: 0; padding: 0 0 4rem; }
+body[data-scan-id] > *:not(.site-header) {
+  max-width: var(--content-width); margin-left: auto; margin-right: auto;
+  padding-left: var(--gutter); padding-right: var(--gutter);
+}
+/* Matches `.page`'s own top padding so the first element under the nav sits
+   at the same height it would on the scan form or history page. */
+body[data-scan-id] > .export-bar { margin-top: 1.6rem; }
+
+.export-bar {
+  display: flex; gap: 0.5rem; flex-wrap: wrap; padding: 0.9rem 0; font-size: 0.85rem;
+  border-bottom: 1px solid var(--border); margin-bottom: 1.25rem;
+}
+.export-bar a {
+  color: var(--text-muted); text-decoration: none; border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.25rem 0.7rem; background: var(--surface);
+}
+.export-bar a:hover { color: var(--text); border-color: var(--accent); text-decoration: none; }
+/* "Compare to previous scan" is the one genuinely analytical action here,
+   not a file download -- pulled out of the row of exports and pushed to the
+   opposite end so it doesn't read as a fourth export format. */
+.export-bar a[href$="/diff"] { margin-right: auto; color: var(--accent); border-color: var(--accent); }
+
+body[data-scan-id] .card {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "rank headline score" ". body body" ". why why" ". seen seen";
+  gap: 0.15rem 0.7rem; align-items: baseline; padding: 0.9rem 1.1rem;
+}
+body[data-scan-id] .card .rank { grid-area: rank; }
+body[data-scan-id] .card .headline { grid-area: headline; }
+body[data-scan-id] .card .body { grid-area: body; }
+body[data-scan-id] .card .why { grid-area: why; }
+body[data-scan-id] .card .seen-by { grid-area: seen; }
+/* float:right in the report's own CSS is what kept the score out of the
+   normal flow; in a grid it needs to be a real cell instead. */
+body[data-scan-id] .card .score {
+  grid-area: score; float: none; justify-self: end; white-space: nowrap;
+  font-weight: 600; color: var(--text); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 999px; padding: 0.1rem 0.6rem; font-size: 0.8rem;
+}
+body[data-scan-id] table.also-found { width: 100%; }
+@media (max-width: 700px) {
+  body[data-scan-id] .card {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas: "rank headline" "score score" ". body" ". why" ". seen";
+  }
+  body[data-scan-id] .card .score { justify-self: start; }
+}
 
 .filter-bar {
   display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem;
@@ -144,15 +306,99 @@ button[type="submit"] {
   font-size: 0.82rem; text-decoration: underline; font-family: inherit;
 }
 .hidden { display: none !important; }
+/* Owned by pagination, kept distinct from `.hidden` (owned by filtering) so
+   the two can never overwrite each other's decision -- see report.js. */
+.page-hidden { display: none !important; }
 
-.copy-btn {
-  margin-left: 0.4rem; border: 1px solid var(--border); border-radius: 5px; padding: 0.05rem 0.4rem;
-  background: var(--surface); color: var(--text-muted); cursor: pointer; font-size: 0.72rem; font-family: inherit;
+.sort-btn {
+  border: none; background: none; padding: 0; font: inherit; color: inherit; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 0.25rem;
 }
-.copy-btn:hover { color: var(--text); }
+.sort-btn:hover { color: var(--text); }
+table.also-found th.sorted .sort-btn { color: var(--accent); }
+.sort-btn::after { content: "↕"; font-size: 0.75em; opacity: 0.45; }
+table.also-found th.sorted .sort-btn::after { content: "↑"; opacity: 1; }
+table.also-found th.sorted-desc .sort-btn::after { content: "↓"; }
+
+.pager {
+  display: flex; align-items: center; gap: 0.75rem; margin: 0.75rem 0 0;
+  font-size: 0.85rem; color: var(--text-muted);
+}
+.pager-btn {
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  border-radius: 6px; padding: 0.25rem 0.7rem; font-size: 0.82rem; cursor: pointer; font-family: inherit;
+}
+.pager-btn:hover:not(:disabled) { border-color: var(--accent); }
+.pager-btn:disabled { opacity: 0.45; cursor: default; }
+.pager-status { font-variant-numeric: tabular-nums; }
+
+/* Held at low contrast until the finding is hovered or the button itself is
+   focused. Previously every card carried a permanently-visible bordered
+   button wedged between the hostname and the rest of the sentence
+   ("admin.example.com [Copy] - subdomain, confirmed live"), which broke the
+   headline mid-phrase on all five cards at once. Opacity rather than
+   display:none so the control keeps its place in the layout (no reflow on
+   hover) and stays reachable by keyboard. */
+.copy-btn {
+  margin-left: 0.35rem; border: 1px solid transparent; border-radius: 5px; padding: 0.05rem 0.4rem;
+  background: none; color: var(--text-muted); cursor: pointer; font-size: 0.7rem; font-family: inherit;
+  opacity: 0; transition: opacity 0.12s ease; vertical-align: 0.05em;
+}
+.card:hover .copy-btn,
+table.also-found tr:hover .copy-btn,
+.copy-btn:focus-visible { opacity: 1; }
+.copy-btn:hover { color: var(--text); border-color: var(--border); background: var(--surface); }
+/* Touch/coarse pointers have no hover state to reveal it with. */
+@media (hover: none) { .copy-btn { opacity: 1; } }
+
+/* --- Per-finding triage --------------------------------------------- */
+.triage { display: inline-flex; gap: 0.25rem; margin-left: 0.5rem; vertical-align: middle; }
+.triage-btn {
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-muted);
+  border-radius: 999px; padding: 0.05rem 0.5rem; font-size: 0.7rem; font-family: inherit;
+  cursor: pointer; white-space: nowrap;
+}
+.triage-btn:hover { color: var(--text); border-color: var(--accent); }
+.triage-btn[aria-pressed="true"] { color: #fff; }
+.triage-btn.triage-reviewed[aria-pressed="true"] { background: #2e7d4f; border-color: #2e7d4f; }
+.triage-btn.triage-flagged[aria-pressed="true"] { background: #b3541e; border-color: #b3541e; }
+.triage-btn.triage-false_positive[aria-pressed="true"] {
+  background: var(--text-muted); border-color: var(--text-muted);
+}
+/* A rejected write briefly flashes the group so an optimistic update that
+   was rolled back isn't silent. */
+.triage.triage-failed { outline: 2px solid var(--danger-text); outline-offset: 2px; }
+
+/* A finding dismissed as a false positive recedes but is never hidden --
+   the operator's own judgment is recorded, not enforced, and a wrong
+   dismissal must stay findable. Opacity plus a strikethrough on the value,
+   so the state doesn't rely on colour alone. */
+[data-triage="false_positive"] { opacity: 0.55; }
+[data-triage="false_positive"] .headline code,
+td[data-triage] code { text-decoration: none; }
+[data-triage="false_positive"] .headline code { text-decoration: line-through; }
+.card[data-triage="flagged"] { border-left: 3px solid #b3541e; }
+.card[data-triage="reviewed"] { border-left: 3px solid #2e7d4f; }
+tr[data-triage="flagged"] > td:first-child { box-shadow: inset 3px 0 0 #b3541e; }
+tr[data-triage="reviewed"] > td:first-child { box-shadow: inset 3px 0 0 #2e7d4f; }
+.triage-cell { white-space: nowrap; }
 
 .src a { color: var(--accent); text-decoration: none; border-bottom: 1px dotted currentColor; }
 .src a:hover { text-decoration: none; border-bottom-style: solid; }
+
+.anchor-link {
+  margin-left: 0.45rem; color: var(--text-muted); text-decoration: none; font-weight: 400;
+  opacity: 0; transition: opacity 0.12s ease;
+}
+.card:hover .anchor-link, .anchor-link:focus-visible { opacity: 1; }
+.anchor-link:hover { color: var(--accent); }
+@media (hover: none) { .anchor-link { opacity: 1; } }
+/* Momentary highlight so an inbound deep link makes it obvious *which*
+   card was being pointed at, rather than just scrolling somewhere. */
+.card.anchor-target { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 2px; }
+tr.anchor-target > td { background: var(--bg); box-shadow: inset 0 0 0 1px var(--accent); }
+tr.anchor-target { scroll-margin-top: 30vh; }
+body[data-scan-id] .card { scroll-margin-top: 1.5rem; }
 
 .diff-count { color: var(--text-muted); font-weight: 400; font-size: 0.85em; }
 .diff-list { list-style: none; padding: 0; margin: 0.75rem 0 1.5rem; display: flex; flex-direction: column; gap: 0.4rem; }
@@ -169,6 +415,49 @@ button[type="submit"] {
 }
 .diff-score { margin-left: 0.5rem; font-size: 0.85rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .diff-signals { margin-top: 0.3rem; font-size: 0.8rem; color: var(--text-muted); }
+
+/* --- Relationship view (graph.html) --------------------------------- */
+.graph-summary {
+  display: flex; gap: 1.25rem; flex-wrap: wrap; align-items: center;
+  padding: 0.75rem 0.9rem; margin: 0 0 1.25rem; font-size: 0.88rem;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+}
+.graph-summary strong { font-variant-numeric: tabular-nums; }
+.warning-pill-inline {
+  background: var(--danger-bg); color: var(--danger-text); border: 1px solid var(--danger-border);
+  border-radius: 999px; padding: 0.05rem 0.55rem; font-size: 0.8rem;
+}
+
+.graph-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+.graph-cluster {
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+  padding: 0.7rem 0.9rem;
+}
+.graph-cluster.hidden { display: none !important; }
+.graph-source { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.graph-source .rank {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 1.5rem; height: 1.5rem; border-radius: 999px; background: var(--bg);
+  border: 1px solid var(--border); font-size: 0.78rem; font-weight: 600;
+}
+.graph-score { font-size: 0.8rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.graph-jump { margin-left: auto; font-size: 0.8rem; color: var(--accent); text-decoration: none; white-space: nowrap; }
+.graph-jump:hover { text-decoration: underline; }
+
+/* The indent plus a single connecting rule is doing the "→" work here: it
+   reads as one source fanning out to its related findings without needing a
+   canvas, a layout engine, or a vendored graph library. */
+.graph-edges {
+  list-style: none; margin: 0.5rem 0 0; padding: 0 0 0 1rem;
+  border-left: 2px solid var(--border); display: flex; flex-direction: column; gap: 0.3rem;
+}
+.graph-edges li { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; font-size: 0.88rem; }
+.graph-edges li.hidden { display: none !important; }
+.graph-relation { color: var(--text-muted); font-size: 0.82rem; min-width: 8.5rem; }
+.graph-dangling {
+  background: var(--danger-bg); color: var(--danger-text); border: 1px solid var(--danger-border);
+  border-radius: 999px; padding: 0.02rem 0.5rem; font-size: 0.75rem;
+}
 
 .raw-output {
   white-space: pre-wrap; word-break: break-word; overflow-x: auto; font-size: 0.85rem;
@@ -189,31 +478,114 @@ button[type="submit"] {
 .earlier-scans .history-list { margin-top: 0.5rem; }
 
 .history-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+
+/* Grid, not wrapping flex. The old `flex-wrap: wrap` + `margin-left: auto`
+   combination broke down the moment a row's content exceeded one line: the
+   Delete form wrapped onto its own line and then pushed itself to the far
+   right, while a row that also had a warning pill (which cancelled the auto
+   margin) pushed it to the far *left* -- two adjacent rows disagreeing about
+   where the same control lives. Fixed columns keep timestamp, tools, counts
+   and actions aligned down the whole list regardless of content length. */
+/* Seven columns:
+   timestamp | tools | findings | narration | warning | re-run | delete. */
 .history-row {
-  display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap;
+  display: grid; align-items: center; gap: 0.5rem 1rem;
+  grid-template-columns: minmax(10rem, auto) minmax(0, 1fr) auto auto auto auto auto;
   border: 1px solid var(--border); border-radius: 8px; padding: 0.7rem 0.9rem; background: var(--surface);
 }
-.history-target { font-weight: 600; color: inherit; text-decoration: none; }
+.history-row.hidden { display: none !important; }
+.history-row:hover { border-color: var(--accent); }
+.history-target { font-weight: 600; color: inherit; text-decoration: none; font-variant-numeric: tabular-nums; }
 .history-target:hover { text-decoration: underline; }
 .history-meta { font-size: 0.85rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+/* The tool list is the one free-growing column; truncate rather than let it
+   shove the action controls out of alignment. */
+.history-row .history-meta:first-of-type {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.history-findings { white-space: nowrap; }
+/* Its own grid row, spanning every column. Secondary to the headline count:
+   "531 findings" stays the primary read, with the composition underneath
+   answering "531 of what?" -- without competing for the same horizontal
+   space as the timestamp, tool list and four controls. */
+.surface-breakdown {
+  grid-column: 1 / -1; font-size: 0.76rem; opacity: 0.8;
+  color: var(--text-muted); margin-top: -0.15rem;
+}
+
+/* Attribution, not decoration: for a project whose research question is
+   small-model faithfulness, a narrated brief with no record of which model
+   wrote it is close to useless. */
+.narrated-pill {
+  font-size: 0.72rem; font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  color: var(--accent); border: 1px solid var(--accent); border-radius: 999px;
+  padding: 0.05rem 0.55rem; white-space: nowrap; cursor: help;
+}
+.narrated-placeholder { display: block; }
+
+.llm-card { max-width: none; }
+#llm-model-row { margin-top: 0.6rem; }
+#llm-model-row input[type="text"] { max-width: 22rem; }
+
+/* Narrow screens drop the column alignment entirely rather than trying to
+   squeeze seven cells into three: each descriptive line takes the full
+   width and the controls wrap together onto their own line. Flex, not
+   grid -- the placeholders exist only to hold grid columns open, so they
+   are removed here rather than left as invisible flex items adding gaps. */
+@media (max-width: 700px) {
+  .history-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.7rem; }
+  .history-row .history-target,
+  .history-row .history-meta,
+  .history-row .surface-breakdown { flex: 1 1 100%; }
+  .history-row .history-meta:first-of-type { white-space: normal; overflow: visible; }
+  .history-row .narrated-placeholder,
+  .history-row .warning-placeholder { display: none; }
+  .history-row .delete-form { margin-left: auto; }
+}
+
+.rerun-link {
+  font-size: 0.8rem; color: var(--text-muted); text-decoration: none;
+  border: 1px solid var(--border); border-radius: 6px; padding: 0.2rem 0.6rem; background: var(--surface);
+  white-space: nowrap;
+}
+.rerun-link:hover { color: var(--accent); border-color: var(--accent); }
+
+.history-filters { margin-bottom: 0.5rem; }
+.filter-pills { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+.filter-field { display: flex; align-items: center; gap: 0.35rem; font-size: 0.82rem; font-weight: 400; color: var(--text-muted); margin: 0; }
+.filter-field input[type="date"] {
+  border: 1px solid var(--border); border-radius: 6px; padding: 0.2rem 0.4rem;
+  font: inherit; font-size: 0.82rem; background: var(--bg); color: var(--text);
+}
+#history-count { margin: 0 0 1.25rem; }
 
 .warning-pill {
-  margin-left: auto; background: var(--danger-bg); color: var(--danger-text); border-radius: 999px;
-  padding: 0.1rem 0.6rem; cursor: pointer; font-size: 0.85rem; border: none;
+  justify-self: end; background: var(--danger-bg); color: var(--danger-text); border-radius: 999px;
+  padding: 0.1rem 0.6rem; cursor: pointer; font-size: 0.85rem;
+  border: 1px solid var(--danger-border); position: relative;
 }
+/* An empty grid cell keeps Delete in the same column whether or not this
+   row has a warning, so the action column stays a straight line. */
+.history-row > .warning-placeholder { display: block; }
 .warning-pill summary { list-style: none; }
 .warning-pill summary::-webkit-details-marker { display: none; }
+/* Absolutely positioned so opening the disclosure doesn't reflow the grid
+   row (and every row below it) just to show one line of warning text. */
 .warning-list {
-  margin: 0.4rem 0 0; padding: 0; list-style: none; font-size: 0.82rem; font-weight: 400;
-  max-width: 28rem; white-space: normal;
+  position: absolute; right: 0; top: calc(100% + 0.3rem); z-index: 5;
+  margin: 0; padding: 0.5rem 0.7rem; list-style: none; font-size: 0.82rem; font-weight: 400;
+  width: max-content; max-width: 32rem; white-space: normal; text-align: left;
+  background: var(--danger-bg); border: 1px solid var(--danger-border); border-radius: 8px;
 }
 
-.delete-form { margin-left: auto; }
-.warning-pill ~ .delete-form { margin-left: 0; }
+.delete-form { justify-self: end; }
 .delete-btn {
   border: 1px solid var(--border); background: var(--surface); color: var(--text-muted);
   border-radius: 6px; padding: 0.2rem 0.6rem; font-size: 0.8rem; cursor: pointer; font-family: inherit;
+  font-weight: 400;
 }
-.delete-btn:hover { color: var(--danger-text); border-color: var(--danger-border); }
+.delete-btn:hover {
+  color: var(--danger-text); border-color: var(--danger-border); background: var(--danger-bg);
+}
 
 code { font-family: ui-monospace, "SF Mono", Consolas, monospace; }

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Glean{% endblock %}
+{% block page_class %}page-narrow{% endblock %}
 {% block content %}
 <h1>New scan</h1>
 <p class="hint">Unify open-source recon tools into one provenance-tracked, prioritised brief.</p>
@@ -21,8 +22,10 @@
     <label>Presets</label>
     <div class="presets">
       {% for name, tool_ids in presets.items() %}
-      <button type="button" class="preset-btn" onclick="selectPreset('{{ tool_ids | join(',') }}')">{{ name }}</button>
+      <button type="button" class="preset-btn" data-preset="{{ name }}"
+              data-tools="{{ tool_ids | join(',') }}">{{ name }}</button>
       {% endfor %}
+      <span class="preset-state" id="preset-state" hidden></span>
     </div>
   </div>
 
@@ -35,7 +38,7 @@
                data-method="{{ info.default_method }}"
                {% if tool_id in form.get('tools', []) %}checked{% endif %}>
         <label for="tool-{{ tool_id }}" style="margin: 0; font-weight: 400;">{{ info.display_name }}</label>
-        <span class="method">{{ info.default_method }}</span>
+        <span class="method method-{{ info.default_method }}">{{ info.default_method }}</span>
       </div>
       {% endfor %}
     </div>
@@ -52,17 +55,88 @@
            placeholder="e.g. Domain owned by operator" value="{{ form.get('authorisation', '') }}">
   </div>
 
+  <div>
+    <label>Narration</label>
+    <div class="tool-card llm-card">
+      <input type="checkbox" id="cli-llm" name="llm" value="true"
+             {% if form.get('llm') %}checked{% endif %}>
+      <label for="cli-llm" style="margin: 0; font-weight: 400;">
+        Narrate top priorities with a local LLM
+      </label>
+      <span class="method">ollama</span>
+    </div>
+    <div id="llm-model-row" hidden>
+      <input type="text" id="model" name="model" placeholder="{{ default_llm_model }}"
+             value="{{ form.get('model', '') if form.get('model') != default_llm_model else '' }}"
+             aria-label="Ollama model tag">
+      <p class="field-hint">
+        Requires Ollama running locally with this model pulled. Only the
+        &ldquo;Top priorities&rdquo; prose is written by the model — the ranking,
+        the headline and everything else stay template-generated (ADR-0005),
+        and any finding the model fails to narrate silently falls back to the
+        template rather than failing the scan.
+      </p>
+    </div>
+  </div>
+
+  <div class="cli-preview" id="cli-preview" data-passive-tools="{{ cli_passive_tools | join(',') }}"
+       data-llm-model="{{ default_llm_model }}">
+    <div class="cli-preview-head">
+      <label for="cli-command">Equivalent terminal command</label>
+    </div>
+    <pre id="cli-command" tabindex="0"></pre>
+    <p class="field-hint" id="cli-note" hidden></p>
+  </div>
+
   <button type="submit">Run scan</button>
 </form>
 
 <script>
+function currentSelection() {
+  return Array.from(document.querySelectorAll('input[name="tools"]:checked'))
+    .map(function (cb) { return cb.value; }).sort();
+}
+
+// Which preset (if any) the current tick-boxes exactly equal. Recomputed
+// from the selection itself rather than remembering "the last button
+// clicked", so hand-editing back to a preset's exact set correctly reports
+// that preset again instead of staying stuck on "modified".
+function matchingPreset() {
+  const selected = currentSelection().join(',');
+  const match = Array.from(document.querySelectorAll('.preset-btn')).find(function (btn) {
+    return btn.dataset.tools.split(',').sort().join(',') === selected;
+  });
+  return match || null;
+}
+
+const presetState = document.getElementById('preset-state');
+function updatePresetState() {
+  const match = matchingPreset();
+  document.querySelectorAll('.preset-btn').forEach(function (btn) {
+    btn.classList.toggle('active', btn === match);
+  });
+  if (match) {
+    presetState.hidden = true;
+    return;
+  }
+  presetState.textContent = currentSelection().length ? 'Custom selection' : 'No tools selected';
+  presetState.hidden = false;
+}
+
 function selectPreset(idsCsv) {
   const ids = idsCsv.split(',');
   document.querySelectorAll('input[name="tools"]').forEach(function (cb) {
     cb.checked = ids.includes(cb.value);
   });
   updateActiveWarning();
+  updatePresetState();
+  rememberSelection();
+  buildCliCommand();
 }
+
+document.querySelectorAll('.preset-btn').forEach(function (btn) {
+  btn.addEventListener('click', function () { selectPreset(btn.dataset.tools); });
+});
 
 const activeWarning = document.getElementById('active-warning');
 function updateActiveWarning() {
@@ -84,6 +158,83 @@ if (httpxBox && dnsxBox) {
   });
 }
 
+// --- Equivalent terminal command -------------------------------------
+// Built from the same form state the POST would submit, so the web UI
+// stops being a black box and doubles as a way to learn the CLI.
+//
+// One honest caveat is baked in: the CLI has no --tools flag. `--live`
+// runs every passive tool, and `--active` adds httpx; the per-tool
+// options (--crtsh, --subfinder, ...) take a FILE to ingest, they don't
+// select what runs. So an arbitrary subset picked here has no exact
+// command-line equivalent, and the preview says so rather than printing
+// a command that would quietly do something different.
+const cliRoot = document.getElementById('cli-preview');
+const cliOut = document.getElementById('cli-command');
+const cliNote = document.getElementById('cli-note');
+const cliLlm = document.getElementById('cli-llm');
+const modelField = document.getElementById('model');
+const modelRow = document.getElementById('llm-model-row');
+const PASSIVE_TOOLS = (cliRoot.dataset.passiveTools || '').split(',').filter(Boolean);
+const LLM_MODEL = cliRoot.dataset.llmModel;
+
+// The model box is only meaningful when narration is on -- shown on demand
+// rather than sitting there permanently inviting input that would be ignored.
+function updateLlmRow() {
+  modelRow.hidden = !cliLlm.checked;
+}
+
+function shellQuote(value) {
+  // Deliberately double quotes, not the POSIX-idiomatic single quotes.
+  // This command gets copied into whatever shell the operator actually
+  // uses, and this project is developed on Linux but demonstrably also run
+  // on Windows -- POSIX single-quote escaping ("it'\''s") is a syntax error
+  // in PowerShell. Double quotes behave the same in bash, zsh, cmd and
+  // PowerShell for the plain-prose values this field holds. Unquoted
+  // entirely when nothing needs quoting, which is the common case.
+  var text = String(value);
+  if (/^[A-Za-z0-9._\-\/:@]+$/.test(text)) {
+    return text;
+  }
+  return '"' + text.replace(/(["\\])/g, '\\$1') + '"';
+}
+
+function buildCliCommand() {
+  const target = targetField.value.trim();
+  const selected = Array.from(document.querySelectorAll('input[name="tools"]:checked'))
+    .map(function (cb) { return cb.value; });
+  const auth = document.getElementById('authorisation').value.trim();
+
+  const parts = ['glean', 'scan', target || '<domain>'];
+  if (selected.length) {
+    parts.push('--live');
+    if (selected.indexOf('httpx') !== -1) { parts.push('--active'); }
+  }
+  if (auth) { parts.push('--authorisation', shellQuote(auth)); }
+  if (cliLlm.checked) {
+    parts.push('--llm');
+    // Only spell out --model when it differs from the CLI's own default,
+    // so the common case stays the short command someone would actually type.
+    var chosen = (modelField.value.trim() || LLM_MODEL);
+    if (chosen !== LLM_MODEL) { parts.push('--model', shellQuote(chosen)); }
+  }
+  cliOut.textContent = parts.join(' ');
+
+  // Does the tick-box selection actually match what --live would run?
+  const passiveSelected = selected.filter(function (t) { return PASSIVE_TOOLS.indexOf(t) !== -1; });
+  const notes = [];
+  if (!selected.length) {
+    notes.push('Select at least one tool.');
+  } else if (passiveSelected.length !== PASSIVE_TOOLS.length) {
+    const missing = PASSIVE_TOOLS.filter(function (t) { return selected.indexOf(t) === -1; });
+    notes.push(
+      'Not an exact equivalent: the CLI has no flag to run a subset of tools, so --live would ' +
+      'also run ' + missing.join(', ') + '.'
+    );
+  }
+  cliNote.textContent = notes.join(' ');
+  cliNote.hidden = notes.length === 0;
+}
+
 const targetField = document.getElementById('target');
 const targetHint = document.getElementById('target-format-hint');
 function checkTargetFormat() {
@@ -99,5 +250,63 @@ function checkTargetFormat() {
 }
 targetField.addEventListener('input', checkTargetFormat);
 targetField.addEventListener('blur', checkTargetFormat);
+
+// --- Remembered defaults ---------------------------------------------
+// Tool selection and authorisation basis, kept in localStorage. Both are
+// re-typed near-identically on every scan of the same engagement. The
+// *target* is deliberately never remembered: silently pre-filling a domain
+// is how you end up scanning the wrong host.
+const REMEMBER_KEY = 'glean.form.defaults.v1';
+
+function rememberSelection() {
+  try {
+    window.localStorage.setItem(REMEMBER_KEY, JSON.stringify({
+      tools: currentSelection(),
+      authorisation: document.getElementById('authorisation').value.trim()
+    }));
+  } catch (err) { /* private mode / storage disabled -- not worth failing over */ }
+}
+
+function restoreSelection() {
+  // A server-rendered redisplay (a rejected submission) already carries the
+  // operator's real input; never overwrite it with a stale remembered set.
+  if (document.querySelectorAll('input[name="tools"]:checked').length) { return; }
+  let saved;
+  try {
+    saved = JSON.parse(window.localStorage.getItem(REMEMBER_KEY) || 'null');
+  } catch (err) { return; }
+  if (!saved) { return; }
+  if (Array.isArray(saved.tools)) {
+    document.querySelectorAll('input[name="tools"]').forEach(function (cb) {
+      cb.checked = saved.tools.indexOf(cb.value) !== -1;
+    });
+  }
+  const auth = document.getElementById('authorisation');
+  if (saved.authorisation && !auth.value) { auth.value = saved.authorisation; }
+}
+
+targetField.addEventListener('input', buildCliCommand);
+document.getElementById('authorisation').addEventListener('input', function () {
+  rememberSelection();
+  buildCliCommand();
+});
+cliLlm.addEventListener('change', function () {
+  updateLlmRow();
+  buildCliCommand();
+});
+modelField.addEventListener('input', buildCliCommand);
+document.querySelectorAll('input[name="tools"]').forEach(function (cb) {
+  cb.addEventListener('change', function () {
+    updatePresetState();
+    rememberSelection();
+    buildCliCommand();
+  });
+});
+
+restoreSelection();
+updateActiveWarning();
+updatePresetState();
+updateLlmRow();
+buildCliCommand();
 </script>
 {% endblock %}

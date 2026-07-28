@@ -1,6 +1,6 @@
 # ADR-0009 — LLM Synthesis (Ollama Integration)
 
-- **Status:** Accepted (v0.1.0 — implemented and validated against a real owned target, `larnby.com`, and the full 10-target ground-truth set, 2026-07-27; see Validation)
+- **Status:** Accepted (v0.1.0 — implemented and validated against a real owned target, `larnby.com`, and the full 10-target ground-truth set, 2026-07-27; see Validation). Reachable from the web interface as well as the CLI since 2026-07-28 (`ScanRequest.llm`/`model`, ADR-0011): narration was previously CLI-only, so one of the project's headline features was invisible to the web surface entirely. That wiring also made this ADR's own graceful degradation *reportable* rather than merely graceful — see the note below.
 - **Date:** 2026-07-27
 - **Scope:** Glean v1 — how a real local LLM (via Ollama) replaces the current template-based prose in the brief, without touching anything ADR-0005 already fixed
 - **Depends on:** ADR-0005 (brief contract — D1–D6 already specify exactly what the model is and isn't allowed to do; this ADR is purely about *how* a real model gets called and validated, not what it's allowed to say), ADR-0004 (the score/signals the model narrates but never computes), ADR-0006 (faithfulness stage 1 already checks this narration structurally; this is the first time stage 1 has real teeth)
@@ -52,6 +52,14 @@ Local inference is slow and hardware-dependent — a generous default timeout (1
 
 - **Positive:** the charter's actual thesis becomes measurable for the first time — `glean eval`'s faithfulness/provenance-retention numbers stop being trivially 1.000 the moment `--llm` is used, because there's finally something that could fabricate. Per-finding degradation means one bad model response never blanks out an entire brief. No new runtime dependency. Comparing models is free (just a flag), directly serving the roadmap's "compare across local models" contribution goal.
 - **Costs / accepted limits:** only `top_priorities` gets real narration in v1 — `also_found` staying template-only is a deliberate scope cut, not an oversight, but it does mean the faithfulness numbers only ever measure the narrated slice, not the whole brief. Real stage-2 faithfulness (content-level fabrication, not just id-existence) still doesn't exist after this ADR — this only makes stage 1 meaningful, which is real progress but not the whole picture the charter eventually wants.
+
+### Note (2026-07-28) — graceful degradation is not the same as visible degradation
+
+`synthesize_brief` falls back to the template brief on an unreachable Ollama, an unparseable response, or a contract violation, and never raises. That is the right behaviour and this ADR argues for it. Wiring narration into the web interface exposed the other half of it: the fallback is **completely silent**. An operator ticks "narrate with a local LLM", gets template prose back, and has nothing whatsoever to tell them the model was never involved — the brief looks the same either way, by design.
+
+`pipeline.run_scan` now distinguishes the three real outcomes and reports each: total fallback becomes a warning naming the model and asking whether Ollama is running with it pulled; partial fallback reports the actual ratio; and finding ids the model invented (already discarded by the parser) are reported as their own warning. `ScanManifest.narrated_by` records the model that *actually* produced prose — `None` both for a template brief and for a requested-but-failed narration, because what matters downstream is what the reader is looking at, not what was asked for.
+
+That last point matters beyond usability. This project's research question is whether small local models can faithfully synthesise structured recon output. A narrated brief with no record of which model wrote it is close to useless as evidence, and the model tag is not recoverable from the rendered brief afterwards.
 
 ## Open questions
 

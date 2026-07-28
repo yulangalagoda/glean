@@ -1,0 +1,12 @@
+# Normalise line endings to LF everywhere, in the repo *and* in the working
+# tree on every platform. Without this, a Windows checkout with the common
+# `core.autocrlf=true` rewrites every LF to CRLF on disk, which silently
+# corrupts the golden test fixtures: their exact bytes are the thing under
+# test, so `tests/adapters/test_httpx.py::test_blank_lines_are_ignored_not_skipped`
+# (which asserts a real blank line exists in the raw JSON-lines fixture)
+# fails on Windows and passes on Linux, for no reason visible in the code.
+* text=auto eol=lf
+
+# Fixtures are captured tool output — byte-exact by definition. Never let
+# any heuristic touch them.
+tests/fixtures/** -text

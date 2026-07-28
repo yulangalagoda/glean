@@ -2,12 +2,23 @@
 {% block title %}Glean — history{% endblock %}
 
 {% macro scan_row(scan) %}
-<li class="history-row">
+<li class="history-row"
+    data-tools="{{ scan.tools_run | join(' ') }}"
+    data-date="{{ scan.started_at[:10] }}"
+    data-warnings="{{ 1 if scan.warnings else 0 }}"
+    data-target="{{ scan.target | lower }}">
   <a class="history-target" href="/scan/{{ scan.scan_id }}">{{ scan.started_at[:19] | replace("T", " ") }} UTC</a>
   <span class="history-meta">
     {% for tid in scan.tools_run %}{{ tool_names[tid].display_name if tid in tool_names else tid }}{% if not loop.last %}, {% endif %}{% endfor %}
   </span>
-  <span class="history-meta">{{ scan.findings_count }} finding{{ "s" if scan.findings_count != 1 else "" }}</span>
+  <span class="history-meta history-findings">
+    {{ scan.findings_count }} finding{{ "s" if scan.findings_count != 1 else "" }}
+  </span>
+  {% if scan.narrated_by %}
+  <span class="narrated-pill" title="The 'Top priorities' prose in this brief was written by this local model; the ranking and structure stay template-generated (ADR-0005).">{{ scan.narrated_by }}</span>
+  {% else %}
+  <span class="narrated-placeholder" aria-hidden="true"></span>
+  {% endif %}
   {% if scan.warnings %}
   <details class="warning-pill">
     <summary>{{ scan.warnings | length }} warning{{ "s" if scan.warnings | length != 1 else "" }}</summary>
@@ -15,11 +26,29 @@
       {% for w in scan.warnings %}<li>{{ w }}</li>{% endfor %}
     </ul>
   </details>
+  {% else %}
+  {# Holds the warning column open so the Delete button below lines up with
+     the Delete button of every other row, warned or not. #}
+  <span class="warning-placeholder" aria-hidden="true"></span>
   {% endif %}
+  {# After the warning column, not before it: the pill's width varies with
+     its own content, so anything left of it shifts between a warned and an
+     unwarned row. Keeping both action controls to its right lets them share
+     one straight edge down the list. #}
+  <a class="rerun-link"
+     href="/?target={{ scan.target | urlencode }}&amp;tools={{ scan.tools_run | join(',') | urlencode }}{% if scan.authorisation %}&amp;authorisation={{ scan.authorisation | urlencode }}{% endif %}"
+     title="Open a new scan pre-filled with this target and tool selection">Re-run</a>
   <form method="post" action="/scan/{{ scan.scan_id }}/delete" class="delete-form"
         onsubmit="return confirm('Delete this scan? This cannot be undone.');">
     <button type="submit" class="delete-btn">Delete</button>
   </form>
+  {% if scan.surface %}
+  {# Last child, spanning every column, so it occupies its own grid row.
+     Inline it competed with six other cells for horizontal space and, on a
+     row that also carried a narration badge, pushed Delete clean off the
+     right edge. #}
+  <span class="surface-breakdown">{% for entity_type, count in scan.surface %}{{ surface_label(entity_type, count) }}{% if not loop.last %} · {% endif %}{% endfor %}</span>
+  {% endif %}
 </li>
 {% endmacro %}
 
@@ -29,15 +58,39 @@
 {% if not groups %}
 <p class="hint">No scans yet — <a href="/">run one</a>.</p>
 {% else %}
-<input type="search" id="history-search" class="filter-search history-search"
-       placeholder="Search by target…">
+<div class="filter-bar history-filters" role="search" aria-label="Filter scan history">
+  <input type="search" id="history-search" class="filter-search"
+         placeholder="Search by target…" aria-label="Search by target">
+  <div class="filter-group">
+    <span class="filter-group-label" id="history-tool-label">Tool:</span>
+    <div class="filter-pills" role="group" aria-labelledby="history-tool-label">
+      {% for tid, info in tool_names.items() %}
+      <button type="button" class="filter-pill" data-tool="{{ tid }}"
+              aria-pressed="false">{{ info.display_name }}</button>
+      {% endfor %}
+    </div>
+  </div>
+  <label class="filter-field">
+    <span>From</span>
+    <input type="date" id="history-from" aria-label="Earliest scan date">
+  </label>
+  <label class="filter-field">
+    <span>To</span>
+    <input type="date" id="history-to" aria-label="Latest scan date">
+  </label>
+  <label class="filter-active-only">
+    <input type="checkbox" id="history-warned"> With warnings only
+  </label>
+  <button type="button" class="filter-clear" id="history-clear">Clear filters</button>
+</div>
+<p class="hint" id="history-count" role="status" aria-live="polite"></p>
 
 <div id="history-groups">
   {% for target, scans in groups %}
   <section class="target-group" data-target="{{ target | lower }}">
     <h2 class="target-group-heading">
       {{ target }}
-      <span class="hint">({{ scans | length }} scan{{ "s" if scans | length != 1 else "" }})</span>
+      <span class="hint group-count">({{ scans | length }} scan{{ "s" if scans | length != 1 else "" }})</span>
     </h2>
     <ul class="history-list">
       {{ scan_row(scans[0]) }}
@@ -55,14 +108,97 @@
 </div>
 
 <script>
+// Filtering happens per *scan row*, not per target group: "show me scans
+// that used httpx" has to be able to match one run of a target without
+// dragging in its unrelated siblings. A group is then hidden only when
+// every row inside it (including the collapsed "earlier scans") is out,
+// and its heading count reflects what actually survived the filter rather
+// than the total on disk.
 const search = document.getElementById("history-search");
-search.addEventListener("input", function () {
+const fromDate = document.getElementById("history-from");
+const toDate = document.getElementById("history-to");
+const warnedOnly = document.getElementById("history-warned");
+const countLine = document.getElementById("history-count");
+const toolPills = Array.from(document.querySelectorAll(".history-filters .filter-pill"));
+
+function selectedTools() {
+  return toolPills
+    .filter(function (p) { return p.getAttribute("aria-pressed") === "true"; })
+    .map(function (p) { return p.dataset.tool; });
+}
+
+function applyHistoryFilters() {
   const query = search.value.trim().toLowerCase();
+  const tools = selectedTools();
+  const from = fromDate.value;
+  const to = toDate.value;
+  const warned = warnedOnly.checked;
+  let shown = 0;
+
   document.querySelectorAll(".target-group").forEach(function (group) {
-    const matches = !query || (group.dataset.target || "").indexOf(query) !== -1;
-    group.classList.toggle("hidden", !matches);
+    let groupVisible = 0;
+    group.querySelectorAll(".history-row").forEach(function (row) {
+      let ok = true;
+      if (query && (row.dataset.target || "").indexOf(query) === -1) { ok = false; }
+      if (ok && tools.length) {
+        const rowTools = (row.dataset.tools || "").split(/\s+/).filter(Boolean);
+        // Every selected tool must be present -- "crt.sh AND httpx" is the
+        // useful reading when narrowing down which runs to compare.
+        ok = tools.every(function (t) { return rowTools.indexOf(t) !== -1; });
+      }
+      if (ok && warned && row.dataset.warnings !== "1") { ok = false; }
+      const date = row.dataset.date || "";
+      if (ok && from && date < from) { ok = false; }
+      if (ok && to && date > to) { ok = false; }
+      row.classList.toggle("hidden", !ok);
+      if (ok) { groupVisible += 1; shown += 1; }
+    });
+
+    group.classList.toggle("hidden", groupVisible === 0);
+    const badge = group.querySelector(".group-count");
+    if (badge) {
+      const total = group.querySelectorAll(".history-row").length;
+      badge.textContent = groupVisible === total
+        ? "(" + total + " scan" + (total === 1 ? "" : "s") + ")"
+        : "(" + groupVisible + " of " + total + " shown)";
+    }
+    // If the newest scan is filtered out but an older one survived, the
+    // survivor lives inside the collapsed disclosure -- open it, otherwise
+    // the group looks empty despite claiming a match.
+    const details = group.querySelector(".earlier-scans");
+    if (details) {
+      const hiddenTop = group.querySelector(".history-list .history-row.hidden");
+      if (hiddenTop && groupVisible > 0) { details.open = true; }
+    }
+  });
+
+  countLine.textContent = shown + " scan" + (shown === 1 ? "" : "s") + " shown";
+}
+
+[search, fromDate, toDate].forEach(function (el) {
+  el.addEventListener("input", applyHistoryFilters);
+});
+warnedOnly.addEventListener("change", applyHistoryFilters);
+toolPills.forEach(function (pill) {
+  pill.addEventListener("click", function () {
+    const on = pill.getAttribute("aria-pressed") === "true";
+    pill.setAttribute("aria-pressed", on ? "false" : "true");
+    pill.classList.toggle("active", !on);
+    applyHistoryFilters();
   });
 });
+document.getElementById("history-clear").addEventListener("click", function () {
+  search.value = "";
+  fromDate.value = "";
+  toDate.value = "";
+  warnedOnly.checked = false;
+  toolPills.forEach(function (p) {
+    p.setAttribute("aria-pressed", "false");
+    p.classList.remove("active");
+  });
+  applyHistoryFilters();
+});
+applyHistoryFilters();
 </script>
 {% endif %}
 {% endblock %}

@@ -710,12 +710,400 @@ point is a real release, just pre-dev groundwork.
   `test_web_app.py`, and a new `test_diff.py`), ruff/mypy/
   pre-commit `--all-files` and a wheel build all clean.
 
+### Fixed
+- **Every non-ASCII character in the web UI was corrupted on Windows.**
+  Every `read_text()`/`write_text()` call in the codebase omitted an
+  encoding, so Python used the platform default -- UTF-8 on Linux (where
+  all development happened, so it never showed), but the ANSI code page
+  on Windows. `view_scan` therefore decoded a UTF-8 `brief.html` as
+  cp1252 and re-encoded it as UTF-8, double-encoding it: the page title
+  rendered as `Glean Brief â€" example.com`, and every em-dash and middot
+  in every brief with it. Fixed by making the encoding explicit at all 17
+  call sites in `src/` plus the reads in the test suite. Found by simply
+  looking at the rendered page on Windows, not by any failing assertion --
+  nothing in the suite asserts on a non-ASCII character round-tripping
+  through a file.
+- **Golden fixtures were being silently rewritten on checkout.** With no
+  `.gitattributes` and the common Windows `core.autocrlf=true`, git
+  converted every LF to CRLF on disk -- including in `tests/fixtures/`,
+  whose exact bytes are the thing under test. This made
+  `test_blank_lines_are_ignored_not_skipped` (which asserts a real blank
+  line exists in the raw JSON-lines fixture) fail on Windows and pass on
+  Linux, for no reason visible anywhere in the code. Added a
+  `.gitattributes` pinning the repo to LF and marking `tests/fixtures/**`
+  binary. Verified the corruption was cosmetic and had not changed any
+  parsed result: the httpx adapter returns byte-identical output
+  (21 entities, 15 edges, 5 skipped) from the CRLF and LF forms.
+- **The Delete button on `/history` was styled as the primary action.**
+  `button[type="submit"]` (specificity 0,1,1) out-specifies `.delete-btn`
+  (0,1,0), so Delete -- itself a submit button -- silently inherited the
+  solid, high-contrast primary treatment meant for "Run scan". The most
+  destructive, irreversible control on the page was rendering as the most
+  prominent one. Fixed by scoping that rule with `:not(.delete-btn)`.
+- **The history row layout disagreed with itself.** `flex-wrap: wrap`
+  plus `margin-left: auto` meant that once a row's content exceeded one
+  line the Delete form wrapped and pushed itself hard right -- except on
+  rows that also had a warning pill, where a sibling rule cancelled the
+  auto margin and pushed it hard *left*. Two adjacent rows placed the
+  same control at opposite ends. Replaced with a fixed grid plus an empty
+  placeholder cell for rows without warnings; Delete's right edge now
+  lands at an identical offset on every row.
+- **The live-progress page reported `Scan failed: undefined` on any
+  network blip.** A server-sent `event: error` is a `MessageEvent` with a
+  real message in `.data`, but `EventSource` *also* fires its own plain
+  `Event` named `error` on any transport hiccup -- and that one carries no
+  `.data` at all. The single handler treated both alike, printing
+  `undefined` and closing a stream whose scan was still running fine. Now
+  distinguishes the two, and on a transient drop says "Reconnecting…" and
+  waits for the browser's own retry instead of tearing down.
+
+### Added
+- Interactive-brief follow-ups, all verified against real rendered pages
+  rather than structural assertions alone. Every one is injected into the
+  web response only, never into the saved `brief.html` -- re-verified
+  after each change that the standalone file contains zero occurrences of
+  the injected markup and keeps its own 860px layout (ADR-0010 D3).
+  - **Signal facet** on the filter bar. `data-signals` had been emitted on
+    every finding since facets were added and read by nothing; since the
+    deterministic rubric is the project's whole differentiator, "show me
+    everything that fired `sensitive_hostname_pattern`" is arguably the
+    most useful of the three filters. Verified narrowing 23 findings to 1.
+  - **Sortable, paginated "Also found" table** (25/page). The noisy tail
+    recreated the exact unprioritised-pile problem Glean exists to solve,
+    just lower down the page. A third click on a column clears the sort
+    and restores the renderer's own priority order, which is the
+    meaningful default. Filtering and pagination deliberately own separate
+    classes (`.hidden` vs `.page-hidden`) so neither can overwrite the
+    other's decision -- verified both in effect simultaneously, with a
+    filter correctly re-paginating against the reduced set (65 of 115).
+  - **Deep-linkable findings**, anchored on ADR-0001's deterministic
+    entity id rather than position -- a positional `#finding-3` would
+    point at a different host the moment scoring reordered anything, which
+    is exactly what makes a shared link worthless. Handles `hashchange`
+    as well as load, since clicking an in-page anchor never reloads.
+  - **Equivalent terminal command preview** on the scan form, built live
+    from form state. Surfaces a real gap between the two surfaces: the
+    CLI has no `--tools` flag (`--live` runs every passive tool;
+    `--crtsh`/`--subfinder`/... take a file to *ingest*, not a selection),
+    so an arbitrary web selection has no exact command-line equivalent.
+    Rather than print a command that would quietly do something else, the
+    preview names the extra tools `--live` would also run. Quoting uses
+    double quotes, not POSIX-idiomatic single quotes: this command gets
+    pasted into whatever shell the operator actually uses, and
+    `'it'\''s'` is a syntax error in PowerShell.
+  - **Re-run a past scan** -- a history link that pre-fills the form
+    rather than launching anything. Deliberately not a GET that starts a
+    scan: for a tool that can trigger active reconnaissance, that would be
+    one stray prefetch away from probing a target nobody authorised today.
+  - **History filters** by tool, date range and has-warnings, alongside
+    the existing target search. Filtering is per scan row, not per target
+    group, so "scans that used httpx" matches one run without dragging in
+    its siblings; a group hides only when every row inside it is filtered
+    out, its heading count reflects what survived, and the collapsed
+    "earlier scans" disclosure auto-opens when the surviving row is inside
+    it.
+  - **Remembered form defaults** (tools, authorisation) in `localStorage`.
+    The target is deliberately never remembered -- silently pre-filling a
+    domain is how you scan the wrong host. A server-rendered redisplay
+    after a rejected submission is never overwritten with stale values.
+  - **Preset state** on the scan form, recomputed from the selection
+    rather than remembering the last button clicked, so hand-editing back
+    to a preset's exact set correctly re-detects it instead of staying
+    stuck on "modified".
+  - **Network-exposure banner** (ADR-0011 D8) on every page when `--host`
+    is non-loopback, plus a startup warning. An unauthenticated control
+    plane that can trigger active recon must not look identical whether
+    it's reachable from the network or not. Building it surfaced a latent
+    bug: `Jinja2Templates` was a single module-level instance, so two apps
+    in one process (exactly what the test suite constructs) would clobber
+    each other's flag -- now built per `create_app()`, with isolation
+    verified.
+  - **Empty states.** A scan that legitimately finds nothing previously
+    rendered an expandable "0 additional finding(s)" disclosure wrapping
+    an empty table, which reads as a broken page rather than a real
+    result.
+  - **Accessibility pass:** a skip link, a `:focus-visible` ring across
+    the custom controls that were losing the browser default, `aria-sort`
+    on sortable headers, `aria-pressed` on the filter pills (whose only
+    other state cue was background colour), `aria-current` on the active
+    nav link, labelled filter groups and search landmarks, live-region
+    result counts, and a `prefers-reduced-motion` guard.
+
+### Changed
+- Widened the app from a 640px column to 1100px, with the scan form kept
+  narrow (680px) since a single column of short fields reads worse
+  stretched. The findings table went from ~810px to 1006px usable.
+  Widening the report needed care, because `render_html()` writes its own
+  `body { max-width: 860px }` and the site stylesheet is deliberately
+  linked *before* it so the report wins ties: the override keys off
+  `body[data-scan-id]` (0,1,1), an attribute only the web wrapper ever
+  adds, so the file on disk cannot match it and stays exactly as ADR-0010
+  D3 requires.
+- Made the report's nav bar render identically to every other page's. The
+  report constrains `body` itself, so the injected header was trapped
+  inside that column -- its bottom border stopped mid-page while every
+  other page's spanned the window. Fixed by releasing `body` and
+  constraining its children instead, leaving the header the one
+  full-width child. Measured on both: identical max-width, padding and
+  height, both matching the same centring calculation. Also added
+  `scrollbar-gutter: stable`, since a short page and a long one otherwise
+  differ by ~15px of viewport and shifted the centred nav between them.
+- Distinguished passive from active tools on the scan form. The
+  passive/active split is the ethical spine of the project, but both
+  badges rendered in identical grey -- ticking the one tool that sends
+  real packets at the target looked exactly like ticking a CT-log lookup.
+  Now carried by colour *and* border *and* weight, never colour alone,
+  with the whole row tinting when an active tool is selected so the
+  existing warning has a visible antecedent.
+- Copy-to-clipboard buttons are revealed on hover/focus instead of being
+  permanently visible. They previously sat between the hostname and the
+  rest of the headline (`admin.example.com [Copy] - subdomain, confirmed
+  live`), breaking the sentence on every card at once. Opacity rather
+  than `display: none`, so there's no reflow on hover and the control
+  stays keyboard-reachable.
+
+### Fixed
+- **The correlation stage's output was being discarded on every scan.**
+  `merge_graph` computed the typed edge set (`resolves_to`, `subdomain_of`,
+  `hosts`, ...), `build_brief` borrowed it to phrase a handful of finding
+  bodies, and it then went out of scope and was gone. `entities.json`
+  preserved the *nodes* of the entity graph and silently dropped every
+  *relation* between them, so the deterministic entity-linking that the
+  charter names as the project's central claim -- correlation done in code,
+  never by the model -- was the one stage with nothing durable to show for
+  itself. Nothing downstream (export, diff, or any view) could see how
+  findings connect, because by the time anything downstream ran, the
+  connections no longer existed anywhere. Fixed by persisting them:
+  `history.write_edges_snapshot`/`read_edges_snapshot`, written by both
+  `cli.py`'s `--live` path and the web app's `execute_scan`, so a scan run
+  from the terminal and one run from the browser archive the identical set
+  of files into the shared history (ADR-0011 D6). `pipeline.ScanOutcome`
+  gained `edges`/`entities`, since `Brief` deliberately doesn't carry them
+  (it's a rendering contract, ADR-0005) and they otherwise had no way out
+  of `run_scan`.
+
+  Deliberately a separate `edges.json` rather than a new key inside
+  `entities.json`: that file's flat-list shape is load-bearing for
+  `diff_entities` and the JSON/CSV exports, and every scan already on disk
+  is in it. A missing `edges.json` therefore reads as "relations unknown for
+  this scan", never "this scan had no relations" -- `read_edges_snapshot`
+  returns `None`, not `[]`, and the graph route says so in as many words.
+  Conflating those would be exactly the absence-as-evidence reasoning the
+  adapters refuse everywhere else.
+- **Only the top N findings were addressable by anchor.** `report.js`
+  assigned ids to `.card` elements alone, so every "Also found" row -- the
+  large majority of any real scan -- had no anchor, and any inbound deep
+  link to one scrolled nowhere and silently did nothing. Found by following
+  the new relationship view's own "in brief" link for a rank-6 wildcard
+  subdomain (`*.example.com`) and watching it resolve to no element at all.
+  Anchors now cover table rows too, and because those rows are paginated,
+  the anchor handler asks the pager to turn to the page that actually
+  contains the target rather than un-hiding one row behind its back (which
+  would leave "Showing 1–25 of N" lying about what is on screen).
+
+### Added
+- **Relationship view** (`glean_osint.graph`, `GET /scan/{id}/graph`) --
+  the correlation stage made legible now that its output survives the scan.
+  Each source entity is shown with its typed relations fanning out beneath
+  it (`admin.example.com → resolves to → 203.0.113.2`), ordered by
+  `priority.rank` so the ranking the deterministic rubric already computed
+  is reused rather than a second, competing notion of importance being
+  invented. Filterable by relation type, and filtering hides individual
+  relation lines before hiding a cluster, so filtering by `resolves_to`
+  shows each source with just its resolution edges rather than showing
+  every source that happens to have one somewhere among many.
+
+  Pure and separately tested (`tests/test_graph.py`), same shape as
+  `diff.py`: snapshot dicts in, view model out, no I/O and no clock, so it
+  works against any archived scan without a migration. Three deliberate
+  behaviours, each with a test: an edge pointing at an entity absent from
+  the snapshot is flagged `unresolved` rather than dropped (the two files
+  disagreeing is worth seeing); a relation type not in `RELATION_LABELS` is
+  shown with a humanised fallback rather than discarded, so a new adapter's
+  new relation appears the day it is added; and entities with no relations
+  at all are counted and reported, since a scan that is mostly unconnected
+  nodes is a fact about the scan rather than a rendering problem to hide.
+
+  The anchor slug is shared deliberately: `graph.anchor_slug` mirrors
+  `report.js`'s own expression exactly, with a pointer in each direction,
+  because two independent transliterations of the same entity id is
+  precisely how you get links that work for `admin.example.com` and 404 for
+  `*.example.com`. Verified against real seeded scans: all 12 "in brief"
+  links on a five-tool scan resolve, wildcard included.
+
+  No graph library, vendored or otherwise -- an indented list with a single
+  connecting rule carries the "one source fanning out" reading without a
+  canvas, and keeps ADR-0011's own no-external-requests discipline intact.
+
+### Fixed
+- **A CLI-run scan never recorded its own warnings.** `scan()` printed each
+  degraded-tool message with `typer.secho` and nothing else, so its manifest
+  always got `warnings: []` and its `/history` row never showed the warning
+  pill -- while the identical failure through the web form did. Since Stage 3
+  put both surfaces in one shared history (ADR-0011 D6), two rows of the same
+  list meant different things depending on which produced them, and a
+  genuinely degraded terminal scan was indistinguishable from a clean one.
+  Previously recorded here as an accepted limitation; now fixed. Warnings are
+  collected as well as printed, covering all four paths (Stage 1's threaded
+  messages, dnsx, httpx, and per-tool malformed-record counts).
+
+  The collection deliberately filters on colour: only `YELLOW` messages are
+  recorded. crt.sh cache-hit and stale-failsafe notices travel the same
+  channel in cyan and must not count as warnings -- conflating exactly those
+  two is what once made `/history` claim "1 warning" on healthy scans.
+
+### Added
+- **Surface breakdown in the scan manifest** (`ScanManifest.surface`), shown
+  on `/history` beneath each scan's finding count. "531 findings" alone says
+  nothing about what was found -- 531 certificates and 531 exposed services
+  are wildly different scans. The count is computed by `brief.surface_counts`,
+  extracted from what was previously private to `_surface_line`, so the
+  history page and the brief header render one computation rather than two
+  that can drift; `brief.surface_label` is shared as a Jinja global for the
+  same reason, so neither can word it differently ("4 IP addresses" vs
+  "4 ips"). The field is defaulted and reassembled from JSON's lists back
+  into tuples on read, so every manifest already on disk still loads and
+  simply reports no breakdown -- covered by a test that loads a manifest
+  written before the field existed.
+- Re-run and Delete moved to sit together at the right of each history row,
+  after the warning column rather than side-of-it. The pill's width varies
+  with its own content, so any control left of it shifted horizontally
+  between a warned and an unwarned row; both action controls now share one
+  straight edge down the whole list, verified identical across every row.
+
+### Added
+- **LLM narration in the web interface** (ADR-0009, closing the gap where
+  one of the project's headline features was reachable only from the CLI).
+  `ScanRequest` gained `llm`/`model`, `run_scan` calls
+  `synthesis.synthesize_brief`, and the scan form has a narration toggle
+  with an optional model tag. Opt-in and off by default, for the same
+  conservative reason `--live` is: narration depends on a local Ollama, and
+  a scan must not start depending on one silently.
+
+  The important part is what happens when it *doesn't* work.
+  `synthesize_brief` degrades to the template brief on an unreachable
+  Ollama, a malformed response, or a contract violation, and never raises
+  -- correct, but completely silent. The operator ticks "narrate with a
+  local LLM", gets template prose back, and has nothing to tell them the
+  model was never involved. `run_scan` now distinguishes the three real
+  outcomes and reports them: total fallback becomes a warning naming the
+  model and asking whether Ollama is running with it pulled; partial
+  fallback reports the actual ratio ("narrated 3 of 5"); and invented
+  finding ids the parser discarded are reported as their own warning.
+  Regression-tested for each, including that the warnings stream live
+  through `on_warning` rather than only appearing in the final tuple.
+
+  `ScanManifest.narrated_by` records the model that actually produced
+  prose, shown as a badge on `/history`. `None` for a template brief *and*
+  for a requested-but-failed narration -- what matters downstream is what
+  the reader is looking at, not what was asked for. Attribution rather
+  than decoration: for a project whose research question is small-model
+  faithfulness, a narrated brief with no record of which model wrote it is
+  close to useless, and the model tag is not recoverable from the rendered
+  brief afterwards.
+
+  The terminal-command preview and the real toggle are now one control
+  rather than two that could disagree: ticking it both enables narration
+  and adds `--llm` to the preview, with `--model` spelled out only when it
+  differs from the CLI's own default.
+
+### Fixed
+- The surface breakdown added above competed with six other cells for one
+  row's horizontal space, and on a row that also carried a narration badge
+  it pushed the Delete button clean off the right edge (measured at -23.8px
+  past the row boundary at 1280px wide). Moved to its own full-width grid
+  row. Caught by measuring rather than by looking: at the viewport the
+  browser pane happened to open at, the mobile breakpoint was active and
+  the desktop layout was never exercised.
+- Narrow-screen history rows now stack deliberately instead of by accident.
+  Seven grid cells were being auto-placed into the three columns the mobile
+  rule declared, producing a 0px middle column and near-200px rows; that
+  breakpoint now switches to flex, giving each descriptive line the full
+  width and wrapping the controls together onto one line.
+
+### Added
+- **Per-finding triage** — mark a finding `reviewed`, `flagged`, or a
+  `false_positive` and have that survive a reload, turning the brief from a
+  report into a workflow. Available on top-priority cards and on every
+  "Also found" row (the tail is where dismissing false positives matters
+  most). Keyed by ADR-0001's entity id, the same stable key the diff, the
+  anchors and the relationship view already use, so a judgment made today
+  still attaches to the same real-world thing after a re-scan reorders
+  everything.
+
+  Stored in its own `triage.json` per scan rather than in the manifest, a
+  deliberate departure from how this was originally sketched. The manifest
+  is written exactly once, at the end of a scan, and holds scan metadata;
+  triage is mutable, per-entity, and rewritten on every click. Folding a
+  growing map of review decisions into a frozen metadata record would mean
+  rewriting scan metadata on every UI interaction, with a write race able
+  to damage data the operator cannot regenerate. `write_triage` is
+  therefore also the one write in this module that is atomic
+  (temp file + `os.replace`) — everything alongside it is written once and
+  can simply be re-run; review decisions cannot.
+
+  `read_triage` returns `{}` rather than `None` for a missing file, the
+  opposite of the entity/edge snapshots, and the asymmetry is intentional:
+  the file only ever exists because someone triaged something, so absence
+  really does mean "nothing triaged" rather than "unknown". It also drops
+  any state outside the allowlist on read, so a hand-edited file can't
+  introduce a state the UI has no rendering for.
+
+  Both inputs are validated server-side rather than trusted: `state`
+  against `TRIAGE_STATES`, and `entity_id` against the scan's own entity
+  snapshot — without the second check a hand-crafted POST could grow the
+  file indefinitely with ids corresponding to nothing, and every later read
+  would carry them forward. An empty *or absent* `state` clears the entry;
+  untriaged is the absence of a record, not a fourth state.
+
+  Triage state is applied as `data-triage` on the finding's own element,
+  which makes it a filter facet for free — "show me only what I flagged" is
+  most of the point of triaging at all. Verified narrowing 23 findings to 1.
+  A false positive is dimmed and struck through rather than hidden: the
+  operator's judgment is recorded, not enforced, and a wrong dismissal has
+  to stay findable. State is carried by colour *and* border *and*
+  strikethrough, never colour alone.
+
+  The write is optimistic with a rollback: the UI updates immediately, and
+  if the server rejects it the change is reverted and the control flashes,
+  rather than leaving the page claiming a decision that was never stored.
+  Verified by forcing a 500 and watching the state revert.
+
+  Current state is embedded in the served page as a JSON `<script>` block
+  rather than fetched on load — the server already has it, and a second
+  round trip would mean the brief visibly renders every finding as
+  untriaged before correcting itself. The payload escapes `</` and `<!--`,
+  since it carries operator-supplied entity ids inside a `<script>`.
+
+  As with every other interactive addition, this exists only in the web
+  response: the saved `brief.html` and `--out report.html` remain zero-JS
+  and untouched (ADR-0010 D3), re-verified after the change.
+
+### Fixed
+- The triage route required its `state` form field, so clearing a finding's
+  triage worked from a browser and returned `422` from anything that omits
+  empty-valued fields — which is what the test client does, and what caught
+  it. Absent and empty now mean the same thing.
+
 ### Notes
-- Development has started (`crtsh`, `theharvester`, `dnsx`, `httpx` adapters, dedup,
-  scoring, brief, evaluation, CLI, LLM synthesis). All nine ADRs now have
-  real code, including both faithfulness stages. Eval target list gate
-  met: 10/10, all with real ground-truth annotations (ADR-0007 F2 fully
-  met), and `glean eval` (roadmap E4) reproduces all three headline
-  numbers from a clean checkout on demand, optionally through real LLM
-  narration and judging (`--llm`)
+- Development has started (`crtsh`, `theharvester`, `subfinder`, `dnsx`,
+  `httpx` adapters, dedup, scoring, brief, evaluation, CLI, LLM synthesis,
+  web interface). All eleven ADRs now have real code, including both
+  faithfulness stages. Eval target list gate met: 10/10, all with real
+  ground-truth annotations (ADR-0007 F2 fully met), and `glean eval`
+  (roadmap E4) reproduces all three headline numbers from a clean checkout
+  on demand, optionally through real LLM narration and judging (`--llm`)
   (`_private/planning/ROADMAP_Pre-Development.md` Workstream D1/D2/D3/E4/F2).
+- **Cross-platform:** this project was developed entirely on Linux, and the
+  first real Windows checkout surfaced two defects invisible there — every
+  `read_text`/`write_text` call relying on the platform default encoding,
+  and golden fixtures being silently rewritten to CRLF on checkout. Both are
+  fixed and guarded (explicit `encoding="utf-8"` throughout, plus a
+  `.gitattributes`), but the lesson generalises: a suite that only ever runs
+  on one platform will not tell you about the other. A Windows job in CI
+  would have caught both years earlier than a human did.
+- **Not yet validated against a live Ollama.** The web narration path's
+  plumbing, fallback reporting and manifest attribution are tested against a
+  stubbed `synthesize_brief`; the model call itself is unchanged code that
+  ADR-0009 already validated from the CLI. Worth one real run on a machine
+  that has Ollama installed before treating it as proven end to end.

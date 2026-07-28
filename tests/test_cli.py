@@ -105,7 +105,7 @@ def test_scan_writes_to_out_file(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0
     assert f"Brief written to {out_file}" in result.output
-    assert out_file.read_text().startswith("# Glean Brief — example.com")
+    assert out_file.read_text(encoding="utf-8").startswith("# Glean Brief — example.com")
 
 
 def test_scan_writes_html_when_out_has_an_html_extension(tmp_path: Path) -> None:
@@ -124,7 +124,7 @@ def test_scan_writes_html_when_out_has_an_html_extension(tmp_path: Path) -> None
     )
     assert result.exit_code == 0
     assert f"Brief written to {out_file}" in result.output
-    written = out_file.read_text()
+    written = out_file.read_text(encoding="utf-8")
     assert written.startswith("<!doctype html>")
     assert "Glean Brief — example.com" in written
 
@@ -214,7 +214,7 @@ def test_scan_out_file_is_always_complete_regardless_of_show_all(tmp_path: Path)
         ],
     )
     assert result.exit_code == 0
-    written = out_file.read_text()
+    written = out_file.read_text(encoding="utf-8")
     assert "not shown here" not in written
     for i in range(40):
         assert f"h{i}.example.com" in written
@@ -323,12 +323,81 @@ def test_scan_live_without_raw_dir_writes_a_manifest_to_the_shared_history(
     assert len(scan_dirs) == 1
     scan_dir = scan_dirs[0]
     assert scan_dir.name.startswith("example-com-")
-    manifest = json.loads((scan_dir / "manifest.json").read_text())
+    manifest = json.loads((scan_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["target"] == "example.com"
     assert manifest["scan_id"] == scan_dir.name
-    assert (scan_dir / "brief.html").read_text().startswith("<!doctype html>")
+    assert (scan_dir / "brief.html").read_text(encoding="utf-8").startswith("<!doctype html>")
     assert (scan_dir / "raw").is_dir()  # the usual raw archive still lands alongside it
     assert (scan_dir / "entities.json").is_file()  # feeds web-side JSON/CSV export
+    assert (scan_dir / "edges.json").is_file()  # the correlation stage's own output
+
+
+def test_live_scan_manifest_records_its_warnings_not_just_prints_them(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A CLI scan used to always write `warnings: []`, so a degraded run
+    looked identical to a clean one on /history -- while the same failure
+    through the web UI did show the pill. Since both surfaces share one
+    history (ADR-0011 D6), two rows of one list meant different things
+    depending on which produced them."""
+    monkeypatch.setattr(live_runner, "fetch_crtsh", lambda target: b"[]")
+    monkeypatch.setattr(live_runner, "run_subfinder", _empty_subfinder)
+    monkeypatch.setattr(live_runner, "run_dnsx", _empty_dnsx_envelope)
+
+    def _unavailable(*args: object, **kwargs: object) -> bytes:
+        raise live_runner.ToolUnavailable("theHarvester")
+
+    monkeypatch.setattr(live_runner, "run_theharvester", _unavailable)
+
+    result = runner.invoke(app, ["scan", "example.com", "--live"])
+
+    assert result.exit_code == 0
+    scan_dir = next(iter(history.DEFAULT_HISTORY_ROOT.iterdir()))
+    manifest = json.loads((scan_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    assert manifest["warnings"], "a degraded tool must be recorded, not only printed"
+    assert any("theharvester" in w.lower() for w in manifest["warnings"])
+
+
+def test_live_scan_manifest_records_the_surface_breakdown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ "N findings" alone says nothing about what was found."""
+    monkeypatch.setattr(
+        live_runner,
+        "fetch_crtsh",
+        # A fully-formed crt.sh record: a thinner one is legitimately
+        # skipped as malformed, which would leave nothing to count.
+        lambda target: json.dumps(
+            [
+                {
+                    "issuer_ca_id": 1,
+                    "issuer_name": "C=US, O=Let's Encrypt, CN=R11",
+                    "common_name": "admin.example.com",
+                    "name_value": "admin.example.com",
+                    "id": 7100000001,
+                    "entry_timestamp": "2026-06-01T08:00:00",
+                    "not_before": "2026-06-01T07:00:00",
+                    "not_after": "2026-08-30T08:00:00",
+                    "serial_number": "0000000000000a",
+                    "result_count": 1,
+                }
+            ]
+        ).encode(),
+    )
+    monkeypatch.setattr(live_runner, "run_theharvester", _empty_theharvester)
+    monkeypatch.setattr(live_runner, "run_subfinder", _empty_subfinder)
+    monkeypatch.setattr(live_runner, "run_dnsx", _empty_dnsx_envelope)
+
+    result = runner.invoke(app, ["scan", "example.com", "--live"])
+
+    assert result.exit_code == 0
+    scan_dir = next(iter(history.DEFAULT_HISTORY_ROOT.iterdir()))
+    manifest = json.loads((scan_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    surface = dict(tuple(pair) for pair in manifest["surface"])
+    assert surface.get("subdomain") == 1
+    assert sum(surface.values()) == manifest["findings_count"]
 
 
 def test_scan_live_with_explicit_raw_dir_skips_the_shared_history(

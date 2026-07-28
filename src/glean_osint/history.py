@@ -43,19 +43,37 @@ class ScanManifest:
     authorisation: str | None
     findings_count: int
     warnings: tuple[str, ...] = ()
+    # `(entity_type, count)` pairs from `brief.surface_counts`. "531
+    # findings" alone says nothing about what was actually found -- 531
+    # certificates and 531 exposed services are wildly different scans.
+    # Defaulted so every manifest already on disk still loads: an older
+    # scan simply reports no breakdown rather than failing to parse.
+    surface: tuple[tuple[str, int], ...] = ()
+    # The Ollama model that actually wrote this brief's prose, or None for
+    # the deterministic template. Recorded because "which model produced
+    # this" is not recoverable from the rendered brief afterwards, and for a
+    # project whose research question is small-model faithfulness, an
+    # unattributed narrated brief is close to useless.
+    narrated_by: str | None = None
 
 
 def write_manifest(scan_dir: Path, manifest: ScanManifest) -> None:
     scan_dir.mkdir(parents=True, exist_ok=True)
-    (scan_dir / "manifest.json").write_text(json.dumps(asdict(manifest), indent=2))
+    (scan_dir / "manifest.json").write_text(
+        json.dumps(asdict(manifest), indent=2), encoding="utf-8"
+    )
 
 
 def read_manifest(scan_dir: Path) -> ScanManifest | None:
     path = scan_dir / "manifest.json"
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         data["tools_run"] = tuple(data.get("tools_run", ()))
         data["warnings"] = tuple(data.get("warnings", ()))
+        # JSON has no tuples: the surface breakdown round-trips as a list of
+        # two-element lists and has to be put back, or every consumer sees a
+        # different shape than the one that was written.
+        data["surface"] = tuple((str(t), int(c)) for t, c in data.get("surface", ()))
         return ScanManifest(**data)
     except (OSError, ValueError, TypeError, KeyError):
         # Missing, partially-written, or corrupt manifest -- degrade to
@@ -75,7 +93,7 @@ def write_entities_snapshot(scan_dir: Path, entities: list[dict[str, Any]]) -> N
     (callers build the list via `[f.entity.to_dict() for f in ...]`
     themselves)."""
     scan_dir.mkdir(parents=True, exist_ok=True)
-    (scan_dir / "entities.json").write_text(json.dumps(entities, indent=2))
+    (scan_dir / "entities.json").write_text(json.dumps(entities, indent=2), encoding="utf-8")
 
 
 def read_entities_snapshot(scan_dir: Path) -> list[dict[str, Any]] | None:
@@ -85,10 +103,88 @@ def read_entities_snapshot(scan_dir: Path) -> list[dict[str, Any]] | None:
     feature existed, which never wrote entities.json at all."""
     path = scan_dir / "entities.json"
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     return data if isinstance(data, list) else None
+
+
+def write_edges_snapshot(scan_dir: Path, edges: list[dict[str, Any]]) -> None:
+    """The typed relations between entities (`resolves_to`, `subdomain_of`,
+    `hosts`, ... -- ADR-0001 D6), saved alongside `entities.json`.
+
+    Until this existed the correlation stage's own output was being thrown
+    away on every single scan: `merge_graph` computed the edge set,
+    `build_brief` read it to phrase finding bodies, and then it went out of
+    scope and was gone. The entity snapshot preserved the nodes of the graph
+    and silently dropped every relation between them, so nothing downstream
+    -- export, diff, or any view of the graph -- could ever see how findings
+    connect to each other, which is precisely the correlation work this
+    project does deterministically in code rather than in the model.
+
+    Deliberately a separate file rather than a new key inside
+    `entities.json`: that file's flat-list shape is already load-bearing for
+    `diff_entities` and the JSON/CSV exports, and every scan already on disk
+    is in that shape. A new file is additive -- old scans keep working and
+    simply report no edges (see `read_edges_snapshot`).
+    """
+    scan_dir.mkdir(parents=True, exist_ok=True)
+    (scan_dir / "edges.json").write_text(json.dumps(edges, indent=2), encoding="utf-8")
+
+
+def read_edges_snapshot(scan_dir: Path) -> list[dict[str, Any]] | None:
+    """`None` for missing or corrupt -- which includes every scan run before
+    edges were persisted at all. Callers must treat that as "the graph isn't
+    available for this scan", never as "this scan had no relations": the
+    difference matters, and absence-as-evidence is exactly the reasoning
+    this project refuses everywhere else (ADR-0002 D5)."""
+    path = scan_dir / "edges.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, list) else None
+
+
+# The states a finding can be triaged into. Anything else is rejected --
+# this set is the allowlist the write route validates against, so a
+# hand-crafted POST can't accumulate arbitrary keys in a scan's triage file.
+TRIAGE_STATES: frozenset[str] = frozenset({"reviewed", "flagged", "false_positive"})
+
+
+def read_triage(scan_dir: Path) -> dict[str, str]:
+    """`{entity_id: state}` for one scan, empty when nothing is triaged yet.
+
+    Unlike the entity/edge snapshots this returns `{}` rather than `None`
+    for a missing file, and that asymmetry is deliberate: "no triage file"
+    genuinely does mean "nothing has been triaged", because the file is only
+    ever created by an operator triaging something. There's no earlier
+    era of scans whose triage state is *unknown* rather than empty.
+    """
+    try:
+        data = json.loads((scan_dir / "triage.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(k): str(v) for k, v in data.items() if isinstance(v, str) and v in TRIAGE_STATES}
+
+
+def write_triage(scan_dir: Path, triage: dict[str, str]) -> None:
+    """Written atomically, unlike the manifest and snapshots alongside it.
+
+    Those are written exactly once, at the end of a scan. This file is
+    rewritten on every single triage click, so a partial write is a real
+    (if unlikely) possibility rather than a theoretical one -- and a
+    half-written triage file would silently drop an operator's review
+    decisions, which are the one thing here they can't regenerate by
+    re-running the scan.
+    """
+    scan_dir.mkdir(parents=True, exist_ok=True)
+    target = scan_dir / "triage.json"
+    tmp = target.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(triage, indent=2, sort_keys=True), encoding="utf-8")
+    os.replace(tmp, target)
 
 
 def list_scans(history_root: Path = DEFAULT_HISTORY_ROOT) -> list[ScanManifest]:

@@ -33,7 +33,7 @@ def raw_fixture() -> bytes:
 
 @pytest.fixture
 def expected() -> dict:
-    return json.loads((FIXTURES / "httpx-example-com.expected.json").read_text())
+    return json.loads((FIXTURES / "httpx-example-com.expected.json").read_text(encoding="utf-8"))
 
 
 def test_matches_golden_fixture(raw_fixture: bytes, expected: dict) -> None:
@@ -117,7 +117,7 @@ def test_missing_port_skips_service_but_keeps_resolution_and_tech(raw_fixture: b
 
 def test_entities_and_edges_are_schema_valid(raw_fixture: bytes) -> None:
     result = HttpxAdapter().parse(raw_fixture, CTX)
-    schema = json.loads(SCHEMA_PATH.read_text())
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
 
     document = {
         "schema_version": SCHEMA_VERSION,

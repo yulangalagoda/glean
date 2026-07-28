@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from glean_osint import pipeline, runner
+from glean_osint import pipeline, runner, synthesis
 from glean_osint.pipeline import ScanRequest
 
 
@@ -328,3 +328,102 @@ def test_run_scan_respects_authorisation_and_top_n(
     )
 
     assert outcome.brief.scan.authorisation == "Owned by operator"
+
+
+def _crtsh_with_one_scored_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """crt.sh output that actually produces a top-priority finding, so the
+    narration path has something to narrate."""
+    import json
+
+    record = {
+        "issuer_ca_id": 1,
+        "issuer_name": "C=US, O=Let's Encrypt, CN=R11",
+        "common_name": "admin.example.com",
+        "name_value": "admin.example.com",
+        "id": 7100000001,
+        "entry_timestamp": "2026-06-01T08:00:00",
+        "not_before": "2026-06-01T07:00:00",
+        "not_after": "2026-08-30T08:00:00",
+        "serial_number": "0000000000000a",
+        "result_count": 1,
+    }
+    payload = json.dumps([record]).encode()
+    monkeypatch.setattr(runner, "fetch_crtsh_cached", lambda target, **kwargs: payload)
+
+
+def test_run_scan_does_not_call_ollama_unless_llm_is_requested(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Narration is opt-in for the same reason --live was: it depends on a
+    local Ollama, and a scan must never start depending on one silently."""
+    _crtsh_with_one_scored_host(monkeypatch)
+
+    def _fail(*args: object, **kwargs: object) -> object:
+        raise AssertionError("synthesize_brief must not run without llm=True")
+
+    monkeypatch.setattr(pipeline.synthesis, "synthesize_brief", _fail)
+
+    outcome = pipeline.run_scan(
+        ScanRequest(target="example.com", tools=frozenset({"crtsh"})), raw_dir=tmp_path
+    )
+
+    assert outcome.narrated_by is None
+
+
+def test_run_scan_records_the_model_that_actually_narrated(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _crtsh_with_one_scored_host(monkeypatch)
+
+    def fake_synthesis(brief: object, entities: object, **kwargs: object) -> object:
+        return synthesis.SynthesisResult(
+            brief=brief,  # type: ignore[arg-type]
+            narrated_count=1,
+            fell_back_count=0,
+            invented_ids_dropped=0,
+        )
+
+    monkeypatch.setattr(pipeline.synthesis, "synthesize_brief", fake_synthesis)
+
+    outcome = pipeline.run_scan(
+        ScanRequest(
+            target="example.com", tools=frozenset({"crtsh"}), llm=True, model="llama3.2:latest"
+        ),
+        raw_dir=tmp_path,
+    )
+
+    assert outcome.narrated_by == "llama3.2:latest"
+    assert outcome.warnings == ()
+
+
+def test_run_scan_warns_loudly_when_narration_silently_fell_back(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`synthesize_brief` degrades to the template on an unreachable Ollama
+    rather than raising (ADR-0009) -- correct, but silent. The reader asked
+    for model narration and would otherwise be handed template prose with
+    nothing at all to distinguish it."""
+    _crtsh_with_one_scored_host(monkeypatch)
+
+    def fake_synthesis(brief: object, entities: object, **kwargs: object) -> object:
+        return synthesis.SynthesisResult(
+            brief=brief,  # type: ignore[arg-type]
+            narrated_count=0,
+            fell_back_count=3,
+            invented_ids_dropped=0,
+        )
+
+    monkeypatch.setattr(pipeline.synthesis, "synthesize_brief", fake_synthesis)
+
+    streamed: list[str] = []
+    outcome = pipeline.run_scan(
+        ScanRequest(target="example.com", tools=frozenset({"crtsh"}), llm=True),
+        raw_dir=tmp_path,
+        on_warning=streamed.append,
+    )
+
+    assert outcome.narrated_by is None, "nothing was narrated, so nothing may be attributed"
+    assert any("narration unavailable" in w.lower() for w in outcome.warnings)
+    assert any("ollama" in w.lower() for w in outcome.warnings)
+    # Streamed live too, not only present in the final tuple.
+    assert streamed == list(outcome.warnings)

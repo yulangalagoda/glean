@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from glean_osint import __version__, runner
+from glean_osint import __version__, runner, synthesis
 from glean_osint.adapters.base import ParseResult, ScanContext
 from glean_osint.adapters.crtsh import CrtshAdapter
 from glean_osint.adapters.dnsx import DnsxAdapter
@@ -36,7 +36,7 @@ from glean_osint.adapters.theharvester import TheHarvesterAdapter
 from glean_osint.brief import Brief, build_brief
 from glean_osint.dedup import merge_graph
 from glean_osint.registry import normalise_selection
-from glean_osint.schema.entities import ScanMeta, ToolRun
+from glean_osint.schema.entities import Edge, Entity, ScanMeta, ToolRun
 from glean_osint.scoring import score_graph
 
 # A live tool degrading (not installed, timed out, network failure) must
@@ -72,12 +72,32 @@ class ScanRequest:
     tools: frozenset[str]  # subset of registry.TOOL_REGISTRY's keys
     authorisation: str | None = None
     top_n: int = 5
+    # Opt-in LLM narration (ADR-0009), matching `glean scan --llm --model`.
+    # Defaulted off for the same conservative reason `--live` was: narration
+    # needs a local Ollama running, and a scan must not start depending on
+    # one silently.
+    llm: bool = False
+    model: str = synthesis.DEFAULT_MODEL
 
 
 @dataclass(frozen=True, slots=True)
 class ScanOutcome:
     brief: Brief
     warnings: tuple[str, ...]  # degraded-tool messages, reported not raised (ADR-0002 D5)
+    # The correlation stage's own output. `Brief` deliberately doesn't carry
+    # these -- it's a rendering contract (ADR-0005), and `build_brief` only
+    # borrows the edge set to phrase finding bodies. Returning them here is
+    # what stops them being discarded the moment `run_scan` returns; the
+    # caller decides whether to persist them.
+    edges: tuple[Edge, ...] = ()
+    # The scored entity graph, so callers writing a snapshot don't have to
+    # reconstruct it by concatenating the brief's own two finding lists.
+    entities: tuple[Entity, ...] = ()
+    # The model that actually produced prose, or None when the brief is
+    # template-narrated. `None` after a requested-but-failed narration too:
+    # what matters downstream is what the reader is actually looking at, not
+    # what was asked for.
+    narrated_by: str | None = None
 
 
 def run_scan(
@@ -246,7 +266,45 @@ def run_scan(
         tools_run=tuple(tools_run),
     )
     brief = build_brief(scored, merged.edges, scan_meta, top_n=request.top_n)
-    return ScanOutcome(brief=brief, warnings=tuple(warnings))
+
+    narrated_by: str | None = None
+    if request.llm:
+        status(f"Narrating top priorities with {request.model} (Ollama)...")
+        synthesis_result = synthesis.synthesize_brief(brief, scored, model=request.model)
+        brief = synthesis_result.brief
+        # `synthesize_brief` never raises -- an unreachable Ollama, a
+        # malformed response, or a contract violation all degrade to the
+        # template brief (ADR-0009). That is the right behaviour, but it is
+        # also silent: the reader asked for model narration and would
+        # otherwise be handed template prose with nothing to distinguish it.
+        # Report which of the three cases actually happened.
+        if synthesis_result.narrated_count:
+            narrated_by = request.model
+        if synthesis_result.narrated_count == 0 and brief.top_priorities:
+            add_warning(
+                f"LLM narration unavailable ({request.model}) — every finding fell back to "
+                "the deterministic template. Is Ollama running locally with that model pulled?"
+            )
+        elif synthesis_result.fell_back_count:
+            attempted = synthesis_result.narrated_count + synthesis_result.fell_back_count
+            add_warning(
+                f"{request.model} narrated {synthesis_result.narrated_count} of "
+                f"{attempted} top findings; the rest fell back to the template."
+            )
+        if synthesis_result.invented_ids_dropped:
+            invented = synthesis_result.invented_ids_dropped
+            add_warning(
+                f"{request.model} referred to {invented} finding(s) that do not exist in "
+                "this scan; those were discarded before the brief was built."
+            )
+
+    return ScanOutcome(
+        brief=brief,
+        warnings=tuple(warnings),
+        edges=tuple(merged.edges),
+        entities=tuple(scored),
+        narrated_by=narrated_by,
+    )
 
 
 def _warn_skipped(add_warning: Callable[[str], None], tool_name: str, skipped: int) -> None:

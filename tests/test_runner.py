@@ -170,7 +170,7 @@ def test_fetch_crtsh_cached_writes_a_cache_entry_after_a_live_fetch(tmp_path: Pa
         "example.com", cache_dir=tmp_path, fetch=lambda target: b'[{"id":1}]', now=lambda: 1000.0
     )
     assert (tmp_path / "example.com.json").read_bytes() == b'[{"id":1}]'
-    meta = json.loads((tmp_path / "example.com.meta.json").read_text())
+    meta = json.loads((tmp_path / "example.com.meta.json").read_text(encoding="utf-8"))
     assert meta["fetched_at"] == 1000.0
 
 

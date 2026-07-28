@@ -107,7 +107,7 @@ DEFAULT_CONFIG = SignalConfig(
 
 
 def load_signal_config(path: Path) -> SignalConfig:
-    data = yaml.safe_load(path.read_text())
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
     return SignalConfig(
         sensitive_hostname_keywords=tuple(
             str(k).lower() for k in data["sensitive_hostname_keywords"]

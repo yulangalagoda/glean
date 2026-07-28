@@ -29,7 +29,13 @@ from glean_osint.adapters.dnsx import DnsxAdapter
 from glean_osint.adapters.httpx import HttpxAdapter
 from glean_osint.adapters.subfinder import SubfinderAdapter
 from glean_osint.adapters.theharvester import TheHarvesterAdapter
-from glean_osint.brief import DEFAULT_TOP_N, build_brief, render_html, render_markdown
+from glean_osint.brief import (
+    DEFAULT_TOP_N,
+    build_brief,
+    render_html,
+    render_markdown,
+    surface_counts,
+)
 from glean_osint.dedup import merge_graph
 from glean_osint.evaluation import (
     DEFAULT_JUDGE_MODEL,
@@ -282,6 +288,19 @@ def scan(
         )
         raise typer.Exit(code=1)
 
+    # Every degraded-tool warning this scan emits, collected as well as
+    # printed. Previously the CLI only printed them, so a scan run from the
+    # terminal always wrote `warnings: []` into its manifest and its history
+    # entry never showed the warning pill -- even when a tool had genuinely
+    # failed. Since Stage 3 put CLI and web scans in one shared history
+    # (ADR-0011 D6), that made two rows of the same list mean different
+    # things depending on which surface produced them.
+    scan_warnings: list[str] = []
+
+    def warn(message: str) -> None:
+        typer.secho(message, fg=typer.colors.YELLOW, err=True)
+        scan_warnings.append(message)
+
     collected_at_dt = datetime.now(timezone.utc)
     collected_at = collected_at_dt.isoformat()
     output_dir = raw_dir if raw_dir is not None else _default_raw_dir(domain, collected_at_dt)
@@ -405,7 +424,14 @@ def scan(
             future.result()  # propagate a genuinely unexpected exception, don't swallow it
 
     for colour, message in stage1_messages:
-        typer.secho(message, fg=colour, err=True)
+        # Only the yellow ones are real degradation. crt.sh cache-hit and
+        # stale-failsafe notices come through here in cyan and must not be
+        # recorded as warnings -- that exact conflation is what made
+        # /history claim "1 warning" on healthy scans once before.
+        if colour == typer.colors.YELLOW:
+            warn(message)
+        else:
+            typer.secho(message, fg=colour, err=True)
 
     # tools_run's append order is otherwise whichever thread finished
     # first (non-deterministic) -- fixed here into a stable sequence for
@@ -426,7 +452,7 @@ def scan(
             dnsx, live, lambda: runner.run_dnsx(candidates, binary=dnsx_bin), "dnsx"
         )
     if dnsx_warning:
-        typer.secho(dnsx_warning, fg=typer.colors.YELLOW, err=True)
+        warn(dnsx_warning)
     if dnsx_raw is not None:
         if dnsx is None:
             dnsx_ref = runner.archive_raw(output_dir, f"dnsx-{domain}.json", dnsx_raw)
@@ -434,7 +460,7 @@ def scan(
         result = DnsxAdapter().parse(dnsx_raw, ctx)
         results.append(result)
         tools_run.append(ToolRun(source_tool="dnsx", method="passive", raw_output_ref=dnsx_ref))
-        _warn_skipped("dnsx", result.skipped)
+        _warn_skipped("dnsx", result.skipped, scan_warnings)
 
     # --- Stage 3: httpx, fed Stage 2's resolved hosts, ACTIVE + opt-in only ---
 
@@ -449,15 +475,11 @@ def scan(
                 "httpx", lambda: runner.run_httpx(resolved_hosts, binary=httpx_bin)
             )
         if httpx_warning:
-            typer.secho(httpx_warning, fg=typer.colors.YELLOW, err=True)
+            warn(httpx_warning)
         httpx_ref = None
     else:
         if live:
-            typer.secho(
-                "httpx: skipped (active recon not enabled; pass --active to include it).",
-                fg=typer.colors.YELLOW,
-                err=True,
-            )
+            warn("httpx: skipped (active recon not enabled; pass --active to include it).")
         httpx_raw, httpx_ref = None, None
 
     if httpx_raw is not None:
@@ -467,7 +489,7 @@ def scan(
         result = HttpxAdapter().parse(httpx_raw, ctx)
         results.append(result)
         tools_run.append(ToolRun(source_tool="httpx", method="active", raw_output_ref=httpx_ref))
-        _warn_skipped("httpx", result.skipped)
+        _warn_skipped("httpx", result.skipped, scan_warnings)
 
     merged = merge_graph(results)
     scored = score_graph(merged.entities, merged.edges, datetime.now(timezone.utc))
@@ -502,7 +524,7 @@ def scan(
         # web app's own history writing).
         scan_dir = history.DEFAULT_HISTORY_ROOT / history.scan_id_for(domain, collected_at_dt)
         scan_dir.mkdir(parents=True, exist_ok=True)
-        (scan_dir / "brief.html").write_text(render_html(brief))
+        (scan_dir / "brief.html").write_text(render_html(brief), encoding="utf-8")
         history.write_manifest(
             scan_dir,
             history.ScanManifest(
@@ -512,17 +534,18 @@ def scan(
                 tools_run=tuple(t.source_tool for t in brief.scan.tools_run),
                 authorisation=authorisation,
                 findings_count=brief.findings_count,
-                # The CLI prints each tool's warning directly (typer.secho)
-                # rather than collecting them into a list the way
-                # pipeline.run_scan does for the web UI -- a real, accepted
-                # gap: CLI-run history entries never show a warning pill,
-                # even if something degraded. Not chased further here.
-                warnings=(),
+                warnings=tuple(scan_warnings),
+                surface=surface_counts(scored),
             ),
         )
         history.write_entities_snapshot(
             scan_dir, [f.entity.to_dict() for f in brief.top_priorities + brief.also_found]
         )
+        # `merged.edges` is still in scope here, unlike in pipeline.run_scan
+        # where it needed returning explicitly -- but it was being dropped
+        # just the same, so a CLI-run scan and a web-run scan now archive
+        # the identical set of files into the shared history (ADR-0011 D6).
+        history.write_edges_snapshot(scan_dir, [e.to_dict() for e in merged.edges])
 
     typer.echo(SECTION_BREAK)
     if out is not None:
@@ -531,9 +554,9 @@ def scan(
         # saved file is always a complete archive copy regardless of
         # --show-all -- that flag only affects what prints to the terminal.
         if out.suffix.lower() == ".html":
-            out.write_text(render_html(brief))
+            out.write_text(render_html(brief), encoding="utf-8")
         else:
-            out.write_text(render_markdown(brief, also_found_limit=None))
+            out.write_text(render_markdown(brief, also_found_limit=None), encoding="utf-8")
         typer.echo(f"Brief written to {out}")
     else:
         limit = None if show_all else DEFAULT_ALSO_FOUND_LIMIT
@@ -548,11 +571,12 @@ def scan(
     )
 
 
-def _warn_skipped(tool: str, skipped: int) -> None:
+def _warn_skipped(tool: str, skipped: int, sink: list[str] | None = None) -> None:
     if skipped:
-        typer.secho(
-            f"{tool}: skipped {skipped} malformed record(s).", fg=typer.colors.YELLOW, err=True
-        )
+        message = f"{tool}: skipped {skipped} malformed record(s)."
+        typer.secho(message, fg=typer.colors.YELLOW, err=True)
+        if sink is not None:
+            sink.append(message)
 
 
 @dataclass(frozen=True, slots=True)

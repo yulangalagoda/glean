@@ -80,10 +80,30 @@ events.addEventListener("done", function (e) {
   events.close();
   window.location = e.data;
 });
+// Two completely different things arrive on "error", and telling them apart
+// matters. A server-sent `event: error` is a MessageEvent carrying a real
+// failure message in `.data`. EventSource *also* fires its own plain Event
+// named "error" on any transport hiccup -- and that one has no `.data` at
+// all, so the previous single handler rendered "Scan failed: undefined" and
+// tore down a stream whose scan was still running perfectly well. The
+// browser reconnects on its own (readyState CONNECTING), so a transient
+// blip should say nothing and wait.
 events.addEventListener("error", function (e) {
-  events.close();
-  statusLine.textContent = "Scan failed: " + e.data;
-  addEntry(e.data, "warning");
+  if (typeof e.data === "string" && e.data) {
+    events.close();
+    statusLine.textContent = "Scan failed: " + e.data;
+    statusLine.classList.add("failed");
+    addEntry(e.data, "warning");
+    return;
+  }
+  if (events.readyState === EventSource.CLOSED) {
+    statusLine.textContent =
+      "Lost connection to the server. The scan may still be running — reload to check.";
+    statusLine.classList.add("failed");
+    return;
+  }
+  // readyState === CONNECTING: the browser is retrying by itself.
+  statusLine.textContent = "Reconnecting…";
 });
 </script>
 {% endblock %}

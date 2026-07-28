@@ -71,7 +71,7 @@ def load_ground_truth(path: Path) -> GroundTruth:
     to be present — those fields aren't carried onto the in-memory
     dataclass, which only needs the ranking itself.
     """
-    data: dict[str, Any] = yaml.safe_load(path.read_text())
+    data: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))
     if data.get("blind") is not True:
         msg = f"{path}: missing or false 'blind' attestation (ADR-0007 D6)"
         raise ValueError(msg)

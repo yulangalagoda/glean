@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -11,11 +12,15 @@ from glean_osint.history import (
     group_scans_by_target,
     list_scans,
     previous_scan_for,
+    read_edges_snapshot,
     read_entities_snapshot,
     read_manifest,
+    read_triage,
     scan_id_for,
+    write_edges_snapshot,
     write_entities_snapshot,
     write_manifest,
+    write_triage,
 )
 
 
@@ -120,6 +125,137 @@ def test_read_entities_snapshot_returns_none_for_a_corrupt_file(tmp_path: Path) 
 def test_read_entities_snapshot_returns_none_for_a_non_list_payload(tmp_path: Path) -> None:
     (tmp_path / "entities.json").write_text('{"not": "a list"}')
     assert read_entities_snapshot(tmp_path) is None
+
+
+def test_manifest_surface_breakdown_round_trips_as_tuples(tmp_path: Path) -> None:
+    """JSON has no tuples, so the breakdown comes back as a list of lists
+    unless it's put back deliberately -- otherwise every consumer sees a
+    different shape than the one that was written."""
+    manifest = ScanManifest(
+        scan_id="example-com-20260728T090000Z",
+        target="example.com",
+        started_at="2026-07-28T09:00:00Z",
+        tools_run=("crtsh",),
+        authorisation=None,
+        findings_count=3,
+        surface=(("domain", 1), ("subdomain", 2)),
+    )
+
+    write_manifest(tmp_path, manifest)
+    loaded = read_manifest(tmp_path)
+
+    assert loaded is not None
+    assert loaded.surface == (("domain", 1), ("subdomain", 2))
+    assert loaded == manifest
+
+
+def test_manifest_written_before_the_surface_field_existed_still_loads(tmp_path: Path) -> None:
+    """Every scan already on disk predates this field. It must degrade to
+    "no breakdown recorded", never to an unreadable manifest."""
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "scan_id": "example-com-20260727T120000Z",
+                "target": "example.com",
+                "started_at": "2026-07-27T12:00:00Z",
+                "tools_run": ["crtsh"],
+                "authorisation": None,
+                "findings_count": 8,
+                "warnings": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = read_manifest(tmp_path)
+
+    assert loaded is not None
+    assert loaded.findings_count == 8
+    assert loaded.surface == ()
+
+
+def test_write_then_read_triage_round_trips(tmp_path: Path) -> None:
+    triage = {"subdomain:admin.example.com": "flagged", "domain:example.com": "reviewed"}
+
+    write_triage(tmp_path, triage)
+
+    assert read_triage(tmp_path) == triage
+
+
+def test_read_triage_of_an_untriaged_scan_is_empty_not_none(tmp_path: Path) -> None:
+    """Deliberately asymmetric with the entity/edge snapshots. A missing
+    triage file really does mean "nothing triaged" -- the file only ever
+    exists because an operator triaged something -- so there's no
+    unknown-vs-empty distinction to preserve here."""
+    assert read_triage(tmp_path) == {}
+
+
+def test_read_triage_drops_states_outside_the_allowlist(tmp_path: Path) -> None:
+    """A hand-edited file must not be able to introduce states the UI has no
+    rendering for, or filter facets nobody can clear."""
+    (tmp_path / "triage.json").write_text(
+        json.dumps(
+            {
+                "subdomain:a.example.com": "flagged",
+                "subdomain:b.example.com": "definitely-not-a-state",
+                "subdomain:c.example.com": 17,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert read_triage(tmp_path) == {"subdomain:a.example.com": "flagged"}
+
+
+def test_read_triage_degrades_on_a_corrupt_file(tmp_path: Path) -> None:
+    (tmp_path / "triage.json").write_text("{not json", encoding="utf-8")
+    assert read_triage(tmp_path) == {}
+
+
+def test_write_triage_leaves_no_temp_file_behind(tmp_path: Path) -> None:
+    """It's written atomically because, unlike everything else in a scan
+    directory, it's rewritten on every triage click -- and it holds the one
+    thing re-running the scan cannot regenerate."""
+    write_triage(tmp_path, {"domain:example.com": "reviewed"})
+
+    assert (tmp_path / "triage.json").is_file()
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_write_then_read_edges_snapshot_round_trips(tmp_path: Path) -> None:
+    edges = [
+        {
+            "source_id": "subdomain:www.example.com",
+            "target_id": "ip_address:203.0.113.1",
+            "relation": "resolves_to",
+        }
+    ]
+
+    write_edges_snapshot(tmp_path, edges)
+
+    assert read_edges_snapshot(tmp_path) == edges
+
+
+def test_read_edges_snapshot_returns_none_for_a_scan_archived_before_edges_existed(
+    tmp_path: Path,
+) -> None:
+    """The distinction that matters: a scan with an entity snapshot but no
+    edges file has *unknown* relations, not zero relations. Callers must be
+    able to tell those apart, so this returns None rather than []."""
+    write_entities_snapshot(tmp_path, [{"id": "domain:example.com"}])
+
+    assert read_entities_snapshot(tmp_path) is not None
+    assert read_edges_snapshot(tmp_path) is None
+
+
+def test_read_edges_snapshot_returns_none_for_a_corrupt_file(tmp_path: Path) -> None:
+    (tmp_path / "edges.json").write_text("{not json")
+    assert read_edges_snapshot(tmp_path) is None
+
+
+def test_read_edges_snapshot_returns_none_for_a_non_list_payload(tmp_path: Path) -> None:
+    (tmp_path / "edges.json").write_text('{"not": "a list"}')
+    assert read_edges_snapshot(tmp_path) is None
 
 
 def test_group_scans_by_target_collapses_repeat_scans(tmp_path: Path) -> None:

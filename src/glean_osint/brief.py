@@ -291,21 +291,36 @@ def _score_breakdown(entity: Entity) -> str:
     return ", ".join(parts) + f" = {entity.priority.score:g}."
 
 
-def _surface_line(entities: list[Entity]) -> str:
-    # A fixed canonical order (matching EntityType's own declaration order),
-    # not whatever order `entities` happens to arrive in — the surface line
-    # must read the same regardless of how the graph happened to score.
+def surface_counts(entities: list[Entity]) -> tuple[tuple[str, int], ...]:
+    """`(entity_type, count)` pairs in a fixed canonical order (matching
+    `EntityType`'s own declaration order), skipping types with no members.
+
+    Extracted so the scan manifest can record the same breakdown the brief
+    header renders, without either re-deriving it or -- worse -- parsing it
+    back out of the human-readable `surface_line` string. One computation,
+    two presentations: they cannot disagree.
+    """
     counts: dict[str, int] = defaultdict(int)
     for entity in entities:
         counts[entity.type] += 1
-    parts = []
-    for entity_type in get_args(EntityType):
-        count = counts.get(entity_type, 0)
-        if not count:
-            continue
-        singular, plural = _TYPE_LABELS.get(entity_type, (entity_type, entity_type + "s"))
-        parts.append(f"{count} {singular if count == 1 else plural}")
-    return " · ".join(parts)
+    return tuple(
+        (entity_type, counts[entity_type])
+        for entity_type in get_args(EntityType)
+        if counts.get(entity_type, 0)
+    )
+
+
+def surface_label(entity_type: str, count: int) -> str:
+    """ "4 IP addresses" / "1 domain" -- the display wording for one entry of
+    `surface_counts`, shared by the brief header and the history page."""
+    singular, plural = _TYPE_LABELS.get(entity_type, (entity_type, entity_type + "s"))
+    return f"{count} {singular if count == 1 else plural}"
+
+
+def _surface_line(entities: list[Entity]) -> str:
+    return " · ".join(
+        surface_label(entity_type, count) for entity_type, count in surface_counts(entities)
+    )
 
 
 def render_markdown(brief: Brief, *, also_found_limit: int | None = None) -> str:
@@ -446,6 +461,11 @@ details .also-found-body {
 }
 footer { margin-top: 2.5rem; font-size: 0.85rem; color: #666; }
 @media (prefers-color-scheme: dark) { footer { color: #a3a3a3; } }
+.empty-state {
+  color: #666; font-size: 0.92rem; border: 1px dashed #d8d8d8; border-radius: 10px;
+  padding: 1rem 1.15rem; margin: 0;
+}
+@media (prefers-color-scheme: dark) { .empty-state { color: #a3a3a3; border-color: #3a3d43; } }
 code { font-family: ui-monospace, "SF Mono", Consolas, monospace; }
 """
 
@@ -464,8 +484,14 @@ def _facet_attrs(entity: Entity) -> str:
     tools = " ".join(sorted({p.source_tool for p in entity.provenance}))
     methods = " ".join(sorted({p.method for p in entity.provenance}))
     signals = " ".join(entity.priority.signals)
+    # `data-entity-id` carries ADR-0001's deterministic entity id so the web
+    # view can build a *stable* per-finding anchor from it. A positional
+    # anchor would point at a different host as soon as scoring reordered
+    # anything, which is precisely what makes a shared link worthless.
+    # Inert in the standalone file, exactly like every other data-* above.
     return (
-        f'data-type="{_esc(entity.type)}" data-tools="{_esc(tools)}" '
+        f'data-entity-id="{_esc(entity.id)}" data-type="{_esc(entity.type)}" '
+        f'data-tools="{_esc(tools)}" '
         f'data-methods="{_esc(methods)}" data-signals="{_esc(signals)}"'
     )
 
@@ -541,6 +567,39 @@ def render_html(brief: Brief) -> str:
     )
     also_found_rows = "\n".join(_html_also_found_row(f) for f in brief.also_found)
 
+    # A scan that legitimately finds nothing (a target with no CT history, or
+    # every tool degrading) previously rendered an expandable "0 additional
+    # finding(s)" disclosure wrapping an empty table — which reads as a
+    # broken page rather than a real, informative result. Say plainly that
+    # the scan worked and the surface was empty, and point at the two things
+    # actually worth checking.
+    if brief.also_found:
+        also_found_section = f"""<details>
+  <summary>{len(brief.also_found)} additional finding(s) — click to expand</summary>
+  <div class="also-found-body">
+    <table class="also-found">
+      <thead>
+        <tr><th>Value</th><th>Type</th><th>Score</th><th>Detail</th><th>Seen by</th></tr>
+      </thead>
+      <tbody>
+{also_found_rows}
+      </tbody>
+    </table>
+  </div>
+</details>"""
+    elif brief.findings_count == 0:
+        also_found_section = (
+            '<p class="empty-state">This scan completed and found nothing at all. '
+            "That is a real result, not an error — but it is also what a fully "
+            "degraded scan looks like, so it is worth confirming the tools listed "
+            "above actually ran, and checking the scan log for warnings.</p>"
+        )
+    else:
+        also_found_section = (
+            '<p class="empty-state">Nothing beyond the priorities above — '
+            "every finding in this scan is already listed.</p>"
+        )
+
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -563,19 +622,7 @@ def render_html(brief: Brief) -> str:
 {top_cards or "<p>No findings scored above zero.</p>"}
 <hr>
 <h2>Also found</h2>
-<details>
-  <summary>{len(brief.also_found)} additional finding(s) — click to expand</summary>
-  <div class="also-found-body">
-    <table class="also-found">
-      <thead>
-        <tr><th>Value</th><th>Type</th><th>Score</th><th>Detail</th><th>Seen by</th></tr>
-      </thead>
-      <tbody>
-{also_found_rows}
-      </tbody>
-    </table>
-  </div>
-</details>
+{also_found_section}
 <hr>
 <h2>Provenance &amp; method</h2>
 <p>{_esc(_closing_statement(brief))}</p>

@@ -29,27 +29,48 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
-from glean_osint import pipeline
-from glean_osint.brief import DEFAULT_TOP_N, render_html
+from glean_osint import pipeline, synthesis
+from glean_osint.brief import DEFAULT_TOP_N, render_html, surface_counts, surface_label
 from glean_osint.diff import diff_entities
+from glean_osint.graph import build_graph_view
 from glean_osint.history import (
     DEFAULT_HISTORY_ROOT,
+    TRIAGE_STATES,
     ScanManifest,
     delete_scan,
     group_scans_by_target,
     list_scans,
     previous_scan_for,
+    read_edges_snapshot,
     read_entities_snapshot,
     read_manifest,
+    read_triage,
     scan_id_for,
+    write_edges_snapshot,
     write_entities_snapshot,
     write_manifest,
+    write_triage,
 )
 from glean_osint.pipeline import ScanRequest
 from glean_osint.registry import PRESETS, TOOL_REGISTRY, normalise_selection
 
 _WEB_DIR = Path(__file__).parent
-_templates = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
+
+
+def _build_templates(*, network_exposed: bool) -> Jinja2Templates:
+    """A fresh Jinja environment per `create_app()` rather than one shared
+    module-level instance. `network_exposed` is a template global, so
+    `base.html` can render the exposure banner without every single route
+    having to remember to thread the flag through its own context dict --
+    but a *shared* environment would mean two apps in one process (exactly
+    what the test suite builds) silently overwriting each other's flag."""
+    templates = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
+    templates.env.globals["network_exposed"] = network_exposed
+    # Shared with the brief header so the two renderings of the same
+    # breakdown can't word it differently ("4 IP addresses" vs "4 ips").
+    templates.env.globals["surface_label"] = surface_label
+    return templates
+
 
 # SSE event payloads are single lines by construction throughout this
 # project (spinner labels, warnings) -- collapsed defensively anyway so a
@@ -86,14 +107,35 @@ def _export_bar(scan_id: str, *, has_previous_scan: bool) -> str:
         else ""
     )
     return f"""<div class="export-bar">
-  {compare_link}<a href="/scan/{safe_id}/download/html" download>Download HTML</a>
+  {compare_link}<a href="/scan/{safe_id}/graph">Relationships</a>
+  <a href="/scan/{safe_id}/download/html" download>Download HTML</a>
   <a href="/scan/{safe_id}/download/json" download>Export JSON</a>
   <a href="/scan/{safe_id}/download/csv" download>Export CSV</a>
 </div>
 """
 
 
-def _wrap_scan_result_for_web(html: str, scan_id: str, *, has_previous_scan: bool = False) -> str:
+def _triage_payload(triage: dict[str, str]) -> str:
+    """Current triage state, embedded as a JSON `<script>` block rather than
+    fetched separately on load -- it's a handful of bytes that the server
+    already has in hand, and a second round trip would mean the page briefly
+    renders every finding as untriaged before correcting itself.
+
+    `</` is escaped because the JSON is operator-supplied entity ids inside
+    an HTML `<script>`: without it an id containing `</script>` would end the
+    block early. `<!--` likewise, which can flip a script into HTML-comment
+    parsing.
+    """
+    return json.dumps(triage).replace("</", "<\\/").replace("<!--", "<\\!--")
+
+
+def _wrap_scan_result_for_web(
+    html: str,
+    scan_id: str,
+    *,
+    has_previous_scan: bool = False,
+    triage: dict[str, str] | None = None,
+) -> str:
     """The saved `brief.html` (ADR-0010) is deliberately chrome-free --
     it's the exact same file `--out report.html` writes to disk, meant
     to open standalone via `file://` with no dependency on this server
@@ -106,14 +148,17 @@ def _wrap_scan_result_for_web(html: str, scan_id: str, *, has_previous_scan: boo
 
     The site stylesheet is linked *before* the report's own inline
     `<style>` (not after): the report defines its own `body { ... }`
-    (860px width) and the site's `.page`-based layout uses a different
-    one (640px, via `.page`, not `body` directly) -- but both still
-    style the bare `body` selector, and if the linked sheet landed
-    after the inline one it would win the cascade and silently strip
-    the report's own width/padding. Only the nav's own classes
-    (`.site-header`/`.nav`/`.nav-brand`/`.nav-links`) actually need the
-    linked sheet; the report's inline style never defines those, so
-    there's no fight to lose either way once ordered correctly.
+    (860px width), and if the linked sheet landed after the inline one
+    it would win on an equal-specificity tie and silently strip the
+    report's own width/padding. Ordering it first means the report
+    always wins by default, and the site sheet only overrides where it
+    deliberately out-specifies -- which it does via `body[data-scan-id]`
+    (0,1,1 vs. the bare `body`'s 0,0,1) to widen the web view onto a
+    real desktop window. Because that selector keys off an attribute
+    this function is the only thing that ever adds, the file written to
+    disk cannot match it: the standalone `brief.html` / `--out
+    report.html` keeps its own 860px column exactly as ADR-0010 D3
+    requires.
 
     `scan_id` lands in a `data-scan-id` attribute (not inlined into a
     `<script>` string) specifically because it's built from the
@@ -131,7 +176,11 @@ def _wrap_scan_result_for_web(html: str, scan_id: str, *, has_previous_scan: boo
         + _export_bar(scan_id, has_previous_scan=has_previous_scan),
         1,
     )
-    script_tag = '<script src="/static/report.js" defer></script>\n'
+    script_tag = (
+        f'<script type="application/json" id="triage-state">{_triage_payload(triage or {})}'
+        "</script>\n"
+        '<script src="/static/report.js" defer></script>\n'
+    )
     return html.replace("</body>", script_tag + "</body>", 1)
 
 
@@ -169,9 +218,12 @@ def _is_safe_scan_id(scan_id: str) -> bool:
     return scan_id not in {"..", "."} and "/" not in scan_id
 
 
-def create_app(history_root: Path = DEFAULT_HISTORY_ROOT) -> FastAPI:
+def create_app(
+    history_root: Path = DEFAULT_HISTORY_ROOT, *, network_exposed: bool = False
+) -> FastAPI:
     app = FastAPI(title="Glean")
     app.mount("/static", StaticFiles(directory=str(_WEB_DIR / "static")), name="static")
+    templates = _build_templates(network_exposed=network_exposed)
 
     # One queue per in-flight scan, keyed by scan_id -- a fresh dict per
     # create_app() call, same closure pattern as history_root, so tests
@@ -185,18 +237,25 @@ def create_app(history_root: Path = DEFAULT_HISTORY_ROOT) -> FastAPI:
         selected: frozenset[str],
         authorisation: str | None,
         top_n: int,
+        llm: bool,
+        model: str,
     ) -> None:
         q = active_scans[scan_id]
         try:
             outcome = pipeline.run_scan(
                 ScanRequest(
-                    target=target, tools=selected, authorisation=authorisation, top_n=top_n
+                    target=target,
+                    tools=selected,
+                    authorisation=authorisation,
+                    top_n=top_n,
+                    llm=llm,
+                    model=model,
                 ),
                 raw_dir=scan_dir / "raw",
                 on_status=lambda message: q.put(("status", message)),
                 on_warning=lambda message: q.put(("warning", message)),
             )
-            (scan_dir / "brief.html").write_text(render_html(outcome.brief))
+            (scan_dir / "brief.html").write_text(render_html(outcome.brief), encoding="utf-8")
             write_manifest(
                 scan_dir,
                 ScanManifest(
@@ -207,6 +266,8 @@ def create_app(history_root: Path = DEFAULT_HISTORY_ROOT) -> FastAPI:
                     authorisation=authorisation,
                     findings_count=outcome.brief.findings_count,
                     warnings=outcome.warnings,
+                    surface=surface_counts(list(outcome.entities)),
+                    narrated_by=outcome.narrated_by,
                 ),
             )
             write_entities_snapshot(
@@ -216,6 +277,7 @@ def create_app(history_root: Path = DEFAULT_HISTORY_ROOT) -> FastAPI:
                     for f in outcome.brief.top_priorities + outcome.brief.also_found
                 ],
             )
+            write_edges_snapshot(scan_dir, [e.to_dict() for e in outcome.edges])
         except Exception as error:  # noqa: BLE001 -- must reach the browser, never crash silently
             # A background task's own exception is otherwise only logged
             # server-side (Starlette's default) -- the browser would be
@@ -228,11 +290,50 @@ def create_app(history_root: Path = DEFAULT_HISTORY_ROOT) -> FastAPI:
             q.put(("done", f"/scan/{scan_id}"))
 
     @app.get("/", response_class=HTMLResponse)
-    def index(request: Request) -> HTMLResponse:
-        return _templates.TemplateResponse(
+    def index(
+        request: Request,
+        target: str = "",
+        tools: str = "",
+        authorisation: str = "",
+    ) -> HTMLResponse:
+        """The query parameters exist for "re-run this scan" on the history
+        page: they pre-fill the form rather than launching anything, so a
+        repeat run is still an explicit, reviewable submission. That matters
+        for a tool that can trigger active reconnaissance -- a link that
+        started a scan on GET would be one stray crawler or prefetch away
+        from probing a target nobody authorised today.
+
+        Unknown tool ids are dropped by `normalise_selection` rather than
+        raising, so a link naming a tool that has since been removed still
+        opens a usable form (ADR-0002 D5's degrade-don't-crash rule).
+        """
+        prefill: dict[str, object] = {}
+        if target:
+            prefill["target"] = target
+        if tools:
+            prefill["tools"] = sorted(
+                normalise_selection(frozenset(t for t in tools.split(",") if t))
+            )
+        if authorisation:
+            prefill["authorisation"] = authorisation
+        return templates.TemplateResponse(
             request,
             "index.html",
-            {"tools": TOOL_REGISTRY, "presets": PRESETS, "error": None, "form": {}},
+            {
+                "tools": TOOL_REGISTRY,
+                "presets": PRESETS,
+                "error": None,
+                "form": prefill,
+                # Read from synthesis rather than hardcoded in the template:
+                # the command preview shows a real model tag the CLI would
+                # actually use, and it can't drift out of sync with the code.
+                "default_llm_model": synthesis.DEFAULT_MODEL,
+                # The CLI's passive set, so the preview can tell an exactly-
+                # equivalent selection from one the CLI cannot express.
+                "cli_passive_tools": sorted(
+                    t for t, i in TOOL_REGISTRY.items() if i.default_method == "passive"
+                ),
+            },
         )
 
     @app.post("/scan", response_model=None)
@@ -248,23 +349,38 @@ def create_app(history_root: Path = DEFAULT_HISTORY_ROOT) -> FastAPI:
         tools: Annotated[list[str], Form()] = [],  # noqa: B006 -- FastAPI's own Form() pattern
         authorisation: Annotated[str, Form()] = "",
         top_n: Annotated[int, Form()] = DEFAULT_TOP_N,
+        llm: Annotated[bool, Form()] = False,
+        model: Annotated[str, Form()] = "",
     ) -> HTMLResponse | RedirectResponse:
         target = target.strip()
         selected = normalise_selection(frozenset(tools))
+        # An empty model box means "the default", not a request to narrate
+        # with a model named "".
+        model = model.strip() or synthesis.DEFAULT_MODEL
         error = None
         if not target:
             error = "Enter a target domain."
         elif not selected:
             error = "Select at least one tool."
         if error is not None:
-            return _templates.TemplateResponse(
+            return templates.TemplateResponse(
                 request,
                 "index.html",
                 {
                     "tools": TOOL_REGISTRY,
                     "presets": PRESETS,
                     "error": error,
-                    "form": {"target": target, "tools": tools, "authorisation": authorisation},
+                    "form": {
+                        "target": target,
+                        "tools": tools,
+                        "authorisation": authorisation,
+                        "llm": llm,
+                        "model": model,
+                    },
+                    "default_llm_model": synthesis.DEFAULT_MODEL,
+                    "cli_passive_tools": sorted(
+                        t for t, i in TOOL_REGISTRY.items() if i.default_method == "passive"
+                    ),
                 },
                 status_code=400,
             )
@@ -278,7 +394,15 @@ def create_app(history_root: Path = DEFAULT_HISTORY_ROOT) -> FastAPI:
         scan_dir.mkdir(parents=True, exist_ok=True)
         active_scans[scan_id] = queue.Queue()
         background_tasks.add_task(
-            execute_scan, scan_id, scan_dir, target, selected, authorisation or None, top_n
+            execute_scan,
+            scan_id,
+            scan_dir,
+            target,
+            selected,
+            authorisation or None,
+            top_n,
+            llm,
+            model,
         )
         # `tools` rides along so the watch page's stage checklist can show
         # only the stages this particular scan will actually run (a
@@ -299,7 +423,7 @@ def create_app(history_root: Path = DEFAULT_HISTORY_ROOT) -> FastAPI:
             raise HTTPException(status_code=404, detail="Scan not found.")
         target = request.query_params.get("target", scan_id)
         tools_csv = request.query_params.get("tools", "")
-        return _templates.TemplateResponse(
+        return templates.TemplateResponse(
             request, "watch.html", {"scan_id": scan_id, "target": target, "tools_csv": tools_csv}
         )
 
@@ -343,7 +467,10 @@ def create_app(history_root: Path = DEFAULT_HISTORY_ROOT) -> FastAPI:
         has_previous = previous_scan_for(scan_id, history_root) is not None
         return HTMLResponse(
             _wrap_scan_result_for_web(
-                brief_path.read_text(), scan_id, has_previous_scan=has_previous
+                brief_path.read_text(encoding="utf-8"),
+                scan_id,
+                has_previous_scan=has_previous,
+                triage=read_triage(history_root / scan_id),
             )
         )
 
@@ -371,7 +498,7 @@ def create_app(history_root: Path = DEFAULT_HISTORY_ROOT) -> FastAPI:
                 detail="Structured findings data not available for one of these scans.",
             )
         diff = diff_entities(older_entities, newer_entities)
-        return _templates.TemplateResponse(
+        return templates.TemplateResponse(
             request,
             "diff.html",
             {
@@ -380,6 +507,87 @@ def create_app(history_root: Path = DEFAULT_HISTORY_ROOT) -> FastAPI:
                 "current": current,
                 "previous": previous,
                 "diff": diff,
+            },
+        )
+
+    @app.post("/scan/{scan_id}/triage", response_model=None)
+    def set_triage(
+        scan_id: str,
+        entity_id: Annotated[str, Form()],
+        # Defaulted, so an *absent* `state` field means the same as an empty
+        # one: clear this finding's triage. Not merely defensive -- some HTTP
+        # clients drop empty-valued form fields entirely rather than sending
+        # `state=`, so requiring the field would make "clear" work from a
+        # browser and 422 from anything else.
+        state: Annotated[str, Form()] = "",
+    ) -> Response:
+        """Record (or clear) one finding's triage state.
+
+        Both inputs are validated server-side rather than trusted: `state`
+        against `TRIAGE_STATES`, and `entity_id` against the scan's own
+        entity snapshot. Without the second check a hand-crafted POST could
+        grow this file indefinitely with ids that correspond to nothing,
+        and every later read would carry them forward.
+
+        An empty `state` clears the entry rather than storing "none" --
+        untriaged is the absence of a record, not a fourth state.
+        """
+        if not _is_safe_scan_id(scan_id):
+            raise HTTPException(status_code=404, detail="Scan not found.")
+        scan_dir = history_root / scan_id
+        entities = read_entities_snapshot(scan_dir)
+        if entities is None:
+            raise HTTPException(status_code=404, detail="Scan not found.")
+        if state and state not in TRIAGE_STATES:
+            raise HTTPException(status_code=400, detail=f"Unknown triage state: {state!r}")
+        known_ids = {e.get("id") for e in entities}
+        if entity_id not in known_ids:
+            raise HTTPException(status_code=400, detail="No such finding in this scan.")
+
+        triage = read_triage(scan_dir)
+        if state:
+            triage[entity_id] = state
+        else:
+            triage.pop(entity_id, None)
+        write_triage(scan_dir, triage)
+        return Response(
+            content=json.dumps({"entity_id": entity_id, "state": state or None}),
+            media_type="application/json",
+        )
+
+    @app.get("/scan/{scan_id}/graph", response_class=HTMLResponse, response_model=None)
+    def view_graph(scan_id: str, request: Request) -> HTMLResponse:
+        """The correlation stage made visible: which findings are actually
+        connected to which, by which typed relation.
+
+        A scan archived before edges were persisted has an entity snapshot
+        but no `edges.json`. That is reported as "not available for this
+        scan", never as "this scan found no relationships" -- the two are
+        different facts and conflating them would be exactly the
+        absence-as-evidence reasoning the adapters refuse."""
+        if not _is_safe_scan_id(scan_id):
+            raise HTTPException(status_code=404, detail="Scan not found.")
+        manifest = read_manifest(history_root / scan_id)
+        if manifest is None:
+            raise HTTPException(status_code=404, detail="Scan not found.")
+        entities = read_entities_snapshot(history_root / scan_id)
+        edges = read_edges_snapshot(history_root / scan_id)
+        if entities is None or edges is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "Relationship data isn't available for this scan. Scans run before "
+                    "edges were archived kept only their findings, not the links between "
+                    "them — re-run the scan to build a graph."
+                ),
+            )
+        return templates.TemplateResponse(
+            request,
+            "graph.html",
+            {
+                "scan_id": scan_id,
+                "manifest": manifest,
+                "view": build_graph_view(entities, edges),
             },
         )
 
@@ -398,13 +606,13 @@ def create_app(history_root: Path = DEFAULT_HISTORY_ROOT) -> FastAPI:
         matches = sorted(raw_dir.glob(f"{tool_id}-*")) if raw_dir.is_dir() else []
         if not matches:
             raise HTTPException(status_code=404, detail="No archived raw output for this tool.")
-        return _templates.TemplateResponse(
+        return templates.TemplateResponse(
             request,
             "raw.html",
             {
                 "scan_id": scan_id,
                 "tool_name": TOOL_REGISTRY[tool_id].display_name,
-                "content": _pretty_print_raw(matches[0].read_text()),
+                "content": _pretty_print_raw(matches[0].read_text(encoding="utf-8")),
             },
         )
 
@@ -416,7 +624,7 @@ def create_app(history_root: Path = DEFAULT_HISTORY_ROOT) -> FastAPI:
         if not brief_path.is_file():
             raise HTTPException(status_code=404, detail="Scan not found.")
         return Response(
-            content=brief_path.read_text(),
+            content=brief_path.read_text(encoding="utf-8"),
             media_type="text/html",
             headers={"Content-Disposition": f'attachment; filename="{scan_id}.html"'},
         )
@@ -487,7 +695,7 @@ def create_app(history_root: Path = DEFAULT_HISTORY_ROOT) -> FastAPI:
     @app.get("/history", response_class=HTMLResponse)
     def history(request: Request) -> HTMLResponse:
         groups = group_scans_by_target(list_scans(history_root))
-        return _templates.TemplateResponse(
+        return templates.TemplateResponse(
             request, "history.html", {"groups": groups, "tool_names": TOOL_REGISTRY}
         )
 
@@ -501,8 +709,27 @@ def create_app(history_root: Path = DEFAULT_HISTORY_ROOT) -> FastAPI:
     return app
 
 
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
 def serve(host: str = "127.0.0.1", port: int = 8420) -> None:
     """Bare `glean` entry point (ADR-0011 D2/D8): localhost-only by
     design -- an unauthenticated control plane that can trigger *active*
-    recon must never be reachable from the network by default."""
-    uvicorn.run(create_app(), host=host, port=port)
+    recon must never be reachable from the network by default.
+
+    `--host` can still override that, deliberately (an operator may have
+    a real reason). When it is overridden the UI stops being silent
+    about it: `create_app` is told the bind is non-loopback and every
+    page carries a standing banner, because the one thing worse than a
+    network-exposed recon trigger is a network-exposed recon trigger
+    that looks exactly like a safe local one.
+    """
+    exposed = host not in LOOPBACK_HOSTS
+    if exposed:
+        print(
+            f"WARNING: binding to {host}, not loopback. This interface has no "
+            "authentication and can trigger active reconnaissance. Anyone who can "
+            "reach this port can scan on your behalf, using your authorisation.",
+            flush=True,
+        )
+    uvicorn.run(create_app(network_exposed=exposed), host=host, port=port)

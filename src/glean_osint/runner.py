@@ -145,7 +145,7 @@ DEFAULT_CRTSH_CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", "~/.cache")).exp
 def _read_crtsh_cache(cache_dir: Path, key: str) -> tuple[bytes, float] | None:
     data_path, meta_path = cache_dir / f"{key}.json", cache_dir / f"{key}.meta.json"
     try:
-        meta = json.loads(meta_path.read_text())
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
         return data_path.read_bytes(), float(meta["fetched_at"])
     except (OSError, ValueError, KeyError):
         # Missing, partially-written, or corrupt cache entry -- degrade to
@@ -157,7 +157,9 @@ def _read_crtsh_cache(cache_dir: Path, key: str) -> tuple[bytes, float] | None:
 def _write_crtsh_cache(cache_dir: Path, key: str, raw: bytes, fetched_at: float) -> None:
     cache_dir.mkdir(parents=True, exist_ok=True)
     (cache_dir / f"{key}.json").write_bytes(raw)
-    (cache_dir / f"{key}.meta.json").write_text(json.dumps({"fetched_at": fetched_at}))
+    (cache_dir / f"{key}.meta.json").write_text(
+        json.dumps({"fetched_at": fetched_at}), encoding="utf-8"
+    )
 
 
 def _format_age(seconds: float) -> str:
@@ -341,7 +343,7 @@ def run_dnsx(
 
     with tempfile.TemporaryDirectory() as tmp:
         hostsfile = Path(tmp) / "hosts.txt"
-        hostsfile.write_text("\n".join(candidates) + "\n")
+        hostsfile.write_text("\n".join(candidates) + "\n", encoding="utf-8")
         # check=False: dnsx exiting non-zero because some/all hosts didn't
         # resolve is an entirely normal outcome, not a tool failure.
         completed = run(
@@ -381,7 +383,7 @@ def run_httpx(
 
     with tempfile.TemporaryDirectory() as tmp:
         hostsfile = Path(tmp) / "hosts.txt"
-        hostsfile.write_text("\n".join(resolved_hosts) + "\n")
+        hostsfile.write_text("\n".join(resolved_hosts) + "\n", encoding="utf-8")
         completed = run(
             [binary, "-l", str(hostsfile), "-json", "-probe", "-td", "-silent"],
             capture_output=True,

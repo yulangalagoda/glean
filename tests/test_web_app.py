@@ -29,11 +29,11 @@ from urllib.parse import urlparse
 import pytest
 from fastapi.testclient import TestClient
 
-from glean_osint import history, pipeline
+from glean_osint import history, pipeline, synthesis
 from glean_osint.brief import Brief, build_brief
 from glean_osint.pipeline import ScanOutcome, ScanRequest
 from glean_osint.registry import PRESETS, TOOL_REGISTRY
-from glean_osint.schema.entities import Entity, Priority, ProvenanceEntry, ScanMeta
+from glean_osint.schema.entities import Edge, Entity, Priority, ProvenanceEntry, ScanMeta
 from glean_osint.web.app import create_app
 
 
@@ -167,7 +167,7 @@ def test_view_scan_response_has_a_nav_bar_but_the_saved_file_does_not(
     # and silently strip the report's own width/padding.
     assert result.text.index('rel="stylesheet"') < result.text.index("<style>")
 
-    saved = (tmp_path / scan_id / "brief.html").read_text()
+    saved = (tmp_path / scan_id / "brief.html").read_text(encoding="utf-8")
     assert "nav-brand" not in saved
     assert "stylesheet" not in saved
     assert saved != result.text  # the response is a wrapped copy, not the same bytes
@@ -180,7 +180,7 @@ def test_submit_scan_writes_a_manifest(monkeypatch: pytest.MonkeyPatch, tmp_path
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
     scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
-    manifest = json.loads((tmp_path / scan_id / "manifest.json").read_text())
+    manifest = json.loads((tmp_path / scan_id / "manifest.json").read_text(encoding="utf-8"))
 
     assert manifest["target"] == "example.com"
     assert manifest["scan_id"] == scan_id
@@ -406,10 +406,284 @@ def test_submit_scan_writes_an_entities_snapshot(
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
     scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
-    entities = json.loads((tmp_path / scan_id / "entities.json").read_text())
+    entities = json.loads((tmp_path / scan_id / "entities.json").read_text(encoding="utf-8"))
 
     assert len(entities) == 1
     assert entities[0]["id"] == "subdomain:admin.example.com"
+
+
+def _fake_outcome_with_edges(request: ScanRequest) -> ScanOutcome:
+    """Two linked entities, so the relationship view has a real edge to
+    render rather than an empty graph."""
+    subdomain = Entity(
+        id="subdomain:admin.example.com",
+        type="subdomain",
+        value="admin.example.com",
+        provenance=(
+            ProvenanceEntry(
+                source_tool="crtsh", method="passive", collected_at="2026-07-27T00:00:00Z"
+            ),
+        ),
+        priority=Priority(score=3, rank=1, signals=("sensitive_hostname_pattern",)),
+    )
+    ip = Entity(
+        id="ip_address:203.0.113.1",
+        type="ip_address",
+        value="203.0.113.1",
+        provenance=(
+            ProvenanceEntry(
+                source_tool="dnsx", method="passive", collected_at="2026-07-27T00:00:00Z"
+            ),
+        ),
+        priority=Priority(score=1, rank=2, signals=()),
+    )
+    edge = Edge(source_id=subdomain.id, target_id=ip.id, relation="resolves_to", provenance=())
+    scan_meta = ScanMeta(
+        target=request.target,
+        started_at="2026-07-27T00:00:00Z",
+        glean_version="0.0.2",
+        authorisation=request.authorisation,
+        tools_run=(),
+    )
+    brief = build_brief([subdomain, ip], [edge], scan_meta)
+    return ScanOutcome(brief=brief, warnings=(), edges=(edge,), entities=(subdomain, ip))
+
+
+def test_submit_scan_writes_an_edges_snapshot(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The correlation stage's own output has to survive the scan. Before
+    this it was computed, used to phrase a finding body, and dropped."""
+    monkeypatch.setattr(
+        pipeline, "run_scan", lambda request, **kw: _fake_outcome_with_edges(request)
+    )
+
+    redirect = _client(tmp_path).post(
+        "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
+    )
+    scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
+    edges = json.loads((tmp_path / scan_id / "edges.json").read_text(encoding="utf-8"))
+
+    assert edges == [
+        {
+            "source_id": "subdomain:admin.example.com",
+            "target_id": "ip_address:203.0.113.1",
+            "relation": "resolves_to",
+        }
+    ]
+
+
+def test_llm_form_fields_reach_the_pipeline_and_land_in_the_manifest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ADR-0009's narration was CLI-only: `ScanRequest` had no llm/model at
+    all, so the web UI could not reach one of the project's headline
+    features."""
+    seen: list[ScanRequest] = []
+
+    def fake_run(request: ScanRequest, **kwargs: object) -> ScanOutcome:
+        seen.append(request)
+        outcome = _fake_scored_entity_finding_outcome(request)
+        return ScanOutcome(
+            brief=outcome.brief,
+            warnings=(),
+            edges=(),
+            entities=(),
+            narrated_by=request.model if request.llm else None,
+        )
+
+    monkeypatch.setattr(pipeline, "run_scan", fake_run)
+
+    redirect = _client(tmp_path).post(
+        "/scan",
+        data={
+            "target": "example.com",
+            "tools": ["crtsh"],
+            "llm": "true",
+            "model": "mistral:latest",
+        },
+        follow_redirects=False,
+    )
+    scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
+    manifest = json.loads((tmp_path / scan_id / "manifest.json").read_text(encoding="utf-8"))
+
+    assert seen[0].llm is True
+    assert seen[0].model == "mistral:latest"
+    assert manifest["narrated_by"] == "mistral:latest"
+
+
+def test_blank_model_box_means_the_default_not_a_model_named_empty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: list[ScanRequest] = []
+    monkeypatch.setattr(
+        pipeline,
+        "run_scan",
+        lambda request, **kw: (seen.append(request), _fake_outcome(request))[1],
+    )
+
+    _client(tmp_path).post(
+        "/scan",
+        data={"target": "example.com", "tools": ["crtsh"], "llm": "true", "model": "  "},
+        follow_redirects=False,
+    )
+
+    assert seen[0].model == synthesis.DEFAULT_MODEL
+
+
+def test_a_template_narrated_scan_records_no_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(pipeline, "run_scan", lambda request, **kw: _fake_outcome(request))
+
+    redirect = _client(tmp_path).post(
+        "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
+    )
+    scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
+    manifest = json.loads((tmp_path / scan_id / "manifest.json").read_text(encoding="utf-8"))
+
+    assert manifest["narrated_by"] is None
+
+
+def _scan_with_one_finding(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[TestClient, str]:
+    monkeypatch.setattr(
+        pipeline, "run_scan", lambda request, **kw: _fake_scored_entity_finding_outcome(request)
+    )
+    client = _client(tmp_path)
+    redirect = client.post(
+        "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
+    )
+    return client, _scan_id_from_watch_redirect(redirect.headers["location"])
+
+
+def test_triage_persists_and_is_embedded_in_the_next_page_load(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    client, scan_id = _scan_with_one_finding(monkeypatch, tmp_path)
+
+    response = client.post(
+        f"/scan/{scan_id}/triage",
+        data={"entity_id": "subdomain:admin.example.com", "state": "flagged"},
+    )
+
+    assert response.status_code == 200
+    assert history.read_triage(tmp_path / scan_id) == {"subdomain:admin.example.com": "flagged"}
+    # Embedded in the served page, not fetched separately -- otherwise the
+    # brief renders every finding as untriaged before correcting itself.
+    page = client.get(f"/scan/{scan_id}").text
+    assert 'id="triage-state"' in page
+    assert "flagged" in page
+
+
+def test_triage_with_an_empty_state_clears_the_entry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Untriaged is the absence of a record, not a fourth state."""
+    client, scan_id = _scan_with_one_finding(monkeypatch, tmp_path)
+    client.post(
+        f"/scan/{scan_id}/triage",
+        data={"entity_id": "subdomain:admin.example.com", "state": "reviewed"},
+    )
+
+    client.post(
+        f"/scan/{scan_id}/triage", data={"entity_id": "subdomain:admin.example.com", "state": ""}
+    )
+
+    assert history.read_triage(tmp_path / scan_id) == {}
+
+
+def test_triage_rejects_an_unknown_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    client, scan_id = _scan_with_one_finding(monkeypatch, tmp_path)
+
+    response = client.post(
+        f"/scan/{scan_id}/triage",
+        data={"entity_id": "subdomain:admin.example.com", "state": "definitely-not-a-state"},
+    )
+
+    assert response.status_code == 400
+    assert history.read_triage(tmp_path / scan_id) == {}
+
+
+def test_triage_rejects_an_entity_that_is_not_in_this_scan(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Without this check a hand-crafted POST could grow the triage file
+    indefinitely with ids corresponding to nothing, and every later read
+    would carry them forward."""
+    client, scan_id = _scan_with_one_finding(monkeypatch, tmp_path)
+
+    response = client.post(
+        f"/scan/{scan_id}/triage",
+        data={"entity_id": "subdomain:not-in-this-scan.example.com", "state": "flagged"},
+    )
+
+    assert response.status_code == 400
+    assert history.read_triage(tmp_path / scan_id) == {}
+
+
+def test_triage_survives_a_scan_being_deleted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Deleting a scan removes its whole directory, triage included -- no
+    orphaned review state left pointing at a scan that no longer exists."""
+    client, scan_id = _scan_with_one_finding(monkeypatch, tmp_path)
+    client.post(
+        f"/scan/{scan_id}/triage",
+        data={"entity_id": "subdomain:admin.example.com", "state": "flagged"},
+    )
+    assert (tmp_path / scan_id / "triage.json").is_file()
+
+    client.post(f"/scan/{scan_id}/delete", follow_redirects=False)
+
+    assert not (tmp_path / scan_id).exists()
+
+
+def test_graph_route_renders_the_relationship_view(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        pipeline, "run_scan", lambda request, **kw: _fake_outcome_with_edges(request)
+    )
+    client = _client(tmp_path)
+    redirect = client.post(
+        "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
+    )
+    scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
+
+    response = client.get(f"/scan/{scan_id}/graph")
+
+    assert response.status_code == 200
+    assert "admin.example.com" in response.text
+    assert "203.0.113.1" in response.text
+    assert "resolves to" in response.text  # the human-readable relation label
+
+
+def test_graph_route_distinguishes_no_edges_from_no_edges_recorded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A scan archived before edges were persisted must not be reported as
+    "this scan found no relationships" -- unknown and zero are different
+    facts, and conflating them is the absence-as-evidence reasoning this
+    project refuses everywhere else."""
+    monkeypatch.setattr(
+        pipeline, "run_scan", lambda request, **kw: _fake_outcome_with_edges(request)
+    )
+    client = _client(tmp_path)
+    redirect = client.post(
+        "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
+    )
+    scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
+
+    # Simulate a scan from before this feature existed.
+    (tmp_path / scan_id / "edges.json").unlink()
+
+    response = client.get(f"/scan/{scan_id}/graph")
+
+    assert response.status_code == 404
+    assert "isn't available" in response.text
+    assert "re-run" in response.text.lower()
 
 
 def test_view_scan_response_carries_scan_id_and_report_script(

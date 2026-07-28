@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}Glean — relationships for {{ manifest.target }}{% endblock %}
+{% block content %}
+<h1>Relationships</h1>
+<p class="hint">
+  {{ manifest.target }} · {{ manifest.started_at[:19] | replace("T", " ") }} UTC ·
+  <a href="/scan/{{ scan_id }}">back to the brief</a>
+</p>
+
+<div class="graph-summary">
+  <span><strong>{{ view.entity_count }}</strong> findings</span>
+  <span><strong>{{ view.edge_count }}</strong> relations</span>
+  <span><strong>{{ view.clusters | length }}</strong> connected</span>
+  {% if view.unconnected_count %}
+  <span class="hint">{{ view.unconnected_count }} with no relations</span>
+  {% endif %}
+  {% if view.dangling_count %}
+  <span class="warning-pill-inline">{{ view.dangling_count }} dangling</span>
+  {% endif %}
+</div>
+
+{% if view.relation_counts %}
+<div class="filter-bar" role="group" aria-label="Filter by relation type">
+  <span class="filter-group-label" id="relation-label">Relation:</span>
+  <div class="filter-pills" role="group" aria-labelledby="relation-label">
+    {% for relation, count in view.relation_counts %}
+    <button type="button" class="filter-pill" data-relation="{{ relation }}"
+            aria-pressed="false">{{ relation }} ({{ count }})</button>
+    {% endfor %}
+  </div>
+  <button type="button" class="filter-clear" id="graph-clear">Clear filters</button>
+</div>
+{% endif %}
+
+{% if not view.clusters %}
+<p class="empty-state">
+  This scan produced no relationships between its findings. That is a real
+  result — a target whose findings genuinely don't link to each other — not
+  an error. It is also what a single-tool passive scan usually looks like,
+  since most relations come from resolution and probing.
+</p>
+{% else %}
+<ul class="graph-list" id="graph-list">
+  {% for cluster in view.clusters %}
+  <li class="graph-cluster" data-relations="{{ cluster.neighbours | map(attribute='relation') | unique | join(' ') }}">
+    <div class="graph-source">
+      {% if cluster.rank %}<span class="rank">{{ cluster.rank }}</span>{% endif %}
+      <code>{{ cluster.value }}</code>
+      <span class="pill">{{ cluster.entity_type }}</span>
+      {% if cluster.score is not none %}<span class="graph-score">{{ "%g" | format(cluster.score) }}</span>{% endif %}
+      <a class="graph-jump" href="/scan/{{ scan_id }}#{{ cluster.anchor }}"
+         title="Show this finding in the brief">in brief →</a>
+    </div>
+    <ul class="graph-edges">
+      {% for n in cluster.neighbours %}
+      <li data-relation="{{ n.relation }}">
+        <span class="graph-relation">{{ n.relation_label }}</span>
+        <code>{{ n.value }}</code>
+        <span class="pill">{{ n.entity_type }}</span>
+        {% if n.dangling %}<span class="graph-dangling" title="This relation points at a finding that isn't in this scan's snapshot">unresolved</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+<script>
+// Filtering hides an individual relation line, and then hides its whole
+// cluster only when nothing inside it survived -- so filtering by
+// "resolves_to" shows each source with just its resolution edges, rather
+// than showing sources that happen to have one somewhere among many.
+const pills = Array.from(document.querySelectorAll('.filter-pill[data-relation]'));
+const clusters = Array.from(document.querySelectorAll('.graph-cluster'));
+
+function applyGraphFilter() {
+  const active = pills
+    .filter(function (p) { return p.getAttribute('aria-pressed') === 'true'; })
+    .map(function (p) { return p.dataset.relation; });
+  clusters.forEach(function (cluster) {
+    let visible = 0;
+    cluster.querySelectorAll('.graph-edges li').forEach(function (row) {
+      const ok = !active.length || active.indexOf(row.dataset.relation) !== -1;
+      row.classList.toggle('hidden', !ok);
+      if (ok) { visible += 1; }
+    });
+    cluster.classList.toggle('hidden', visible === 0);
+  });
+}
+
+pills.forEach(function (pill) {
+  pill.addEventListener('click', function () {
+    const on = pill.getAttribute('aria-pressed') === 'true';
+    pill.setAttribute('aria-pressed', on ? 'false' : 'true');
+    pill.classList.toggle('active', !on);
+    applyGraphFilter();
+  });
+});
+const clearBtn = document.getElementById('graph-clear');
+if (clearBtn) {
+  clearBtn.addEventListener('click', function () {
+    pills.forEach(function (p) {
+      p.setAttribute('aria-pressed', 'false');
+      p.classList.remove('active');
+    });
+    applyGraphFilter();
+  });
+}
+</script>
+{% endblock %}
