@@ -137,6 +137,30 @@ found the judge itself makes mistakes (see ADR-0006's Validation
 section), so `stage2_faith` is closer to a lower bound on true narrator
 faithfulness than an exact figure.
 
+### Working with a scan in the browser
+
+Beyond reading the brief, a scan's page supports acting on it: copy any
+value, filter findings by type/tool/signal, hover a priority score to see
+the exact signal breakdown that produced it, and click any source under
+"Seen by" to jump to the precise record in the archived tool output that
+asserted it.
+
+Two features worth knowing exist, since neither is obvious from the page:
+
+- **Relationships** (in the bar above the report) shows how findings
+  connect — which host resolves to which IP, what a certificate covers.
+  This is the correlation stage's own output (ADR-0003), which is computed
+  on every scan but otherwise only visible as phrasing inside finding text.
+- **Triage** — each finding can be marked *Reviewed*, *Flagged* or *False
+  positive*. It is stored per finding and kept across re-scans, and is the
+  one thing re-running a scan cannot regenerate: everything else in a scan
+  is derived from tool output, but an assessment is yours.
+
+History groups repeat scans of a target, and any scan with an earlier run
+of the same target offers **Compare to previous scan** — new, removed and
+changed findings since last time, which is what turns a one-shot report
+into monitoring.
+
 ## Scope & ethics
 
 For authorised security research only — targets you own or are explicitly cleared to assess. Passive and active reconnaissance are clearly separated. Full policy and threat model: [`docs/ETHICS.md`](docs/ETHICS.md). Found a vulnerability in Glean itself? See [`SECURITY.md`](SECURITY.md).

@@ -1303,6 +1303,35 @@ point is a real release, just pre-dev groundwork.
   (ADR-0010 D3).
 
 ### Fixed
+- **A queued scan was indistinguishable from a hung one.** Reported from
+  real pre-release testing: a bulk submission sat reading "queued or
+  running" for several minutes with no way to tell whether the queue was
+  working through its backlog or something had stuck. Nothing was actually
+  wrong — individual scans measured 5–48s, so four targets at two at a
+  time legitimately runs for minutes — but a bounded queue (ADR-0011 D9)
+  makes waiting *normal*, which means the two states have to be
+  distinguishable or the bound itself looks like a bug.
+
+  History now shows `running` or `queued — waiting for a free slot`, plus
+  how long ago each was submitted. The watch page for a scan that has not
+  started says so instead of "Starting…" — it emits no events until a slot
+  frees, so the stream alone left that page apparently frozen. The first
+  real status event replaces it.
+- **`manifest.started_at` recorded when a scan *finished*.** It was set at
+  manifest-write time, which is the end of the run, so a field named
+  "started" held the completion time — drifting further from the truth the
+  longer a scan took (5–48s on real runs, and unbounded for a queued one).
+  Now the submission moment, agreeing with the timestamp already embedded
+  in `scan_id`. Found while investigating the queue report above, by a
+  duration calculation that came out negative.
+- Two features existed but nothing said what they were for, also from real
+  testing: **Relationships** and **triage** now carry explanations in the
+  UI, and the README gained a short section on working with a scan in the
+  browser. Both were reachable and labelled — the gap was purpose, not
+  wiring. Triage in particular is worth surfacing: it is the one thing
+  re-running a scan cannot regenerate.
+
+### Fixed
 - The triage route required its `state` form field, so clearing a finding's
   triage worked from a browser and returned `422` from anything that omits
   empty-valued fields — which is what the test client does, and what caught

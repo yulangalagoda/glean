@@ -18,6 +18,7 @@ import queue
 import threading
 from collections.abc import AsyncIterator
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from html import escape as _escape_html
 from pathlib import Path
@@ -116,13 +117,17 @@ def _export_bar(scan_id: str, *, has_previous_scan: bool) -> str:
     HTML-escaped here on general principle before landing in an
     attribute."""
     safe_id = _escape_html(scan_id)
+    graph_title = (
+        "How these findings connect — which host resolves to which IP, what a "
+        "certificate covers. The correlation the pipeline computed, shown as a graph."
+    )
     compare_link = (
         f'<a href="/scan/{safe_id}/diff">Compare to previous scan</a>\n'
         if has_previous_scan
         else ""
     )
     return f"""<div class="export-bar">
-  {compare_link}<a href="/scan/{safe_id}/graph">Relationships</a>
+  {compare_link}<a href="/scan/{safe_id}/graph" title="{graph_title}">Relationships</a>
   <a href="/scan/{safe_id}/download/html" download>Download HTML</a>
   <a href="/scan/{safe_id}/download/json" download>Export JSON</a>
   <a href="/scan/{safe_id}/download/csv" download>Export CSV</a>
@@ -218,6 +223,22 @@ def _pretty_print_raw(content: str) -> str:
     return "\n\n".join(pretty_lines) if pretty_lines else content
 
 
+@dataclass(frozen=True, slots=True)
+class _PendingScan:
+    """A submitted scan that has not finished yet.
+
+    `started` is the field that matters. A bounded queue (ADR-0011 D9)
+    means a submitted scan may legitimately sit waiting for minutes, and
+    without distinguishing that from "running" the history page reads
+    identically for a queue working through a backlog and a scan that has
+    hung -- which is how the first bulk run was reported.
+    """
+
+    target: str
+    submitted_at: datetime
+    started: bool
+
+
 def parse_targets(raw: str) -> list[str]:
     """Split the target field into individual targets (roadmap item #27).
 
@@ -294,7 +315,7 @@ def create_app(
     # manifest yet (that is written when a scan finishes), so without this
     # a bulk submission would vanish until its scans completed one by one --
     # which is precisely when the operator most wants to see them.
-    pending_scans: dict[str, str] = {}
+    pending_scans: dict[str, _PendingScan] = {}
 
     def execute_scan(
         scan_id: str,
@@ -305,8 +326,18 @@ def create_app(
         top_n: int,
         llm: bool,
         model: str,
+        submitted_at: datetime,
     ) -> None:
         q = active_scans[scan_id]
+        # This runs the moment a slot frees, which for a queued scan can be
+        # minutes after submission. Recording the transition is what lets
+        # history distinguish "waiting its turn" from "actually working" --
+        # without it a bounded queue looks identical to a hung scan, which
+        # is exactly how it was first reported.
+        with in_flight_lock:
+            entry = pending_scans.get(scan_id)
+            if entry is not None:
+                pending_scans[scan_id] = replace(entry, started=True)
         try:
             # The slot may have come up long after submission, and the
             # operator may have cancelled while this was still queued.
@@ -337,7 +368,7 @@ def create_app(
                 ScanManifest(
                     scan_id=scan_id,
                     target=target,
-                    started_at=datetime.now(timezone.utc).isoformat(),
+                    started_at=submitted_at.isoformat(),
                     tools_run=tuple(t.source_tool for t in outcome.brief.scan.tools_run),
                     authorisation=authorisation,
                     findings_count=outcome.brief.findings_count,
@@ -367,7 +398,7 @@ def create_app(
                 ScanManifest(
                     scan_id=scan_id,
                     target=target,
-                    started_at=datetime.now(timezone.utc).isoformat(),
+                    started_at=submitted_at.isoformat(),
                     tools_run=(),
                     authorisation=authorisation,
                     findings_count=0,
@@ -508,7 +539,9 @@ def create_app(
             active_scans[scan_id] = queue.Queue()
             scan_tokens[scan_id] = runner.CancellationToken()
             with in_flight_lock:
-                pending_scans[scan_id] = one_target
+                pending_scans[scan_id] = _PendingScan(
+                    target=one_target, submitted_at=started_at, started=False
+                )
             future = scan_executor.submit(
                 execute_scan,
                 scan_id,
@@ -519,6 +552,7 @@ def create_app(
                 top_n,
                 llm,
                 model,
+                started_at,
             )
             with in_flight_lock:
                 in_flight.add(future)
@@ -552,8 +586,20 @@ def create_app(
             raise HTTPException(status_code=404, detail="Scan not found.")
         target = request.query_params.get("target", scan_id)
         tools_csv = request.query_params.get("tools", "")
+        with in_flight_lock:
+            entry = pending_scans.get(scan_id)
         return templates.TemplateResponse(
-            request, "watch.html", {"scan_id": scan_id, "target": target, "tools_csv": tools_csv}
+            request,
+            "watch.html",
+            {
+                "scan_id": scan_id,
+                "target": target,
+                "tools_csv": tools_csv,
+                # A queued scan emits no events until a slot frees, so the
+                # stream alone would leave this page saying "Starting…" for
+                # minutes. The first real status event replaces this text.
+                "queued": entry is not None and not entry.started,
+            },
         )
 
     @app.get("/scan/{scan_id}/events")
@@ -852,13 +898,26 @@ def create_app(
         # submission timestamp, so a batch reads in the order it was given.
         with in_flight_lock:
             pending = sorted(pending_scans.items())
+        now = datetime.now(timezone.utc)
         return templates.TemplateResponse(
             request,
             "history.html",
             {
                 "groups": groups,
                 "tool_names": TOOL_REGISTRY,
-                "pending": [{"scan_id": sid, "target": t} for sid, t in pending],
+                "pending": [
+                    {
+                        "scan_id": sid,
+                        "target": entry.target,
+                        "started": entry.started,
+                        # Whole minutes: a scan that has been going four
+                        # minutes is the useful fact, not four minutes
+                        # eleven seconds, and a ticking second counter on a
+                        # server-rendered page would be stale on arrival.
+                        "elapsed_minutes": int((now - entry.submitted_at).total_seconds() // 60),
+                    }
+                    for sid, entry in pending
+                ],
             },
         )
 

@@ -67,7 +67,14 @@
     {% for scan in pending %}
     <li class="history-row">
       <a class="history-target" href="/scan/{{ scan.scan_id }}/watch?target={{ scan.target | urlencode }}">{{ scan.target }}</a>
-      <span class="history-meta">queued or running</span>
+      {% if scan.started %}
+      <span class="history-meta running-pill">running</span>
+      {% else %}
+      <span class="history-meta">queued — waiting for a free slot</span>
+      {% endif %}
+      <span class="history-meta">
+        {% if scan.elapsed_minutes < 1 %}just submitted{% else %}{{ scan.elapsed_minutes }}m ago{% endif %}
+      </span>
       <form method="post" action="/scan/{{ scan.scan_id }}/cancel" class="delete-form">
         <button type="submit" class="delete-btn">Cancel</button>
       </form>

@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -1495,3 +1496,65 @@ def test_the_brief_carries_a_data_ref_for_the_web_view_to_link_with() -> None:
 
     assert 'data-tool="subfinder" data-ref="line:2"' in rendered
     assert "<script" not in rendered  # still zero-JS
+
+
+def test_history_distinguishes_a_queued_scan_from_a_running_one(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Reported from real use: a bulk submission showed only "queued or
+    running" for minutes, which reads identically whether the queue is
+    working through a backlog or a scan has hung. With a bounded queue
+    (ADR-0011 D9) waiting is normal, so the two states have to be
+    distinguishable or the bound looks like a bug.
+    """
+    release = threading.Event()
+
+    def blocking_run(request, *, raw_dir, on_status=None, on_warning=None, cancel=None):
+        release.wait(timeout=10)
+        return _fake_outcome(request)
+
+    monkeypatch.setattr(pipeline, "run_scan", blocking_run)
+
+    client = _client(tmp_path)
+    # One more target than there are slots, so at least one must be queued.
+    targets = "\n".join(f"t{i}.example.com" for i in range(app_module.MAX_CONCURRENT_SCANS + 1))
+    client.post("/scan", data={"target": targets, "tools": ["crtsh"]})
+    time.sleep(0.4)
+
+    page = client.get("/history").text
+
+    assert "running" in page
+    assert "waiting for a free slot" in page
+    assert "queued or running" not in page  # the old, uninformative label
+
+    release.set()
+    _settle(client)
+
+
+def test_the_manifest_records_when_a_scan_started_not_when_it_finished(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`started_at` was being set at manifest-write time, which is the end
+    of the scan -- so a field named "started" held the finish time, drifting
+    further from the truth the longer a scan took (observed 5-48s on real
+    runs, and unbounded for a queued one). The scan_id's own timestamp is
+    the submission moment, and the two should agree.
+    """
+    monkeypatch.setattr(pipeline, "run_scan", lambda request, **kw: _fake_outcome(request))
+
+    client = _client(tmp_path)
+    redirect = client.post(
+        "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
+    )
+    _settle(client)
+    scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
+
+    manifest = history.read_manifest(tmp_path / scan_id)
+    assert manifest is not None
+    stamp = scan_id.rsplit("-", 1)[-1]  # e.g. 20260804T012453Z
+    recorded = (
+        datetime.strptime(manifest.started_at, "%Y-%m-%dT%H:%M:%S.%f+00:00")
+        if "." in manifest.started_at
+        else datetime.fromisoformat(manifest.started_at)
+    )
+    assert recorded.strftime("%Y%m%dT%H%M%SZ") == stamp

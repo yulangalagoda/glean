@@ -566,6 +566,14 @@
       wrap.className = "triage";
       wrap.setAttribute("role", "group");
       wrap.setAttribute("aria-label", "Triage this finding");
+      // Says what these are for, not just what they are. Reported in real
+      // use: the buttons were visible and labelled, but nothing explained
+      // that a decision is saved per finding and survives a re-scan --
+      // which is the only reason to click one.
+      wrap.title =
+        "Mark how you have assessed this finding. Saved against the finding "
+        + "itself and kept across re-scans — it is the one thing re-running "
+        + "a scan cannot regenerate.";
 
       var buttons = TRIAGE_STATES.map(function (state) {
         var btn = document.createElement("button");

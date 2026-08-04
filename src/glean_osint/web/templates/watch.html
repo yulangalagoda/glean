@@ -8,7 +8,7 @@
 </form>
 <div id="watch-root" data-tools="{{ tools_csv }}">
   <ol class="stage-checklist" id="stage-checklist"></ol>
-  <p class="hint" id="status-line">Starting…</p>
+  <p class="hint" id="status-line">{% if queued %}Queued — waiting for a free scan slot. This page will update as soon as it starts.{% else %}Starting…{% endif %}</p>
   <ul id="log" class="log"></ul>
 </div>
 
