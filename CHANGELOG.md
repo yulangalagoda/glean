@@ -2,11 +2,40 @@
 
 All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning
-follows [SemVer](https://semver.org/). `v0.1.0` is reserved for when the
-MVP definition of done (`CHARTER.md` §4) is fully met — nothing before that
-point is a real release, just pre-dev groundwork.
+follows [SemVer](https://semver.org/). `v0.1.0` was reserved for when the
+MVP definition of done (`CHARTER.md` §4) was fully met — nothing before that
+point was a real release, just pre-dev groundwork. That bar was reached on
+2026-08-04; see the `[0.1.0]` entry for the audit against each criterion.
 
 ## [Unreleased]
+
+## [0.1.0] — 2026-08-04
+
+First real release. `CHANGELOG.md` reserved this version for the point at
+which the charter's §4 MVP definition of done was fully met; every criterion
+is now met, audited individually rather than assumed:
+
+| `CHARTER.md` §4 criterion | Evidence |
+|---|---|
+| Runs end-to-end from the CLI, no manual steps | `glean scan hazelmoor.org` with no flags → 23-finding brief in 30s (ADR-0008 D10 closed the last gap: the bare command previously exited asking for input) |
+| Unifies ≥4 FOSS tools | 5 — crt.sh, theHarvester, subfinder, dnsx, httpx |
+| Deterministic dedup, measured duplicate rate | `merge_graph`, order-independent and shuffle-tested; 62.3% duplicate rate observed on a real scan |
+| One-page prioritised brief | Top 5 by deterministic rank plus a filterable tail, Markdown and self-contained HTML |
+| Evaluation harness, three numbers, ≥10 ground-truth targets | 10 targets: mean stage-1 faithfulness 1.000, provenance retention 1.000, overlap@5 0.464, nDCG@5 0.582 |
+
+**Known limitations, stated rather than buried.** Stage-1 faithfulness is
+structurally incapable of reading below 1.000 — it checks that findings
+resolve to real entities, not that the prose about them is true — and
+`glean eval` now says so alongside the number. Content-level faithfulness
+needs `--llm`, and its judge makes real mistakes of its own (ADR-0006 open
+question 5, still open), so `stage2_faith` is a lower bound rather than an
+exact figure. A real narrated brief scored 1.000 on stage 1 and 0.455 on
+stage 2 for the same text; that gap is documented in ADR-0009 rather than
+smoothed over.
+
+Active reconnaissance remains behind an explicit `--active` opt-in on every
+path, including the implied-live one added in this release.
+
 
 ### Added
 - Project charter, ADRs 0001–0007 (entity schema, adapter contract,
