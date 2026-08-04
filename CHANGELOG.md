@@ -1209,6 +1209,36 @@ point is a real release, just pre-dev groundwork.
   `yulan.me`, `felgrove.com`): all four queued and visible immediately,
   observed draining strictly two at a time, all four completing with real
   findings (23 / 8 / 524 / 9) and no orphaned processes.
+- **ADR-0009 updated with the first LLM fabrication observed in the wild.**
+  Its Validation section had described the risk stage-1 faithfulness cannot
+  see as hypothetical — "a real entity given a false *attribute* in its
+  prose". The first real narration run through the web interface produced
+  exactly that, unprompted: `staging.hazelmoor.org` described as having
+  "not been fully resolved" when its own attributes say `dns_resolved:
+  True` and it carries two `resolves_to` edges asserted by both crt.sh and
+  dnsx. Nothing was invented, so D5's invented-id filter had nothing to
+  catch — by design.
+
+  Re-run from the same archived captures at `temperature: 0`, the claim
+  reproduced verbatim, so it is a stable property of that model on that
+  input rather than one unlucky sample. The two stages then disagree
+  completely about the same brief: **stage 1 = 1.000** (23/23 ids resolve)
+  against **stage 2 = 0.455** (5/11 claims supported).
+
+  That answers the factual half of ADR-0009's open question 5, which asked
+  whether stage 1's structural 1.000 is an accepted limitation or actively
+  misleading. It is both accurate and misleading at once — the worst
+  combination for a headline metric in a project whose whole claim is
+  provenance and non-fabrication. Recorded with two caveats kept in view:
+  ADR-0006's own open question 5 notes the judge makes real errors, so the
+  *gap* is the finding rather than 0.455 being an exact rate; and one
+  confirmed falsehood is an existence proof, not a rate.
+
+  No code changed. The follow-up it suggests is labelling — `glean eval`
+  prints a column headed simply `faithfulness` whether or not stage 2 ran,
+  so a structural check occupies the same slot a content check would.
+  Left as an explicit open decision rather than changed quietly, since it
+  alters the headline output of the project's own evaluation.
 
 ### Fixed
 - The triage route required its `state` form field, so clearing a finding's
