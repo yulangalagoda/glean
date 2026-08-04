@@ -7,7 +7,22 @@ on:
 
 jobs:
   lint-type-test:
-    runs-on: ubuntu-latest
+    # Windows is not redundant coverage. Two real defects fixed on
+    # 2026-07-28 were invisible on Linux and would have failed here
+    # immediately: every read_text/write_text used the platform default
+    # encoding (UTF-8 on Linux, the ANSI code page on Windows, which
+    # double-encoded every em-dash in a rendered brief), and without
+    # .gitattributes a Windows checkout rewrote the golden fixtures to
+    # CRLF, whose exact bytes are the thing under test. A suite that only
+    # ever runs on one platform cannot tell you about the other.
+    strategy:
+      # Report both platforms on a failure. Cancelling the Windows leg the
+      # moment Linux fails would hide exactly the platform-specific break
+      # this matrix exists to surface.
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest ]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -24,8 +39,32 @@ jobs:
       - name: pytest
         run: pytest
 
-  # NOTE (roadmap Workstream E3): once the evaluation harness exists, add a job
-  # here that runs it against a committed fixture target so the three headline
-  # numbers (faithfulness, prioritisation quality, provenance retention) are
-  # regenerated on every change and a regression fails the build. Not added
-  # yet because the harness doesn't exist yet — see ADR-0006/0007.
+  # Roadmap Workstream E3. The real ground-truth set lives in `eval/scans/`,
+  # which is gitignored because it names real domains — so this runs against
+  # the committed fixture target instead (`tests/fixtures/eval/`, RFC 2606
+  # `example.com`, built from the repo's own golden captures).
+  #
+  # This job is a genuine gate, not a decorative print. `glean eval` exits
+  # non-zero if the scans directory is missing, if no target carries a
+  # ground_truth.yaml, or if every target fails to evaluate — so the CLI
+  # path itself (target discovery, argument handling, summary computation)
+  # is covered here, which the pytest gate is not: `tests/test_eval_fixture.py`
+  # calls `_evaluate_target` directly and would not notice `glean eval`
+  # breaking around it.
+  #
+  # The hard numeric assertions (faithfulness and provenance_retention must
+  # read 1.000) live in that test file, so they run on both platforms above
+  # rather than only here. What this job adds is the roadmap's actual
+  # requirement: the headline numbers regenerated, and visible in the log,
+  # on every single change.
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install package with dev extras
+        run: python -m pip install -e ".[dev]"
+      - name: Regenerate the headline evaluation numbers
+        run: glean eval --scans-dir tests/fixtures/eval

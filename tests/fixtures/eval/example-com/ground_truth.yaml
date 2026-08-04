@@ -1,0 +1,72 @@
+# Ground-truth ranking for the COMMITTED CI FIXTURE target (ADR-0007 format).
+#
+# This is NOT a research data point and must never be counted as one. The real
+# ground-truth set lives in `eval/scans/`, which is gitignored because it names
+# real domains -- so CI has nothing to evaluate against. This file exists so
+# `glean eval` can run on every push against data that is safe to commit
+# (RFC 2606 `example.com`, synthetic captures already used as golden fixtures),
+# turning the harness into a build-time regression gate.
+#
+# Read the two kinds of number it produces differently:
+#   - faithfulness / provenance_retention are STRUCTURAL invariants of the
+#     pipeline. They must read 1.000 on any input, so CI gates on them hard.
+#   - overlap@N / nDCG@N measure agreement with the ranking below, which is one
+#     annotator's judgement over a toy graph. They are reported for visibility
+#     and deliberately NOT hard-gated: a legitimate improvement to the scoring
+#     rubric is allowed to move them.
+target: example.com
+# Deliberately not a person's name. The ADR-0007 attestation below is about a
+# named human annotator's independence; claiming one here would fabricate
+# research provenance for what is really a build fixture.
+annotator: "synthetic CI fixture (not a human annotation)"
+annotated_at: "2026-07-28T00:00:00Z"
+# D6 attestation. True in its actual meaning: this ranking was written from the
+# merged entity graph with scoring deliberately not run, so Glean's computed
+# `priority.rank` for these entities was never visible while ordering them.
+# Seeing *what was found* is what any annotator must do; seeing *how Glean
+# ranked it* is what the attestation forbids.
+blind: true
+# D7: no secondary source consulted -- the captures are synthetic, so there is
+# no external record that could corroborate them.
+corroboration_sources: []
+entries:
+  - entity_id: "subdomain:admin.example.com"
+    justification: >-
+      An administrative interface that demonstrably exists: an admin-named host
+      confirmed resolving, and the only entity here corroborated by all five
+      tools. In real recon this is the finding you act on first.
+  - entity_id: "service:203.0.113.3:443"
+    justification: >-
+      A reachable service running a CMS (WordPress) rather than a static site,
+      on a host no passive source ever reported. Exposed application surface is
+      more actionable than the hostname that led to it.
+  - entity_id: "subdomain:cdn.example.com"
+    justification: >-
+      Invisible to every passive source -- certificate transparency,
+      theHarvester and subfinder all missed it, and only direct probing found
+      it. A host absent from passive intelligence is worth more attention than
+      one that shows up everywhere.
+  - entity_id: "service:203.0.113.1:443"
+    justification: >-
+      Real exposed surface, but on the apex the scan already started from, so
+      it confirms the expected rather than revealing anything new. Ranked below
+      the CDN service for that reason, not because it is less reachable.
+  - entity_id: "subdomain:noport.example.com"
+    justification: >-
+      Another host only active probing saw. Ranked below cdn.example.com
+      because its response carries no port and a plainer technology fingerprint,
+      so there is less to act on.
+  - entity_id: "subdomain:*.example.com"
+    justification: >-
+      A wildcard record changes how every other hostname result should be read
+      -- it means a resolving name is not evidence that anyone configured it.
+      Context that reframes the rest of the list, rather than a target itself.
+  - entity_id: "subdomain:dead.example.com"
+    justification: >-
+      Confirmed not resolving. A useful negative: it prunes attack surface and
+      is exactly the kind of stale record that should rank low but still be
+      recorded rather than silently dropped.
+  - entity_id: "email_address:security@example.com"
+    justification: >-
+      Operationally useful as a disclosure contact and low risk in itself.
+      Published contact addresses are findings, not vulnerabilities.

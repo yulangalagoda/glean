@@ -49,7 +49,7 @@ from glean_osint.evaluation import (
     provenance_retention,
 )
 from glean_osint.progress import SECTION_BREAK, Spinner
-from glean_osint.schema.entities import ScanMeta, ToolRun
+from glean_osint.schema.entities import Entity, ScanMeta, ToolRun
 from glean_osint.scoring import score_graph
 
 # A live tool degrading (not installed, timed out, network failure) must
@@ -586,11 +586,27 @@ class _TargetEvalResult:
     provenance_retention: float
     prioritisation: PrioritisationQuality
     stage2: Stage2FaithfulnessResult | None
+    # The scored graph this result was computed from. Defaulted, so the
+    # summary table is unaffected; it's here so a caller can check *what*
+    # was evaluated (which adapters actually contributed, whether a ground
+    # truth references an entity that exists) rather than only the scores,
+    # which cannot distinguish "nothing regressed" from "nothing ran".
+    entities: tuple[Entity, ...] = ()
 
 
+# Every passive adapter the evaluation harness reads, by the filename its
+# capture is archived under. Each is optional: a target predating an
+# adapter simply has no such file and is skipped (`path.exists()` below),
+# which is why adding one here cannot change any already-computed number.
+# subfinder was added as the fifth adapter (ADR-0002) but never wired in
+# here, so `glean eval` silently ignored a `subfinder-*.jsonl` capture --
+# the one adapter the evaluation could not see. No target in the existing
+# ground-truth set has a subfinder capture, so this is inert for them and
+# correct for anything captured from now on.
 _RAW_ADAPTERS = (
     (CrtshAdapter, "crtsh-{slug}.json"),
     (TheHarvesterAdapter, "theharvester-{slug}.json"),
+    (SubfinderAdapter, "subfinder-{slug}.jsonl"),
     (DnsxAdapter, "dnsx-{slug}.json"),
 )
 
@@ -643,6 +659,7 @@ def _evaluate_target(
         provenance_retention=provenance_retention(brief),
         prioritisation=prioritisation_quality(glean_ranked_ids, ground_truth, n=top_n),
         stage2=stage2,
+        entities=tuple(scored),
     )
 
 

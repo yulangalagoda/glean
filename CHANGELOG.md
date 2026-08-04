@@ -1079,11 +1079,61 @@ point is a real release, just pre-dev groundwork.
   response: the saved `brief.html` and `--out report.html` remain zero-JS
   and untouched (ADR-0010 D3), re-verified after the change.
 
+- The evaluation harness now runs in CI (roadmap Workstream E3), against a
+  new committed fixture target at `tests/fixtures/eval/example-com/`. The
+  real ground-truth set lives in `eval/scans/`, which is gitignored because
+  it names real domains — so the harness that produces this project's
+  headline numbers had never once run on a push. The fixture target is
+  RFC 2606 `example.com` built from the repo's own golden captures, so it
+  is safe to commit and exercises all five adapters end to end.
+
+  Placed under `tests/fixtures/` rather than `eval/scans/` deliberately:
+  that directory's "everything in here is private real-domain data" rule
+  should stay absolute, and a `.gitignore` negation carved into it is the
+  kind of exception that later leaks a hostname nobody meant to publish.
+
+  Its `ground_truth.yaml` is labelled a synthetic fixture and is **not** a
+  research data point. The ADR-0007 `blind` attestation is about a named
+  human annotator's independence; the annotator field says plainly that
+  this is a build fixture rather than borrowing a person's name for it.
+  The ranking was written from the merged entity graph with scoring
+  deliberately not run, so the attestation holds in its actual meaning.
+
+  What CI gates, and what it deliberately does not: `faithfulness` and
+  `provenance_retention` are structural invariants (they must read 1.000
+  for any input), so they are asserted hard and a drop fails the build.
+  `overlap@N` / `nDCG@N` measure agreement with one annotator's ranking of
+  a toy graph and are reported but never asserted — a legitimate
+  improvement to the scoring rubric is allowed to move them, and a test
+  forbidding that would make the rubric unimprovable.
+
+  A drift guard compares every raw capture in the fixture target
+  byte-for-byte against the golden fixture it was copied from
+  (`shallow=False`, since size-and-mtime equality is exactly the check that
+  would miss a same-length edit). Verified by making one: a single changed
+  digit in an IP is caught.
+- CI now runs the suite on **Windows as well as Linux**. Two of the six
+  defects fixed on 2026-07-28 were invisible on Linux — the platform-default
+  encoding corrupting non-ASCII in every rendered brief, and golden fixtures
+  rewritten to CRLF on checkout — and both would have failed a Windows job
+  immediately. `fail-fast: false`, so a Windows break is never masked by
+  cancelling the leg that would have shown it.
+
 ### Fixed
 - The triage route required its `state` form field, so clearing a finding's
   triage worked from a browser and returned `422` from anything that omits
   empty-valued fields — which is what the test client does, and what caught
   it. Absent and empty now mean the same thing.
+- `glean eval` never read subfinder. It was added as the fifth adapter
+  (ADR-0002) but `_RAW_ADAPTERS` was never extended, so a
+  `subfinder-<slug>.jsonl` capture in a target's `raw/` was silently
+  ignored — the one adapter the evaluation could not see. No target in the
+  existing ground-truth set has a subfinder capture, so this is provably
+  inert for the published numbers: re-running the full private set before
+  and after gives byte-identical results (mean faithfulness 1.000,
+  provenance 1.000, overlap@5 0.464, nDCG@5 0.582). Correct for anything
+  captured from now on, and the committed CI fixture asserts that every one
+  of the five adapters actually contributes.
 
 ### Notes
 - Development has started (`crtsh`, `theharvester`, `subfinder`, `dnsx`,
