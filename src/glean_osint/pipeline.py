@@ -106,6 +106,7 @@ def run_scan(
     raw_dir: Path,
     on_status: Callable[[str], None] | None = None,
     on_warning: Callable[[str], None] | None = None,
+    cancel: runner.CancellationToken | None = None,
 ) -> ScanOutcome:
     """Run `request.tools` live against `request.target` and return a
     scored `Brief`. Mirrors the CLI's 3-stage pipeline (ADR-0008 D1)
@@ -131,6 +132,18 @@ def run_scan(
         warnings.append(message)
         warn(message)
 
+    def check_cancelled() -> None:
+        """Cooperative stop points. Cancellation is checked between stages
+        and at the head of each concurrent Stage 1 worker, so a scan stops
+        at the next boundary rather than only when its current tool
+        happens to finish. `ScanCancelled` is deliberately not in
+        `_LIVE_INVOCATION_ERRORS`: every entry there means "degrade this
+        one tool and continue", which is the opposite of what cancelling
+        must do, so it propagates out of run_scan untouched.
+        """
+        if cancel is not None:
+            cancel.raise_if_cancelled()
+
     collected_at_dt = datetime.now(timezone.utc)
     collected_at = collected_at_dt.isoformat()
     results: list[ParseResult] = []
@@ -148,6 +161,7 @@ def run_scan(
     # is the more honest live-progress experience anyway.
 
     def _run_crtsh_stage1() -> None:
+        check_cancelled()
         status("Searching certificate transparency logs (crt.sh)...")
         info: list[str] = []
         try:
@@ -169,10 +183,13 @@ def run_scan(
         _warn_skipped(add_warning, "crt.sh", result.skipped)
 
     def _run_theharvester_stage1() -> None:
+        check_cancelled()
         status("Searching public sources for hosts and emails (theHarvester)...")
         try:
             raw = runner.run_theharvester(
-                request.target, binary=_tool_binary("GLEAN_THEHARVESTER_BIN", "theHarvester")
+                request.target,
+                binary=_tool_binary("GLEAN_THEHARVESTER_BIN", "theHarvester"),
+                cancel=cancel,
             )
         except _LIVE_INVOCATION_ERRORS as error:
             add_warning(f"theHarvester: live invocation failed ({error}), skipping.")
@@ -185,10 +202,13 @@ def run_scan(
         _warn_skipped(add_warning, "theHarvester", result.skipped)
 
     def _run_subfinder_stage1() -> None:
+        check_cancelled()
         status("Searching passive sources for subdomains (subfinder)...")
         try:
             raw = runner.run_subfinder(
-                request.target, binary=_tool_binary("GLEAN_SUBFINDER_BIN", "subfinder")
+                request.target,
+                binary=_tool_binary("GLEAN_SUBFINDER_BIN", "subfinder"),
+                cancel=cancel,
             )
         except _LIVE_INVOCATION_ERRORS as error:
             add_warning(f"subfinder: live invocation failed ({error}), skipping.")
@@ -217,13 +237,17 @@ def run_scan(
     _stage1_tool_order = {"crtsh": 0, "theharvester": 1, "subfinder": 2}
     tools_run.sort(key=lambda t: _stage1_tool_order.get(t.source_tool, 99))
 
+    check_cancelled()
+
     # --- Stage 2: dnsx, fed Stage 1's parsed hostnames (ADR-0008 D1) ---
 
     if "dnsx" in tools:
         candidates = runner.extract_candidates(request.target, results)
         status(f"Resolving {len(candidates)} candidate hostname(s) (dnsx)...")
         try:
-            raw = runner.run_dnsx(candidates, binary=_tool_binary("GLEAN_DNSX_BIN", "dnsx"))
+            raw = runner.run_dnsx(
+                candidates, binary=_tool_binary("GLEAN_DNSX_BIN", "dnsx"), cancel=cancel
+            )
         except _LIVE_INVOCATION_ERRORS as error:
             add_warning(f"dnsx: live invocation failed ({error}), skipping.")
         else:
@@ -233,6 +257,8 @@ def run_scan(
             results.append(result)
             tools_run.append(ToolRun(source_tool="dnsx", method="passive", raw_output_ref=ref))
             _warn_skipped(add_warning, "dnsx", result.skipped)
+
+    check_cancelled()
 
     # --- Stage 3: httpx, fed Stage 2's resolved hosts, ACTIVE ---
     # normalise_selection already guarantees dnsx is present whenever
@@ -244,7 +270,9 @@ def run_scan(
         resolved_hosts = runner.extract_resolved_hosts(results)
         status(f"Probing {len(resolved_hosts)} live host(s) for services and tech (httpx)...")
         try:
-            raw = runner.run_httpx(resolved_hosts, binary=_tool_binary("GLEAN_HTTPX_BIN", "httpx"))
+            raw = runner.run_httpx(
+                resolved_hosts, binary=_tool_binary("GLEAN_HTTPX_BIN", "httpx"), cancel=cancel
+            )
         except _LIVE_INVOCATION_ERRORS as error:
             add_warning(f"httpx: live invocation failed ({error}), skipping.")
         else:
@@ -255,6 +283,7 @@ def run_scan(
             tools_run.append(ToolRun(source_tool="httpx", method="active", raw_output_ref=ref))
             _warn_skipped(add_warning, "httpx", result.skipped)
 
+    check_cancelled()
     status("Scoring and building the brief...")
     merged = merge_graph(results)
     scored = score_graph(merged.entities, merged.edges, datetime.now(timezone.utc))

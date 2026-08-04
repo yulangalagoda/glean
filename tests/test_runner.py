@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
+import threading
+import time
 import urllib.error
 from pathlib import Path
 
@@ -536,3 +539,103 @@ def test_archive_raw_writes_file_and_returns_its_path(tmp_path: Path) -> None:
     ref = runner.archive_raw(tmp_path / "raw", "crtsh-example-com.json", b'{"a": 1}')
     assert ref == str(tmp_path / "raw" / "crtsh-example-com.json")
     assert Path(ref).read_bytes() == b'{"a": 1}'
+
+
+# ── Cancellation (roadmap item #24) ──────────────────────────────────────
+#
+# These drive REAL child processes rather than the injected `run` seam every
+# other test here uses, and deliberately so. The whole point of cancellation
+# is that abandoning the Python-side call does not stop the child -- a stub
+# can only ever prove a flag was read, never that a process actually died.
+# The child is spawned via `sys.executable` rather than `sleep` so the tests
+# run on Windows too, where the CI matrix now also runs.
+
+_LONG_LIVED = [sys.executable, "-c", "import time; time.sleep(120)"]
+
+
+def _spawn_long_lived() -> subprocess.Popen[bytes]:
+    return subprocess.Popen(_LONG_LIVED, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+
+def test_cancel_actually_terminates_a_tracked_child_process() -> None:
+    """The defect this exists to prevent: a cancelled scan that leaves
+    theHarvester still running, still holding connections, still touching
+    the target after the operator asked it to stop."""
+    token = runner.CancellationToken()
+    process = _spawn_long_lived()
+    try:
+        with token.track(process):
+            assert process.poll() is None  # genuinely running before cancel
+            token.cancel()
+            process.wait(timeout=15)
+        assert process.poll() is not None
+    finally:
+        if process.poll() is None:  # pragma: no cover - only on a failed run
+            process.kill()
+
+
+def test_cancelling_before_a_child_is_tracked_still_kills_it() -> None:
+    """A real race: `cancel()` can land between spawning a process and
+    registering it, find an empty set, and kill nothing -- leaving an
+    orphan behind precisely when the operator asked for a stop."""
+    token = runner.CancellationToken()
+    token.cancel()
+    process = _spawn_long_lived()
+    try:
+        with token.track(process):
+            pass
+        process.wait(timeout=15)
+        assert process.poll() is not None
+    finally:
+        if process.poll() is None:  # pragma: no cover - only on a failed run
+            process.kill()
+
+
+def test_run_cancellable_raises_scan_cancelled_rather_than_a_tool_failure() -> None:
+    """A killed child exits non-zero, which `check=True` would otherwise
+    turn into a CalledProcessError -- reported to the operator as "this
+    tool failed" when in fact they cancelled it themselves."""
+    token = runner.CancellationToken()
+    result: list[str] = []
+
+    def worker() -> None:
+        try:
+            runner._run_cancellable(_LONG_LIVED, timeout=300, check=True, cancel=token)
+        except runner.ScanCancelled:
+            result.append("cancelled")
+        except Exception as error:  # noqa: BLE001 - the point is what it is NOT
+            result.append(type(error).__name__)
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    time.sleep(1.0)  # let the child genuinely start
+    token.cancel()
+    thread.join(timeout=20)
+
+    assert result == ["cancelled"]
+
+
+def test_run_cancellable_refuses_to_start_once_cancelled() -> None:
+    """Cheapest possible check, and the one that matters between stages:
+    an already-cancelled scan must not spawn anything further."""
+    token = runner.CancellationToken()
+    token.cancel()
+
+    with pytest.raises(runner.ScanCancelled):
+        runner._run_cancellable(_LONG_LIVED, timeout=300, check=False, cancel=token)
+
+
+def test_an_untokened_call_is_unchanged() -> None:
+    """Cancellation is additive: with no token the injected `run` seam is
+    used exactly as before, which is what keeps every other test in this
+    file meaningful."""
+    calls: list[list[str]] = []
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, b"out", b"")
+
+    completed = runner._invoke(fake_run, ["x"], timeout=1.0, check=False, cancel=None)
+
+    assert calls == [["x"]]
+    assert completed.stdout == b"out"

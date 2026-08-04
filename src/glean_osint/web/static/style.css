@@ -202,6 +202,20 @@ button[type="submit"]:not(.delete-btn):hover { opacity: 0.88; }
 .stage-checklist li.stage-done { color: var(--text-muted); }
 .stage-checklist li.stage-done::before { content: "✓"; color: var(--accent); }
 
+.history-cancelled { color: var(--text-muted); font-weight: 600; }
+.cancelled-pill {
+  background: var(--danger-bg); color: var(--danger-text); border-radius: 999px;
+  padding: 0.1rem 0.6rem; font-size: 0.8rem;
+}
+
+.cancel-btn {
+  border: 1px solid var(--danger-border); background: var(--surface); color: var(--danger-text);
+  border-radius: 8px; padding: 0.35rem 0.9rem; font-size: 0.88rem; cursor: pointer;
+  font-family: inherit; margin-bottom: 1rem;
+}
+.cancel-btn:hover:not(:disabled) { background: var(--danger-bg); }
+.cancel-btn:disabled { opacity: 0.6; cursor: default; }
+
 #status-line { font-weight: 600; color: var(--text); font-size: 1rem; }
 #status-line.failed { color: var(--danger-text); }
 .log { list-style: none; padding: 0; margin: 1rem 0 0; display: flex; flex-direction: column; gap: 0.4rem; }

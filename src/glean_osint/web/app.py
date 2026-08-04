@@ -29,7 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
-from glean_osint import pipeline, synthesis
+from glean_osint import pipeline, runner, synthesis
 from glean_osint.brief import DEFAULT_TOP_N, render_html, surface_counts, surface_label
 from glean_osint.diff import diff_entities
 from glean_osint.graph import build_graph_view
@@ -75,7 +75,9 @@ def _build_templates(*, network_exposed: bool) -> Jinja2Templates:
 # SSE event payloads are single lines by construction throughout this
 # project (spinner labels, warnings) -- collapsed defensively anyway so a
 # surprising embedded newline can never corrupt the `data: ...\n\n` framing.
-_ScanEvent = tuple[str, str]  # (event type, payload) -- "status"|"warning"|"done"|"error"
+_ScanEvent = tuple[
+    str, str
+]  # (event type, payload) -- "status"|"warning"|"done"|"error"|"cancelled"
 
 
 def _sse_line(event_type: str, payload: str) -> str:
@@ -229,6 +231,11 @@ def create_app(
     # create_app() call, same closure pattern as history_root, so tests
     # never share state across FastAPI app instances.
     active_scans: dict[str, queue.Queue[_ScanEvent]] = {}
+    # One cancellation token per in-flight scan. Separate from `active_scans`
+    # because the two have genuinely different lifetimes: the queue is popped
+    # the moment its terminal event is delivered, while the token must stay
+    # reachable for as long as the background task might still be running.
+    scan_tokens: dict[str, runner.CancellationToken] = {}
 
     def execute_scan(
         scan_id: str,
@@ -254,6 +261,7 @@ def create_app(
                 raw_dir=scan_dir / "raw",
                 on_status=lambda message: q.put(("status", message)),
                 on_warning=lambda message: q.put(("warning", message)),
+                cancel=scan_tokens.get(scan_id),
             )
             (scan_dir / "brief.html").write_text(render_html(outcome.brief), encoding="utf-8")
             write_manifest(
@@ -278,6 +286,28 @@ def create_app(
                 ],
             )
             write_edges_snapshot(scan_dir, [e.to_dict() for e in outcome.edges])
+        except runner.ScanCancelled:
+            # A cancelled scan is recorded, not erased. Writing a manifest
+            # (and deliberately no brief.html) keeps the history honest:
+            # the run happened, the operator stopped it, and there is no
+            # report because none was produced -- which is a materially
+            # different thing from a scan that never ran at all. It also
+            # means the partial raw captures already archived under raw/
+            # are still accounted for by something.
+            write_manifest(
+                scan_dir,
+                ScanManifest(
+                    scan_id=scan_id,
+                    target=target,
+                    started_at=datetime.now(timezone.utc).isoformat(),
+                    tools_run=(),
+                    authorisation=authorisation,
+                    findings_count=0,
+                    warnings=("Scan cancelled by the operator before it finished.",),
+                    cancelled=True,
+                ),
+            )
+            q.put(("cancelled", "/history"))
         except Exception as error:  # noqa: BLE001 -- must reach the browser, never crash silently
             # A background task's own exception is otherwise only logged
             # server-side (Starlette's default) -- the browser would be
@@ -288,6 +318,8 @@ def create_app(
             q.put(("error", str(error)))
         else:
             q.put(("done", f"/scan/{scan_id}"))
+        finally:
+            scan_tokens.pop(scan_id, None)
 
     @app.get("/", response_class=HTMLResponse)
     def index(
@@ -393,6 +425,7 @@ def create_app(
         # archive_raw at all, and brief.html still needs somewhere to land.
         scan_dir.mkdir(parents=True, exist_ok=True)
         active_scans[scan_id] = queue.Queue()
+        scan_tokens[scan_id] = runner.CancellationToken()
         background_tasks.add_task(
             execute_scan,
             scan_id,
@@ -451,7 +484,7 @@ def create_app(
                 # served while this one waits.
                 event_type, payload = await run_in_threadpool(q.get)
                 yield _sse_line(event_type, payload)
-                if event_type in {"done", "error"}:
+                if event_type in {"done", "error", "cancelled"}:
                     active_scans.pop(scan_id, None)
                     return
 
@@ -698,6 +731,28 @@ def create_app(
         return templates.TemplateResponse(
             request, "history.html", {"groups": groups, "tool_names": TOOL_REGISTRY}
         )
+
+    @app.post("/scan/{scan_id}/cancel", response_model=None)
+    def cancel_scan(scan_id: str) -> Response:
+        """Ask a running scan to stop.
+
+        POST, never GET: this changes state and kills real processes, so it
+        must not be reachable by a prefetch or a crawler following a link --
+        the same reasoning that keeps "re-run this scan" a form submission
+        rather than a link.
+
+        Idempotent by design. A scan that has already finished, already been
+        cancelled, or never existed returns 204 rather than 404: the caller
+        asked for it to not be running, and it is not running. Racing the
+        scan's own completion is the normal case here, not an error worth
+        surfacing to someone who just clicked Cancel.
+        """
+        if not _is_safe_scan_id(scan_id):
+            raise HTTPException(status_code=404, detail="Scan not found.")
+        token = scan_tokens.get(scan_id)
+        if token is not None:
+            token.cancel()
+        return Response(status_code=204)
 
     @app.post("/scan/{scan_id}/delete", response_model=None)
     def delete_scan_route(scan_id: str) -> RedirectResponse:

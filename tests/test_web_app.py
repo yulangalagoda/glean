@@ -29,7 +29,7 @@ from urllib.parse import urlparse
 import pytest
 from fastapi.testclient import TestClient
 
-from glean_osint import history, pipeline, synthesis
+from glean_osint import history, pipeline, runner, synthesis
 from glean_osint.brief import Brief, build_brief
 from glean_osint.pipeline import ScanOutcome, ScanRequest
 from glean_osint.registry import PRESETS, TOOL_REGISTRY
@@ -214,7 +214,7 @@ def test_watch_page_is_404_for_a_scan_that_was_never_submitted(tmp_path: Path) -
 def test_scan_events_streams_status_and_a_final_done_event(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    def fake_run_scan(request, *, raw_dir, on_status=None, on_warning=None):
+    def fake_run_scan(request, *, raw_dir, on_status=None, on_warning=None, cancel=None):
         if on_status is not None:
             on_status("Searching certificate transparency logs (crt.sh)...")
             on_status("Scoring and building the brief...")
@@ -239,7 +239,7 @@ def test_scan_events_streams_status_and_a_final_done_event(
 
 
 def test_scan_events_streams_warnings_too(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    def fake_run_scan(request, *, raw_dir, on_status=None, on_warning=None):
+    def fake_run_scan(request, *, raw_dir, on_status=None, on_warning=None, cancel=None):
         if on_warning is not None:
             on_warning("theHarvester: live invocation failed (theHarvester), skipping.")
         return _fake_outcome(request)
@@ -336,7 +336,7 @@ def test_history_page_lists_a_completed_scan(
 def test_history_page_shows_a_warning_pill_when_a_scan_had_warnings(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    def fake_run_scan(request, *, raw_dir, on_status=None, on_warning=None):
+    def fake_run_scan(request, *, raw_dir, on_status=None, on_warning=None, cancel=None):
         if on_warning is not None:
             on_warning("crt.sh: live invocation failed (boom), skipping.")
         return ScanOutcome(
@@ -791,7 +791,7 @@ def test_download_json_is_404_for_a_scan_with_no_entities_snapshot(tmp_path: Pat
 def test_view_raw_serves_the_archived_output_for_a_tool(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    def fake_run_scan(request, *, raw_dir, on_status=None, on_warning=None):
+    def fake_run_scan(request, *, raw_dir, on_status=None, on_warning=None, cancel=None):
         raw_dir.mkdir(parents=True, exist_ok=True)
         (raw_dir / "crtsh-example.com.json").write_text('[{"name_value": "admin.example.com"}]')
         return _fake_outcome(request)
@@ -902,7 +902,7 @@ def test_history_page_shows_a_search_input_once_scans_exist(
 def test_history_page_shows_the_actual_warning_text(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    def fake_run_scan(request, *, raw_dir, on_status=None, on_warning=None):
+    def fake_run_scan(request, *, raw_dir, on_status=None, on_warning=None, cancel=None):
         return ScanOutcome(
             brief=_fake_outcome(request).brief,
             warnings=("crt.sh: live invocation failed (boom), skipping.",),
@@ -1037,3 +1037,90 @@ def test_view_scan_shows_a_compare_link_only_when_a_previous_scan_exists(
     )
     response_with_previous = _client(tmp_path).get("/scan/example-com-20260727T120000Z")
     assert "/scan/example-com-20260727T120000Z/diff" in response_with_previous.text
+
+
+# ── Cancellation (roadmap item #24) ──────────────────────────────────────
+
+
+def test_cancelling_a_scan_records_it_rather_than_erasing_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A cancelled scan keeps a manifest and deliberately has no
+    brief.html. Leaving nothing behind would make history claim the run
+    never happened, which is a different thing from "it ran and the
+    operator stopped it" -- and the partial raw captures already on disk
+    would be unaccounted for.
+    """
+
+    def cancelled_run(request, *, raw_dir, on_status=None, on_warning=None, cancel=None):
+        raise runner.ScanCancelled
+
+    monkeypatch.setattr(pipeline, "run_scan", cancelled_run)
+
+    client = _client(tmp_path)
+    redirect = client.post(
+        "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
+    )
+    scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
+
+    manifest = history.read_manifest(tmp_path / scan_id)
+    assert manifest is not None
+    assert manifest.cancelled is True
+    assert manifest.findings_count == 0
+    assert not (tmp_path / scan_id / "brief.html").exists()
+
+
+def test_a_cancelled_scan_emits_a_cancelled_event_not_an_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Cancelling is not a failure. Reporting it as `error` would show the
+    operator "Scan failed" for something they chose to do."""
+
+    def cancelled_run(request, *, raw_dir, on_status=None, on_warning=None, cancel=None):
+        raise runner.ScanCancelled
+
+    monkeypatch.setattr(pipeline, "run_scan", cancelled_run)
+
+    client = _client(tmp_path)
+    redirect = client.post(
+        "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
+    )
+    scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
+    events = client.get(f"/scan/{scan_id}/events").text
+
+    assert "event: cancelled" in events
+    assert "event: error" not in events
+
+
+def test_the_cancel_route_is_idempotent(tmp_path: Path) -> None:
+    """Racing the scan's own completion is the normal case for someone who
+    just clicked Cancel, not an error worth surfacing. A finished, already
+    cancelled, or unknown scan all mean the same thing to the caller: it is
+    not running."""
+    client = _client(tmp_path)
+
+    assert client.post("/scan/never-submitted/cancel").status_code == 204
+    assert client.post("/scan/never-submitted/cancel").status_code == 204
+
+
+def test_the_cancel_route_rejects_an_unsafe_scan_id(tmp_path: Path) -> None:
+    response = _client(tmp_path).post("/scan/../etc/cancel")
+    assert response.status_code == 404
+
+
+def test_a_cancelled_scan_is_shown_as_cancelled_in_history(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def cancelled_run(request, *, raw_dir, on_status=None, on_warning=None, cancel=None):
+        raise runner.ScanCancelled
+
+    monkeypatch.setattr(pipeline, "run_scan", cancelled_run)
+
+    client = _client(tmp_path)
+    client.post("/scan", data={"target": "example.com", "tools": ["crtsh"]})
+
+    page = client.get("/history").text
+
+    assert "cancelled" in page
+    # No link to a report, because there is no report.
+    assert 'href="/scan/example-com-' not in page

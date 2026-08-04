@@ -1118,6 +1118,48 @@ point is a real release, just pre-dev groundwork.
   rewritten to CRLF on checkout — and both would have failed a Windows job
   immediately. `fail-fast: false`, so a Windows break is never masked by
   cancelling the leg that would have shown it.
+- Scans can be cancelled while running (roadmap item #24), from a Cancel
+  button on the watch page. Cooperative cancellation is checked between
+  stages and at the head of each concurrent Stage 1 worker, so a scan stops
+  at the next boundary rather than only when its current tool happens to
+  finish.
+
+  The half that actually matters is subprocess termination. A scan's
+  wall-clock time is dominated by child processes — theHarvester querying
+  external sources runs for minutes — and abandoning the future waiting on
+  one does not stop it: the process keeps running, keeps its connections
+  open, and keeps touching the target after the operator asked it to stop.
+  `subprocess.run` hands back no handle to terminate, so a
+  `CancellationToken` tracks the live children and terminates them (SIGTERM,
+  escalating to kill after a short grace period). Registration re-checks the
+  flag inside the lock, closing a real race where cancelling between spawn
+  and registration would find an empty set and orphan the child.
+
+  `ScanCancelled` is deliberately **not** in `_LIVE_INVOCATION_ERRORS`.
+  Every entry there means "degrade this one tool and carry on" (ADR-0002
+  D5), the exact opposite of what cancelling must do — swallowed there,
+  cancelling would become a warning while the remaining stages ran on, and
+  the scan would finish having ignored the operator entirely.
+
+  A cancelled scan is **recorded, not erased**: it keeps a manifest marked
+  `cancelled` and deliberately has no `brief.html`. Leaving nothing behind
+  would make history claim the run never happened, which is materially
+  different from "it ran and was stopped", and would leave the partial raw
+  captures already on disk unaccounted for. History shows it as cancelled
+  with no report link. The cancel route is POST (it kills real processes, so
+  no prefetch or crawler should reach it) and idempotent: racing the scan's
+  own completion is the normal case for someone who just clicked Cancel, not
+  an error worth surfacing.
+
+  Cancellation is additive — with no token every existing caller, including
+  the CLI, behaves exactly as before, and the injected `run` seam the runner
+  tests rely on is untouched. Tested against **real** child processes rather
+  than that seam, since a stub can only ever prove a flag was read, never
+  that a process died; spawned via `sys.executable` so the tests run on the
+  Windows CI leg too. Live-validated end to end: a real `hazelmoor.org` scan
+  was cancelled from the UI with theHarvester mid-flight, and that process
+  (confirmed running by pid beforehand) was gone within two seconds, with no
+  orphaned recon processes left behind.
 
 ### Fixed
 - The triage route required its `state` form field, so clearing a finding's

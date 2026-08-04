@@ -427,3 +427,74 @@ def test_run_scan_warns_loudly_when_narration_silently_fell_back(
     assert any("ollama" in w.lower() for w in outcome.warnings)
     # Streamed live too, not only present in the final tuple.
     assert streamed == list(outcome.warnings)
+
+
+# ── Cancellation (roadmap item #24) ──────────────────────────────────────
+
+
+def test_a_cancelled_scan_stops_instead_of_degrading_into_a_warning(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The subtle correctness point. Every entry in `_LIVE_INVOCATION_ERRORS`
+    means "this one tool failed, carry on with the rest" (ADR-0002 D5). If
+    `ScanCancelled` were caught alongside them, cancelling would quietly
+    turn into a warning and the remaining stages would keep running -- the
+    scan would finish, having ignored the operator entirely.
+    """
+    _stub_all_tools(monkeypatch)
+    token = runner.CancellationToken()
+    token.cancel()
+
+    with pytest.raises(runner.ScanCancelled):
+        pipeline.run_scan(
+            ScanRequest(target="example.com", tools=frozenset({"crtsh", "dnsx"})),
+            raw_dir=tmp_path / "raw",
+            cancel=token,
+        )
+
+
+def test_cancelling_midway_stops_before_the_next_stage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Cancellation is cooperative, so what matters is that the *next* stage
+    never starts. dnsx must not run once the operator has cancelled during
+    Stage 1, however far through that stage the scan happened to be.
+    """
+    _stub_all_tools(monkeypatch)
+    token = runner.CancellationToken()
+    dnsx_calls: list[object] = []
+
+    def cancel_during_crtsh(target: str, **kwargs: object) -> bytes:
+        token.cancel()
+        return b"[]"
+
+    def recording_dnsx(candidates: list[str], **kwargs: object) -> bytes:
+        dnsx_calls.append(candidates)
+        return _empty_dnsx_envelope(candidates)
+
+    monkeypatch.setattr(runner, "fetch_crtsh_cached", cancel_during_crtsh)
+    monkeypatch.setattr(runner, "run_dnsx", recording_dnsx)
+
+    with pytest.raises(runner.ScanCancelled):
+        pipeline.run_scan(
+            ScanRequest(target="example.com", tools=frozenset({"crtsh", "dnsx"})),
+            raw_dir=tmp_path / "raw",
+            cancel=token,
+        )
+
+    assert dnsx_calls == [], "Stage 2 ran after the scan was cancelled"
+
+
+def test_run_scan_without_a_token_is_completely_unaffected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Cancellation is additive: the CLI and every existing caller pass no
+    token, and must behave exactly as before."""
+    _stub_all_tools(monkeypatch)
+
+    outcome = pipeline.run_scan(
+        ScanRequest(target="example.com", tools=frozenset({"crtsh", "dnsx"})),
+        raw_dir=tmp_path / "raw",
+    )
+
+    assert outcome.brief.scan.target == "example.com"

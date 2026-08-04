@@ -55,6 +55,11 @@ class ScanManifest:
     # project whose research question is small-model faithfulness, an
     # unattributed narrated brief is close to useless.
     narrated_by: str | None = None
+    # Set when the operator stopped the scan before it finished. Such a
+    # scan has a manifest but deliberately no brief.html: the run is
+    # recorded as having happened and been stopped, which is materially
+    # different from one that never ran.
+    cancelled: bool = False
 
 
 def write_manifest(scan_dir: Path, manifest: ScanManifest) -> None:

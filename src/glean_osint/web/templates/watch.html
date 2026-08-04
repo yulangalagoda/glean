@@ -2,6 +2,10 @@
 {% block title %}Glean — scanning {{ target }}{% endblock %}
 {% block content %}
 <h1>Scanning {{ target }}</h1>
+<form method="post" action="/scan/{{ scan_id }}/cancel" id="cancel-form"
+>
+  <button type="submit" class="cancel-btn" id="cancel-btn">Cancel scan</button>
+</form>
 <div id="watch-root" data-tools="{{ tools_csv }}">
   <ol class="stage-checklist" id="stage-checklist"></ol>
   <p class="hint" id="status-line">Starting…</p>
@@ -75,6 +79,30 @@ events.addEventListener("status", function (e) {
 events.addEventListener("warning", function (e) {
   addEntry(e.data, "warning");
 });
+// Cancelling is a real state change that kills running processes, so it
+// goes over POST rather than a link. Submitted with fetch so the page can
+// stay put and let the SSE stream report the outcome -- a full form POST
+// would navigate away and tear down the EventSource mid-cancel, leaving
+// the operator with no confirmation that anything actually stopped.
+const cancelForm = document.getElementById("cancel-form");
+const cancelBtn = document.getElementById("cancel-btn");
+cancelForm.addEventListener("submit", function (e) {
+  e.preventDefault();
+  if (!confirm("Cancel this scan? Any tool still running will be stopped.")) { return; }
+  cancelBtn.disabled = true;
+  cancelBtn.textContent = "Cancelling…";
+  fetch(cancelForm.action, { method: "POST" });
+});
+
+events.addEventListener("cancelled", function (e) {
+  finishAllStages();
+  events.close();
+  statusLine.textContent = "Scan cancelled. Any running tool was stopped.";
+  addEntry("Scan cancelled by the operator.", "warning");
+  cancelBtn.hidden = true;
+  window.location = e.data;
+});
+
 events.addEventListener("done", function (e) {
   finishAllStages();
   events.close();

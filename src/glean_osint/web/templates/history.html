@@ -7,6 +7,10 @@
     data-date="{{ scan.started_at[:10] }}"
     data-warnings="{{ 1 if scan.warnings else 0 }}"
     data-target="{{ scan.target | lower }}">
+  {% if scan.cancelled %}
+  <span class="history-target history-cancelled">{{ scan.started_at[:19] | replace("T", " ") }} UTC</span>
+  <span class="history-meta cancelled-pill">cancelled</span>
+  {% else %}
   <a class="history-target" href="/scan/{{ scan.scan_id }}">{{ scan.started_at[:19] | replace("T", " ") }} UTC</a>
   <span class="history-meta">
     {% for tid in scan.tools_run %}{{ tool_names[tid].display_name if tid in tool_names else tid }}{% if not loop.last %}, {% endif %}{% endfor %}
@@ -18,6 +22,7 @@
   <span class="narrated-pill" title="The 'Top priorities' prose in this brief was written by this local model; the ranking and structure stay template-generated (ADR-0005).">{{ scan.narrated_by }}</span>
   {% else %}
   <span class="narrated-placeholder" aria-hidden="true"></span>
+  {% endif %}
   {% endif %}
   {% if scan.warnings %}
   <details class="warning-pill">

@@ -20,11 +20,13 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from glean_osint.adapters.base import ParseResult
@@ -48,9 +50,159 @@ CRTSH_TIMEOUT_SECONDS = 120.0
 # sources and can be slow; dnsx/httpx are usually much faster in practice.
 SUBPROCESS_TIMEOUT_SECONDS = 300.0
 
+# How long a terminated child gets to exit on its own before it is killed.
+# Short on purpose: the operator has already asked for the scan to stop, so
+# a tool that ignores SIGTERM should not be able to hold that up.
+_TERMINATE_GRACE_SECONDS = 5.0
+
 
 class ToolUnavailable(Exception):
     """Raised when a subprocess tool isn't on PATH (ADR-0008 D8)."""
+
+
+class ScanCancelled(Exception):
+    """Raised when a scan is cancelled by the operator.
+
+    Deliberately NOT one of the errors a tool degrades over. Every other
+    failure here means "this tool didn't work, carry on with the rest"
+    (ADR-0002 D5); cancellation means "stop the whole scan", so it must
+    propagate past the per-tool handlers rather than be swallowed into a
+    warning that leaves the remaining stages running.
+    """
+
+
+class CancellationToken:
+    """Cooperative cancellation for a single scan.
+
+    Two halves, because either alone is insufficient. The flag lets the
+    pipeline stop between stages, which is enough for the Python side. But
+    a scan's wall-clock time is dominated by child processes -- theHarvester
+    querying external sources can take minutes -- and abandoning the future
+    waiting on one does not kill it: the process keeps running, keeps its
+    network connections open, and keeps touching the target after the
+    operator asked it to stop. So the token also tracks the live children
+    and terminates them.
+
+    Thread-safe by construction: Stage 1 runs its tools concurrently
+    (ADR-0008 D1), so registration and cancellation genuinely race.
+    """
+
+    def __init__(self) -> None:
+        self._cancelled = threading.Event()
+        self._processes: set[subprocess.Popen[bytes]] = set()
+        self._lock = threading.Lock()
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancelled.is_set()
+
+    def cancel(self) -> None:
+        """Request cancellation and terminate any running child process.
+
+        Safe to call more than once and from any thread -- the web app
+        calls it from a request handler while the scan runs in a
+        background task.
+        """
+        self._cancelled.set()
+        with self._lock:
+            processes = list(self._processes)
+        for process in processes:
+            _terminate(process)
+
+    def raise_if_cancelled(self) -> None:
+        if self._cancelled.is_set():
+            raise ScanCancelled
+
+    @contextmanager
+    def track(self, process: subprocess.Popen[bytes]) -> Iterator[None]:
+        """Register a child for the duration of its run.
+
+        The re-check inside the lock closes a real race: `cancel()` can run
+        between this process being spawned and being registered, and would
+        then find an empty set and kill nothing, leaving an orphan running
+        after the scan was cancelled.
+        """
+        with self._lock:
+            self._processes.add(process)
+            already_cancelled = self._cancelled.is_set()
+        if already_cancelled:
+            _terminate(process)
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._processes.discard(process)
+
+
+def _terminate(process: subprocess.Popen[bytes]) -> None:
+    """Ask a child to stop, then insist. `terminate()` alone is not enough:
+    a tool ignoring SIGTERM would keep the scan's resources alive
+    indefinitely, so escalate to `kill()` after a short grace period.
+    `ProcessLookupError` simply means it already exited on its own.
+    """
+    try:
+        process.terminate()
+        try:
+            process.wait(timeout=_TERMINATE_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            process.kill()
+    except (ProcessLookupError, OSError):
+        return
+
+
+def _run_cancellable(
+    argv: list[str],
+    *,
+    timeout: float,
+    check: bool,
+    cancel: CancellationToken,
+) -> subprocess.CompletedProcess[bytes]:
+    """A `subprocess.run` equivalent whose child can be killed mid-flight.
+
+    `subprocess.run` gives the caller no handle on the process, so there is
+    nothing to terminate while it blocks -- which is exactly why this
+    exists rather than reusing it. The return value is a real
+    `CompletedProcess`, so every caller keeps treating the result
+    identically whether or not cancellation is in play.
+    """
+    cancel.raise_if_cancelled()
+    process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    with cancel.track(process):
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _terminate(process)
+            raise
+    # A cancelled child exits non-zero because it was killed, not because
+    # the tool failed -- report that as cancellation rather than letting
+    # `check` raise a CalledProcessError the caller would degrade into a
+    # misleading "this tool failed" warning.
+    cancel.raise_if_cancelled()
+    if check and process.returncode != 0:
+        raise subprocess.CalledProcessError(process.returncode, argv, stdout, stderr)
+    return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+
+
+def _invoke(
+    run: Callable[..., subprocess.CompletedProcess[bytes]],
+    argv: list[str],
+    *,
+    timeout: float,
+    check: bool,
+    cancel: CancellationToken | None,
+) -> subprocess.CompletedProcess[bytes]:
+    """Dispatch one subprocess call, cancellably when a token is present.
+
+    Without a token this is exactly the previous behaviour, including the
+    injected `run` seam the runner tests rely on. With one, the
+    Popen-based path is used instead -- so a test exercising cancellation
+    must drive a real (short-lived) process, which is the only way to
+    prove the child actually dies. A stub could only ever prove the flag
+    was read.
+    """
+    if cancel is None:
+        return run(argv, capture_output=True, timeout=timeout, check=check)
+    return _run_cancellable(argv, timeout=timeout, check=check, cancel=cancel)
 
 
 def tool_available(name: str) -> bool:
@@ -246,6 +398,7 @@ def run_theharvester(
     binary: str = "theHarvester",
     timeout: float = SUBPROCESS_TIMEOUT_SECONDS,
     run: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run,
+    cancel: CancellationToken | None = None,
 ) -> bytes:
     """Run theHarvester, returning its exported JSON file's bytes.
 
@@ -273,7 +426,7 @@ def run_theharvester(
         )
         assert argv is not None
         argv = [binary, *argv[1:]]
-        run(argv, capture_output=True, timeout=timeout, check=True)
+        _invoke(run, argv, timeout=timeout, check=True, cancel=cancel)
         return (Path(tmp) / "out.json").read_bytes()
 
 
@@ -283,6 +436,7 @@ def run_subfinder(
     binary: str = "subfinder",
     timeout: float = SUBPROCESS_TIMEOUT_SECONDS,
     run: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run,
+    cancel: CancellationToken | None = None,
 ) -> bytes:
     """Run subfinder, returning its `-json -silent` JSONL stdout directly.
 
@@ -314,7 +468,7 @@ def run_subfinder(
     argv = SubfinderAdapter().build_command(target)
     assert argv is not None
     argv = [binary, *argv[1:]]
-    completed = run(argv, capture_output=True, timeout=timeout, check=False)
+    completed = _invoke(run, argv, timeout=timeout, check=False, cancel=cancel)
     return completed.stdout
 
 
@@ -324,6 +478,7 @@ def run_dnsx(
     binary: str = "dnsx",
     timeout: float = SUBPROCESS_TIMEOUT_SECONDS,
     run: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run,
+    cancel: CancellationToken | None = None,
 ) -> bytes:
     """Run dnsx against `candidates`, returning the `{candidates, resolved}`
     envelope `glean_osint.adapters.dnsx` requires (ADR-0008 D1/D2).
@@ -346,11 +501,12 @@ def run_dnsx(
         hostsfile.write_text("\n".join(candidates) + "\n", encoding="utf-8")
         # check=False: dnsx exiting non-zero because some/all hosts didn't
         # resolve is an entirely normal outcome, not a tool failure.
-        completed = run(
+        completed = _invoke(
+            run,
             [binary, "-l", str(hostsfile), "-a", "-resp", "-json", "-silent"],
-            capture_output=True,
             timeout=timeout,
             check=False,
+            cancel=cancel,
         )
 
     resolved: list[object] = []
@@ -368,6 +524,7 @@ def run_httpx(
     binary: str = "httpx",
     timeout: float = SUBPROCESS_TIMEOUT_SECONDS,
     run: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run,
+    cancel: CancellationToken | None = None,
 ) -> bytes:
     """Run httpx against `resolved_hosts` (dnsx's positively-confirmed
     resolutions), returning its JSON-lines output directly.
@@ -384,11 +541,12 @@ def run_httpx(
     with tempfile.TemporaryDirectory() as tmp:
         hostsfile = Path(tmp) / "hosts.txt"
         hostsfile.write_text("\n".join(resolved_hosts) + "\n", encoding="utf-8")
-        completed = run(
+        completed = _invoke(
+            run,
             [binary, "-l", str(hostsfile), "-json", "-probe", "-td", "-silent"],
-            capture_output=True,
             timeout=timeout,
             check=False,
+            cancel=cancel,
         )
     return completed.stdout
 
