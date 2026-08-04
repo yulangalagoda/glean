@@ -1,0 +1,10 @@
+{"timestamp":"2026-07-26T20:05:00Z","input":"example.com","url":"https://example.com","title":"Example Domain","scheme":"https","webserver":"ECS (nyb/1D2A)","status_code":200,"content_type":"text/html","method":"GET","port":"443","a":["203.0.113.1"],"tech":["nginx","php"],"failed":false,"words":42,"lines":10}
+{"timestamp":"2026-07-26T20:05:01Z","input":"www.example.com","url":"https://www.example.com","scheme":"https","status_code":200,"port":"443","a":["203.0.113.1"],"tech":["nginx"],"failed":false}
+
+{"timestamp":"2026-07-26T20:05:02Z","input":"WWW.EXAMPLE.COM","url":"https://www.example.com","scheme":"https","status_code":200,"port":"443","a":["203.0.113.1"],"tech":["nginx"],"failed":false}
+{"timestamp":"2026-07-26T20:05:03Z","input":"admin.example.com","failed":true}
+{"timestamp":"2026-07-26T20:05:04Z","input":"cdn.example.com","url":"https://cdn.example.com","scheme":"https","status_code":200,"port":"443","a":["203.0.113.3"],"tech":["wordpress",42,""],"failed":false}
+{"timestamp":"2026-07-26T20:05:05Z","input":"noport.example.com","url":"https://noport.example.com","scheme":"https","status_code":200,"a":["203.0.113.5"],"tech":["apache"],"failed":false}
+this is not json{
+{"url":"https://ghost.example.com","failed":false}
+{"input":"badflag.example.com","failed":"nope"}

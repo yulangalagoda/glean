@@ -1124,6 +1124,28 @@ point is a real release, just pre-dev groundwork.
   triage worked from a browser and returned `422` from anything that omits
   empty-valued fields — which is what the test client does, and what caught
   it. Absent and empty now mean the same thing.
+- `glean eval` scored a target that parsed **nothing** as a perfect 1.000.
+  Both headline metrics are ratios over the findings in a brief, so an empty
+  graph makes them vacuously flawless: faithfulness 1.000 because no finding
+  is unfaithful, provenance_retention 1.000 because no finding lacks a
+  source. Found the hard way — the first CI run of the new eval job reported
+  `mean faithfulness=1.000 mean provenance_retention=1.000` and exited 0
+  against a fixture target whose raw captures had never been committed
+  (a bare `raw/` rule in `.gitignore` matches at every depth, and
+  `git status --short` collapses an untracked directory, hiding it). This is
+  absence-as-evidence, which the project refuses everywhere else, and it
+  would have silently masked a renamed or corrupted capture in the real
+  ground-truth set. A target with no entities is now raised rather than
+  returned, so `run_eval` degrades it to a per-target warning and exits
+  non-zero when every target fails (ADR-0002 D5's discipline). The
+  `.gitignore` gained a single narrow exception for the committed CI
+  fixture — the "commit only sanitised fixtures, deliberately" case its own
+  comment already allows — verified not to re-expose `glean-output/` or
+  `eval/scans/`.
+
+  Worth recording that the layered gate behaved correctly: the pytest leg
+  caught this (8 failures) while the CLI leg did not, which is the reason
+  the numeric assertions were put in a test rather than left to the command.
 - `glean eval` never read subfinder. It was added as the fifth adapter
   (ADR-0002) but `_RAW_ADAPTERS` was never extended, so a
   `subfinder-<slug>.jsonl` capture in a target's `raw/` was silently

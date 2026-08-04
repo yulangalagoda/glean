@@ -101,6 +101,28 @@ def test_structural_metrics_are_perfect_on_the_committed_fixture() -> None:
     assert result.faithfulness.supported_claims == result.faithfulness.total_claims
 
 
+def test_a_target_with_no_captures_is_an_error_not_a_perfect_score(tmp_path: Path) -> None:
+    """The failure that made this test exist. Both headline metrics are
+    ratios over a brief's findings, so a target that parsed nothing scores a
+    vacuous 1.000 on each -- nothing unfaithful, nothing missing provenance,
+    because there is nothing at all. CI hit precisely this: the raw captures
+    were gitignored and never committed, and `glean eval` printed a flawless
+    `mean faithfulness=1.000 mean provenance_retention=1.000` and exited 0.
+
+    An empty evaluation must be reported, never scored. `run_eval` turns this
+    into a per-target warning and exits non-zero if every target fails, so
+    one unreadable capture degrades that target rather than the whole run.
+    """
+    target_dir = tmp_path / "example-com"
+    (target_dir / "raw").mkdir(parents=True)  # present but empty
+    (target_dir / "ground_truth.yaml").write_text(
+        (_TARGET_DIR / "ground_truth.yaml").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match="no entities parsed"):
+        _evaluate_target(target_dir, top_n=5)
+
+
 def test_the_fixture_target_exercises_every_passive_adapter() -> None:
     """The point of a CI fixture is that a change to any adapter shows up in
     the evaluation. subfinder was the fifth adapter and went unread by

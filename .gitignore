@@ -11,6 +11,16 @@ _private/
 # Raw tool output and scan results about real infrastructure are sensitive
 # even for domains you own. Commit only sanitised fixtures, deliberately.
 raw/
+# The one deliberate sanitised fixture this rule's comment allows for: the
+# committed CI evaluation target (roadmap E3). RFC 2606 `example.com`,
+# byte-identical copies of fixtures already in this repo, describing no real
+# infrastructure. Without it `raw/` matches at every depth and CI silently
+# evaluates a target with no captures at all -- which scored a *perfect*
+# 1.000, because an empty graph has nothing to be unfaithful about.
+# Re-including the directory itself is required, not optional: git will not
+# descend into an excluded directory, so `!...raw/*.json` alone matches
+# nothing.
+!tests/fixtures/eval/**/raw/
 scans/
 *.scan.json
 targets.txt

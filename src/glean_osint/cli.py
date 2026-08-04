@@ -638,6 +638,25 @@ def _evaluate_target(
         results.append(HttpxAdapter().parse(httpx_path.read_bytes(), ctx))
 
     merged = merge_graph(results)
+    # A target that parsed nothing must be an error, never a result. Both
+    # headline metrics are ratios over the findings in a brief, so an empty
+    # graph makes them vacuously perfect: faithfulness 1.000 because no
+    # finding is unfaithful, provenance_retention 1.000 because no finding
+    # lacks a source. Caught by exactly that happening in CI -- the raw
+    # captures were missing, and `glean eval` reported a flawless 1.000/1.000
+    # and exited 0 rather than saying it had evaluated nothing at all. That
+    # is absence-as-evidence, which this project refuses everywhere else,
+    # and it would have silently hidden a renamed or corrupted capture in
+    # the real ground-truth set. Raised rather than returned: `run_eval`
+    # already degrades one bad target into a warning and keeps going, and
+    # exits non-zero if every target fails (ADR-0002 D5's discipline).
+    if not merged.entities:
+        msg = (
+            f"no entities parsed from {raw_dir} — expected at least one capture matching "
+            f"<tool>-{slug}.json/.jsonl. An empty graph scores a vacuous 1.000, so it is "
+            "reported as a failure rather than counted as a result"
+        )
+        raise ValueError(msg)
     scored = score_graph(merged.entities, merged.edges, datetime.now(timezone.utc))
     scan_meta = ScanMeta(
         target=ground_truth.target, started_at=collected_at, glean_version=__version__

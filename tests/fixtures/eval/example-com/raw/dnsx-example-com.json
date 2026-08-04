@@ -1,0 +1,36 @@
+{
+  "candidates": [
+    "example.com",
+    "www.example.com",
+    "WWW.EXAMPLE.COM",
+    "admin.example.com",
+    "dead.example.com",
+    "*.example.com",
+    "",
+    123
+  ],
+  "resolved": [
+    {
+      "host": "example.com",
+      "ttl": 300,
+      "resolver": ["1.0.0.1:53"],
+      "a": ["203.0.113.1"],
+      "status_code": "NOERROR"
+    },
+    {
+      "host": "www.example.com",
+      "ttl": 300,
+      "resolver": ["1.0.0.1:53"],
+      "a": ["203.0.113.1"],
+      "status_code": "NOERROR"
+    },
+    {
+      "host": "admin.example.com",
+      "ttl": 300,
+      "resolver": ["8.8.8.8:53"],
+      "a": ["203.0.113.2"],
+      "status_code": "NOERROR"
+    },
+    "not-an-object"
+  ]
+}

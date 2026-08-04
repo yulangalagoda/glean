@@ -1,0 +1,19 @@
+{
+  "cmd": "-d example.com -b crtsh,duckduckgo,otx,certspotter -f /tmp/theharvester-example-com",
+  "hosts": [
+    "example.com",
+    "*.example.com",
+    "www.example.com",
+    "WWW.EXAMPLE.COM",
+    "ADMIN.EXAMPLE.COM.",
+    "",
+    123
+  ],
+  "emails": [
+    "security@example.com",
+    "SecOps@Example.com",
+    "not-an-email",
+    456
+  ],
+  "shodan": []
+}

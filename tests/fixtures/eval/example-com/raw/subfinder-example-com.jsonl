@@ -1,0 +1,8 @@
+{"host":"admin.example.com","input":"example.com","source":"crtsh"}
+{"host":"WWW.EXAMPLE.COM","input":"example.com","source":"crtsh"}
+{"host":"www.example.com","input":"example.com","source":"virustotal"}
+{"host":"example.com","input":"example.com","source":"dnsdumpster"}
+not valid json at all
+{"input":"example.com","source":"crtsh"}
+["not","a","dict"]
+{"host":"","input":"example.com","source":"crtsh"}
