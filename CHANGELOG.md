@@ -9,6 +9,47 @@ point was a real release, just pre-dev groundwork. That bar was reached on
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-08-04
+
+Packaging and release-process fixes found while preparing the first PyPI
+publish of a working version. No functional change to scanning.
+
+### Fixed
+- **The `glean` command could silently be somebody else's program.** PyPI
+  already carries a package called `glean` (an OpenStack config tool) whose
+  own console script is also named `glean`. Console scripts are just files
+  in the environment's `bin/` directory, so whichever package is installed
+  *last* overwrites the other — with no warning from pip and no error at
+  run time. Verified both ways in a throwaway venv: install order alone
+  decides which program `glean` runs, and it flips on any reinstall or
+  upgrade of either package.
+
+  The package now installs **`glean-osint` as well as `glean`**, pointing at
+  the same entry point. `glean` stays primary, since it is what every doc
+  and the equivalent-command preview print; `glean-osint` is the name that
+  cannot be shadowed, and matches the distribution name so it is guessable
+  rather than needing to be looked up. Confirmed against a real install with
+  the conflicting package deliberately installed last: `glean` resolves to
+  the OpenStack tool, `glean-osint` still runs Glean.
+
+### Added
+- **Releases publish themselves from the tag** (`.github/workflows/publish.yml`),
+  using PyPI trusted publishing — GitHub mints a short-lived OIDC token PyPI
+  verifies against a configured publisher, so no long-lived API token is
+  stored in the repository at all.
+
+  The workflow re-runs the full gate (ruff, mypy, pytest on Linux *and*
+  Windows) against the tagged commit before building: a tag is not evidence
+  that the code works, and a tag pushed from a branch that never passed CI
+  must not be able to reach PyPI. It then asserts the tag matches the
+  package's own `__version__` — cheap to check, and effectively unfixable
+  once uploaded, since PyPI does not permit re-uploading a version — and
+  re-asserts that `docs/`, `CHARTER` and `_private/` are absent from the
+  artifact that actually leaves the machine. Publishing is scoped to a
+  `pypi` environment so the repository can require manual approval, and a
+  GitHub release is cut from the same artifacts afterwards.
+
+
 ## [0.1.0] — 2026-08-04
 
 First real release. `CHANGELOG.md` reserved this version for the point at

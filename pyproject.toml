@@ -1,6 +1,6 @@
 [project]
 name = "glean-osint"
-version = "0.1.0"
+version = "0.1.1"
 description = "Glean — OSINT synthesis: unify open-source recon tools into one provenance-tracked, LLM-prioritised intelligence report."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -17,7 +17,20 @@ dependencies = [
 ]
 
 [project.scripts]
+# Two names for one entry point, on purpose. PyPI's existing `glean`
+# package (an OpenStack config tool) also installs a console script called
+# `glean`, and console scripts are just files in the environment's bin
+# directory -- so whichever package is installed *last* silently overwrites
+# the other, with no warning from pip and no error at run time. Verified
+# both ways in a throwaway venv: the winner flips on any reinstall or
+# upgrade of either package.
+#
+# `glean` stays the primary name because it is what every doc and the
+# equivalent-command preview print. `glean-osint` is the escape hatch that
+# cannot be shadowed, matching the distribution name so it is guessable
+# without being looked up.
 glean = "glean_osint.cli:main"
+glean-osint = "glean_osint.cli:main"
 
 [project.optional-dependencies]
 dev = [
