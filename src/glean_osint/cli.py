@@ -760,7 +760,16 @@ def run_eval(
         typer.secho("No targets evaluated successfully.", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
 
-    header = f"{'target':<20} {'faithfulness':>13} {'provenance':>11} "
+    # `stage1_faith`, not a bare `faithfulness`: the two stages measure
+    # genuinely different things (ADR-0006 D1), and a column headed
+    # "faithfulness" invites reading a structural id-existence check as a
+    # statement that the prose is accurate. Real evidence that this matters,
+    # not a hypothetical tidy-up: one narrated brief scored stage 1 = 1.000
+    # and stage 2 = 0.455 on identical text, with a finding stating the
+    # opposite of its own entity's attributes (ADR-0009 Validation,
+    # 2026-08-04). Naming the stages symmetrically also makes stage 2's
+    # *absence* visible, which a lone "faithfulness" column hid.
+    header = f"{'target':<20} {'stage1_faith':>13} {'provenance':>11} "
     header += f"{'overlap@' + str(top_n):>10} {'ndcg@' + str(top_n):>9}"
     if llm:
         header += f" {'stage2_faith':>13}"
@@ -781,7 +790,7 @@ def run_eval(
     mean_ndcg = sum(r.prioritisation.ndcg_at_n for r in results) / n
 
     summary = (
-        f"\n[{n} targets] mean faithfulness={mean_faithfulness:.3f} "
+        f"\n[{n} targets] mean stage1_faithfulness={mean_faithfulness:.3f} "
         f"mean provenance_retention={mean_provenance:.3f} "
         f"mean overlap@{top_n}={mean_overlap:.3f} mean nDCG@{top_n}={mean_ndcg:.3f}"
     )
@@ -792,6 +801,39 @@ def run_eval(
         summary += f" mean stage2_faithfulness={mean_stage2:.3f} (unjudged={total_unjudged})"
 
     typer.secho(summary, fg=typer.colors.CYAN)
+    typer.echo(_faithfulness_caveat(measured_content=bool(stage2_results)))
+
+
+def _faithfulness_caveat(*, measured_content: bool) -> str:
+    """What the reported faithfulness number does and does not cover.
+
+    Printed with the numbers rather than left to the README, because the
+    numbers are what gets pasted into a report or a paper -- a caveat that
+    only exists in documentation does not travel with them.
+
+    Stage 1 checks that each finding's entity exists in the graph. Invented
+    ids are filtered out before a brief is ever built (ADR-0009 D5), so it
+    is structurally incapable of reading below 1.000, and a reader shown it
+    alone would reasonably but wrongly conclude the prose was accurate --
+    a real narrated brief has scored stage 1 = 1.000 and stage 2 = 0.455 on
+    identical text (ADR-0009 Validation, 2026-08-04).
+    """
+    lines = [
+        "stage1_faith checks only that each finding resolves to a real entity; invented ids",
+        "are already filtered out before the brief exists, so it cannot read below 1.000 and",
+        "is not a statement that the prose is accurate (ADR-0006 D1).",
+    ]
+    if measured_content:
+        lines += [
+            "stage2_faith judges the prose itself, but the judge makes real mistakes of its own",
+            "— treat it as a lower bound rather than an exact figure (ADR-0006 Validation).",
+        ]
+    else:
+        lines += [
+            "Content-level fabrication — a real entity described with false prose — is NOT",
+            "measured in this run. Pass --llm to also run the stage-2 judge.",
+        ]
+    return "\n".join(lines)
 
 
 def _default_raw_dir(domain: str, collected_at: datetime) -> Path:

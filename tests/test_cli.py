@@ -603,7 +603,7 @@ def test_eval_reports_headline_numbers_for_a_target(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "example.com" in result.output
     assert "faithfulness" in result.output
-    assert "mean faithfulness=1.000" in result.output
+    assert "mean stage1_faithfulness=1.000" in result.output
     assert "mean provenance_retention=1.000" in result.output
 
 
@@ -675,3 +675,40 @@ def test_eval_skips_a_target_missing_the_blind_attestation(tmp_path: Path) -> No
     assert result.exit_code == 0
     assert "broken: evaluation failed" in result.output
     assert "example.com" in result.output
+
+
+def test_eval_says_plainly_that_content_faithfulness_is_unmeasured(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The number that gets pasted into a report has to carry its own
+    caveat. Stage 1 cannot read below 1.000 by construction, and a column
+    once headed simply "faithfulness" invited reading a structural check as
+    a statement that the prose was accurate -- a real narrated brief scored
+    stage 1 = 1.000 against stage 2 = 0.455 on identical text (ADR-0009
+    Validation, 2026-08-04).
+    """
+    result = runner.invoke(app, ["eval", "--scans-dir", "tests/fixtures/eval"])
+
+    assert result.exit_code == 0
+    assert "stage1_faith" in result.output
+    assert "faithfulness" not in result.output.split("\n")[0]  # no bare column header
+    assert "is NOT" in result.output
+    assert "--llm" in result.output
+
+
+def test_the_caveat_changes_once_content_faithfulness_is_measured() -> None:
+    """With stage 2 run, the honest caveat is different: the content *was*
+    measured, but by a judge that ADR-0006's own validation found makes real
+    mistakes -- so it is a lower bound, not an exact figure."""
+    from glean_osint.cli import _faithfulness_caveat
+
+    unmeasured = _faithfulness_caveat(measured_content=False)
+    measured = _faithfulness_caveat(measured_content=True)
+
+    assert "is NOT" in unmeasured and "--llm" in unmeasured
+    assert "lower bound" in measured
+    assert "is NOT" not in measured
+    # Stage 1's own limitation is stated either way -- it does not stop
+    # being structurally incapable of failing just because stage 2 ran.
+    for text in (unmeasured, measured):
+        assert "cannot read below 1.000" in text

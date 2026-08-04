@@ -114,11 +114,20 @@ both raw tool output (`<slug>/raw/`) and a ground-truth ranking
 (`<slug>/ground_truth.yaml`, ADR-0007), then reports the charter's three
 headline numbers per target and averaged across the set: faithfulness,
 provenance retention, and prioritisation quality (`overlap@N`/`nDCG@N`
-against an independent human ranking). Faithfulness stage 1 and
-provenance retention read 1.0 either way — stage 1 only checks whether a
-finding's entity exists at all, which invented entities are already
-filtered out before ever reaching the brief. With `--llm`, a second
-faithfulness number (`stage2_faith`) also appears: a real, different
+against an independent human ranking). The faithfulness column is named
+`stage1_faith`, not simply `faithfulness`, because the two stages measure
+different things and only one of them runs by default — stage 1 and
+provenance retention read 1.0 either way, since stage 1 only checks
+whether a finding's entity exists at all and invented entities are
+already filtered out before ever reaching the brief. It is therefore
+structurally incapable of reading below 1.000, and is not a statement
+that the prose is accurate: a real narrated brief has scored
+`stage1_faith` 1.000 alongside `stage2_faith` 0.455 on identical text,
+with one finding asserting the opposite of its own entity's attributes
+(ADR-0009 Validation, 2026-08-04). `glean eval` prints that caveat
+alongside the numbers rather than leaving it here, so it travels with
+them. With `--llm`, a second faithfulness number (`stage2_faith`) also
+appears: a real, different
 local model judges whether the narrated *prose* actually states only
 facts supported by that entity's real data (ADR-0006 D1 stage 2,
 ADR-0006 D4 requires the judge to differ from the narration model —

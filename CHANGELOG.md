@@ -1239,6 +1239,28 @@ point is a real release, just pre-dev groundwork.
   so a structural check occupies the same slot a content check would.
   Left as an explicit open decision rather than changed quietly, since it
   alters the headline output of the project's own evaluation.
+- **`glean eval` now labels faithfulness honestly**, closing the decision
+  half of ADR-0009 open question 5 (the factual half was answered by the
+  fabrication recorded above). The column is `stage1_faith` rather than a
+  bare `faithfulness`, so a structural id-existence check no longer
+  occupies the slot a reader takes to mean "the prose is accurate", and
+  naming the stages symmetrically makes stage 2's *absence* visible where
+  a lone `faithfulness` column hid it. The summary reads
+  `mean stage1_faithfulness=`.
+
+  The caveat now prints with the numbers rather than living only in the
+  README: that stage 1 cannot read below 1.000 by construction, and that
+  content-level fabrication is **not measured** without `--llm`. That
+  placement is the point — the numbers are what gets pasted into a report
+  or a paper, and a caveat that only exists in documentation does not
+  travel with them. With `--llm` the caveat changes rather than
+  disappearing, since the judge itself makes real mistakes (ADR-0006
+  Validation) and `stage2_faith` is a lower bound, not an exact figure.
+
+  Verified against a real judge on both branches. The `--llm` run over the
+  committed fixture target independently reproduced the same pattern on a
+  second, synthetic target: `stage1_faith` 1.000 against `stage2_faith`
+  0.545.
 
 ### Fixed
 - The triage route required its `state` form field, so clearing a finding's
