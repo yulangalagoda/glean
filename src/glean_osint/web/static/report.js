@@ -75,8 +75,13 @@
         return;
       }
       var tool = span.getAttribute("data-tool");
+      // The exact asserting record when the adapter recorded one, the whole
+      // capture otherwise -- an older scan, or a finding whose provenance
+      // predates raw_record_ref, still gets a working link.
+      var ref = span.getAttribute("data-ref");
       var link = document.createElement("a");
-      link.href = "/scan/" + encodeURIComponent(scanId) + "/raw/" + encodeURIComponent(tool);
+      link.href = "/scan/" + encodeURIComponent(scanId) + "/raw/" + encodeURIComponent(tool)
+        + (ref ? "?ref=" + encodeURIComponent(ref) : "");
       link.target = "_blank";
       link.rel = "noopener";
       link.textContent = span.textContent;

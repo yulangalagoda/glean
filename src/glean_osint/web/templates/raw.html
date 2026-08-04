@@ -1,7 +1,28 @@
 {% extends "base.html" %}
 {% block title %}Glean — {{ tool_name }} raw output{% endblock %}
 {% block content %}
+{% if record %}
+<h1>Source record — {{ tool_name }}</h1>
+<p class="hint">
+  The exact record this finding came from{% if record.line_number %},
+  line {{ record.line_number }} of{% else %} in{% endif %} the archived
+  <a href="/scan/{{ scan_id }}/raw/{{ tool_id }}">full {{ tool_name }} capture</a>.
+</p>
+<p class="field-hint"><code>{{ record.ref }}</code></p>
+<pre class="raw-output">{{ record.content }}</pre>
+{% else %}
 <h1>Raw output — {{ tool_name }}</h1>
-<p class="hint"><a href="/scan/{{ scan_id }}">&larr; Back to scan</a></p>
+{% if unresolved_ref %}
+{# A ref was recorded but could not be resolved. Said plainly rather than
+   quietly showing the whole file, which would hide a real provenance
+   problem behind something that looks like normal behaviour. #}
+<p class="warning active-warning">
+  Could not locate the exact record <code>{{ unresolved_ref }}</code> in this capture —
+  showing the whole file instead. The archive may have been truncated or rewritten
+  since the scan ran.
+</p>
+{% endif %}
 <pre class="raw-output">{{ content }}</pre>
+{% endif %}
+<p class="hint"><a href="/scan/{{ scan_id }}">&larr; Back to scan</a></p>
 {% endblock %}

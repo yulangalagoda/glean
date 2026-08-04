@@ -73,6 +73,12 @@ Relationships (`subdomain_of`, `resolves_to`, `hosts`, `has_record`, `exposes_se
 
 Each provenance entry records `source_tool`, optional `source_module`, `method` (`passive`|`active`), `collected_at`, an optional `raw_record_ref` pointing into the archived raw tool output, and an optional `confidence`. The `raw_record_ref` is what makes a surfaced claim traceable all the way to source bytes — the strongest form of the provenance guarantee, and reproducibility insurance.
 
+**Implementation note (2026-08-04): `raw_record_ref` is now actually resolved, and its index bases are load-bearing.** Every adapter had populated this field from the start, but nothing read it — the web view served a tool's whole archived capture and left the operator to find the justifying line themselves. `glean_osint/provenance.py` now resolves a ref back to the exact record, and a provenance link in the brief points at that record rather than the file.
+
+The refs form a small closed grammar written entirely by this project (`line:N`, `$[N]`, `$[N].field`, `$.key[N]`, `$.key[field=value].sub`), so resolving them needs no JSONPath dependency — a general engine would accept a far larger language than anything here can emit.
+
+The trap worth recording: **the two families index differently, on purpose.** JSON-lines adapters (subfinder, httpx) count physical lines from **1**, including blank and malformed ones, because that is what an editor shows and what "line 7" means to a person. Document adapters (crt.sh, theHarvester, dnsx) index arrays from **0**, because that is what JSONPath means. Normalising the two would be a one-line change that silently invalidated every ref already persisted in archived scans' `entities.json`, making old scans resolve one record off — which is worse than not resolving them at all, because it still looks like it worked.
+
 ### D7 — Deterministic priority lives on the entity, LLM never writes it
 
 The optional `priority` object (`score`, `rank`, `signals`) is populated by the ADR-0004 scoring code. The LLM reads it to write narrative; it never sets it. This is the structural expression of the charter's "deterministic score + LLM narrative" split, and it is what lets the evaluation test whether the LLM's narrative is faithful to a ranking it did not invent.

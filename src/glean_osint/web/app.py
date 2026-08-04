@@ -54,6 +54,7 @@ from glean_osint.history import (
     write_triage,
 )
 from glean_osint.pipeline import ScanRequest
+from glean_osint.provenance import resolve_record
 from glean_osint.registry import PRESETS, TOOL_REGISTRY, normalise_selection
 
 # How many scans run at once (ADR-0011 D9). Deliberately low, and chosen
@@ -720,27 +721,48 @@ def create_app(
         )
 
     @app.get("/scan/{scan_id}/raw/{tool_id}", response_class=HTMLResponse, response_model=None)
-    def view_raw(scan_id: str, tool_id: str, request: Request) -> HTMLResponse:
-        """Provenance made clickable: each "Seen by" source in the brief
-        links here. v1 scope is deliberately the tool's *whole* archived
-        raw output, not the exact asserting record -- `raw_record_ref`'s
-        shape (line number vs. JSONPath) varies per adapter, and an
-        adapter-aware single-record extractor is real additional scope
-        this round didn't need to reach for real trust-through-
-        transparency value."""
+    def view_raw(scan_id: str, tool_id: str, request: Request, ref: str = "") -> HTMLResponse:
+        """Provenance made checkable: each "Seen by" source in the brief
+        links here, carrying the `raw_record_ref` that entity's provenance
+        recorded (ADR-0001 D6).
+
+        With a resolvable ref this shows the single record that asserted
+        the finding; without one it falls back to the whole capture, which
+        is what this route always did. That fallback is not a leftover --
+        it is what an older scan, a truncated file, or a ref from an
+        adapter that has since changed shape all land on, and a provenance
+        link that cannot pinpoint a record must still lead somewhere real.
+        """
         if not _is_safe_scan_id(scan_id) or tool_id not in TOOL_REGISTRY:
             raise HTTPException(status_code=404, detail="Not found.")
         raw_dir = history_root / scan_id / "raw"
         matches = sorted(raw_dir.glob(f"{tool_id}-*")) if raw_dir.is_dir() else []
         if not matches:
             raise HTTPException(status_code=404, detail="No archived raw output for this tool.")
+
+        raw_bytes = matches[0].read_bytes()
+        record = resolve_record(raw_bytes, ref) if ref else None
         return templates.TemplateResponse(
             request,
             "raw.html",
             {
                 "scan_id": scan_id,
+                "tool_id": tool_id,
                 "tool_name": TOOL_REGISTRY[tool_id].display_name,
-                "content": _pretty_print_raw(matches[0].read_text(encoding="utf-8")),
+                "record": record,
+                # Only rendered when no single record was resolved, so a
+                # 500-record capture is not shipped to the browser purely
+                # to display two lines of it.
+                "content": (
+                    None
+                    if record is not None
+                    else _pretty_print_raw(raw_bytes.decode("utf-8", errors="replace"))
+                ),
+                # Distinguishes "no ref was given" from "a ref was given and
+                # could not be resolved" -- only the second is worth telling
+                # the operator about, and silently showing the whole file
+                # would hide a real provenance problem.
+                "unresolved_ref": ref if ref and record is None else "",
             },
         )
 

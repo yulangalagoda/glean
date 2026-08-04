@@ -503,14 +503,24 @@ def _html_seen_by(entity: Entity) -> str:
     tool's archived raw output (`/scan/{id}/raw/{tool}`) without ever
     putting a link into the offline file (which has no server to point
     at)."""
-    seen: dict[tuple[str, str], None] = {}
+    # First ref wins per (tool, method): one tool can assert the same entity
+    # from several records (crt.sh emits both `$[N]` and `$[N].name_value`
+    # for one host), and the earliest is the record that first established
+    # it. Carried as `data-ref` so the web view can link to that exact
+    # record rather than the whole capture; inert in the standalone file,
+    # which has no server to resolve it against (ADR-0010 D3).
+    seen: dict[tuple[str, str], str | None] = {}
     for prov in entity.provenance:
-        seen.setdefault((prov.source_tool, prov.method), None)
-    parts = [
-        f'<span class="src" data-tool="{_esc(tool)}">'
-        f"{_esc(TOOL_DISPLAY_NAMES.get(tool, tool))} ({_esc(method)})</span>"
-        for tool, method in seen
-    ]
+        key = (prov.source_tool, prov.method)
+        if key not in seen:
+            seen[key] = prov.raw_record_ref
+    parts = []
+    for (tool, method), ref in seen.items():
+        ref_attr = f' data-ref="{_esc(ref)}"' if ref else ""
+        parts.append(
+            f'<span class="src" data-tool="{_esc(tool)}"{ref_attr}>'
+            f"{_esc(TOOL_DISPLAY_NAMES.get(tool, tool))} ({_esc(method)})</span>"
+        )
     return ", ".join(parts)
 
 

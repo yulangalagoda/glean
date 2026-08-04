@@ -1261,6 +1261,46 @@ point is a real release, just pre-dev groundwork.
   committed fixture target independently reproduced the same pattern on a
   second, synthetic target: `stage1_faith` 1.000 against `stage2_faith`
   0.545.
+- **Provenance now resolves to the exact record** (roadmap item #1). Every
+  adapter had populated `ProvenanceEntry.raw_record_ref` (ADR-0001 D6)
+  since the beginning, but nothing ever read it: clicking a source in a
+  brief served that tool's *whole* archived capture. For a project whose
+  central claim is that every finding is traceable to a named source,
+  "here is the 900-line file it came from somewhere inside" is a weaker
+  answer than it looks.
+
+  New `glean_osint/provenance.py` resolves a ref back to the single record
+  that asserted a finding. Deliberately not JSONPath and not a dependency:
+  the refs form a small closed grammar this project writes entirely itself
+  (`line:N`, `$[N]`, `$[N].field`, `$.key[N]`,
+  `$.key[field=value].sub`), so a general engine would buy the ability to
+  resolve refs that cannot exist.
+
+  The subtlety worth knowing: **the two adapter families index
+  differently, and that is load-bearing.** JSON-lines adapters count
+  physical lines from 1 (including blank and malformed ones); document
+  adapters index arrays from 0. Normalising them would silently invalidate
+  every ref already persisted in archived scans, resolving one record off
+  — worse than not resolving at all, because it still looks like it
+  worked. Recorded in ADR-0001 as a trap rather than tidied.
+
+  Unresolvable refs degrade to the whole capture, which is what an older
+  scan or a truncated archive lands on — but a ref that *was* recorded and
+  could not be found says so plainly, since silently showing everything
+  would hide a real provenance problem behind normal-looking behaviour.
+
+  Verified against real captures: all 50 refs across all five adapters
+  resolve, and each resolved record genuinely corresponds to its entity
+  (certificates checked by serial, since a certificate's `value` is an
+  internal `serial|issuer` key that never appears verbatim in the source).
+  Live-validated end to end — a real subfinder link resolves to "line 2 of
+  the archived capture", a crt.sh `$[0].name_value` link to the single
+  hostname, and a deliberately bad ref reports itself.
+
+  Briefs rendered before this change carry no refs and keep the previous
+  whole-file behaviour; the standalone `brief.html` stays zero-JS, with
+  `data-ref` inert there since it has no server to resolve against
+  (ADR-0010 D3).
 
 ### Fixed
 - The triage route required its `state` form field, so clearing a finding's

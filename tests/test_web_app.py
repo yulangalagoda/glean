@@ -1389,3 +1389,109 @@ def test_queued_scans_are_visible_on_the_history_page(
 
     release.set()
     _settle(client)
+
+
+# ── Exact-record provenance (roadmap item #1) ────────────────────────────
+
+
+def _scan_with_capture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, client: TestClient) -> str:
+    def fake_run_scan(request, *, raw_dir, on_status=None, on_warning=None, cancel=None):
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        (raw_dir / "subfinder-example.com.jsonl").write_text(
+            '{"host": "a.example.com"}\n{"host": "admin.example.com"}\n', encoding="utf-8"
+        )
+        return _fake_outcome(request)
+
+    monkeypatch.setattr(pipeline, "run_scan", fake_run_scan)
+    redirect = client.post(
+        "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
+    )
+    _settle(client)
+    return _scan_id_from_watch_redirect(redirect.headers["location"])
+
+
+def test_a_ref_resolves_the_raw_view_to_a_single_record(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The point of item #1. Serving the whole capture made the operator
+    find the one line that justified a finding themselves, which is a
+    weaker answer than it looks for a project claiming every finding is
+    traceable to a named source."""
+    client = _client(tmp_path)
+    scan_id = _scan_with_capture(monkeypatch, tmp_path, client)
+
+    response = client.get(f"/scan/{scan_id}/raw/subfinder?ref=line:2")
+
+    assert response.status_code == 200
+    assert "admin.example.com" in response.text
+    assert "a.example.com" not in response.text  # the other record is not shown
+    assert "Source record" in response.text
+    assert "line 2" in response.text
+
+
+def test_no_ref_still_serves_the_whole_capture(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The fallback is not a leftover: an older scan, or a finding whose
+    provenance never recorded a ref, still gets a working link."""
+    client = _client(tmp_path)
+    scan_id = _scan_with_capture(monkeypatch, tmp_path, client)
+
+    response = client.get(f"/scan/{scan_id}/raw/subfinder")
+
+    assert response.status_code == 200
+    assert "a.example.com" in response.text
+    assert "admin.example.com" in response.text
+    assert "Source record" not in response.text
+
+
+def test_an_unresolvable_ref_says_so_instead_of_quietly_showing_everything(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Falling back silently would hide a real provenance problem behind
+    something that looks like normal behaviour -- the operator would have
+    no way to tell "this file has no such record" from "no ref was given"."""
+    client = _client(tmp_path)
+    scan_id = _scan_with_capture(monkeypatch, tmp_path, client)
+
+    response = client.get(f"/scan/{scan_id}/raw/subfinder?ref=line:999")
+
+    assert response.status_code == 200
+    assert "Could not locate the exact record" in response.text
+    assert "line:999" in response.text
+    assert "a.example.com" in response.text  # still shows the capture
+
+
+def test_the_brief_carries_a_data_ref_for_the_web_view_to_link_with() -> None:
+    """Inert markup in the standalone file (ADR-0010 D3 -- there is no
+    server there to resolve a ref against), and the hook report.js uses to
+    point a provenance link at one record instead of a whole file."""
+    from glean_osint.brief import build_brief
+    from glean_osint.brief import render_html as render
+
+    entity = Entity(
+        id="subdomain:admin.example.com",
+        type="subdomain",
+        value="admin.example.com",
+        provenance=(
+            ProvenanceEntry(
+                source_tool="subfinder",
+                method="passive",
+                collected_at="2026-08-04T00:00:00Z",
+                raw_record_ref="line:2",
+            ),
+        ),
+        priority=Priority(score=3, rank=1, signals=("sensitive_hostname_pattern",)),
+    )
+    scan_meta = ScanMeta(
+        target="example.com",
+        started_at="2026-08-04T00:00:00Z",
+        glean_version="0.0.2",
+        authorisation=None,
+        tools_run=(),
+    )
+
+    rendered = render(build_brief([entity], [], scan_meta))
+
+    assert 'data-tool="subfinder" data-ref="line:2"' in rendered
+    assert "<script" not in rendered  # still zero-JS
