@@ -79,8 +79,8 @@ Same `id` → one merged entity, provenance = [crtsh/passive, amass/active], `fi
 
 ## Open questions
 
-1. Do near-miss cases (www.x.com vs x.com, apex vs www) need a canonicalisation rule or are they genuinely distinct entities? (Leaning: distinct — they *are* different hosts; a `subdomain_of`/alias edge is the right model, not a merge.)
-2. Should `attributes._conflicts` surface in the brief at all, or stay internal? (Leaning internal for v1.)
+1. ~~Do near-miss cases (www.x.com vs x.com, apex vs www) need a canonicalisation rule or are they genuinely distinct entities?~~ **Resolved 2026-08-04:** distinct, as the leaning predicted. They are different hosts that can resolve differently, and collapsing them would destroy exactly the information a reader needs. The relationship is carried as a `subdomain_of` edge instead (emitted by the crt.sh and subfinder adapters), so the link is explicit without the entities being merged.
+2. ~~Should `attributes._conflicts` surface in the brief at all, or stay internal?~~ **Resolved 2026-08-04:** internal, as leaned. Nothing in `brief.py` or the web views reads `_conflicts`; it exists so a conflict is recorded rather than silently discarded, which is an auditability property, not something a one-page brief should spend a line on.
 3. CDN / shared-hosting IPs — the SpiderFoot "shared-hosting neighbours" noise the charter calls out. Confirm the rubric deprioritises these rather than the dedup stage merging them (it must not merge distinct hosts).
 
 ## Validation

@@ -119,13 +119,13 @@ Keeping the rubric simple is deliberate: a complex rubric that happens to match 
 
 ## Open questions
 
-1. Should any signals be multiplicative / interacting, or is additive good enough for v1? (Leaning additive — legibility first.)
-2. Final hostname keyword and sensitive-port lists — draft now, but confirm against real scan output.
-3. Do we expose `priority.score` to the reader (ADR-0005 Q3) or only `rank` + signals?
-4. Should `multi_tool_corroboration` weight scale with the *number* of tools, or stay flat? (Leaning flat for v1.)
+1. ~~Should any signals be multiplicative / interacting, or is additive good enough for v1?~~ **Resolved 2026-08-04:** additive, as leaned, and now validated across 10 real ground-truth targets. Legibility was the deciding factor and it paid off concretely — an additive rubric is what makes the per-signal score breakdown (`exposed_service +2, active_only_finding +1`) explainable in the UI at all.
+2. ~~Final hostname keyword and sensitive-port lists — draft now, but confirm against real scan output.~~ **Resolved 2026-08-04:** confirmed against all 10 ground-truth targets and live scans, and the lists live in `config/priority-signals.v1.yaml` (`sensitive_hostname_keywords`, `sensitive_ports`) rather than in code, so tuning them never requires a release.
+3. ~~Do we expose `priority.score` to the reader (ADR-0005 Q3) or only `rank` + signals?~~ **Resolved 2026-08-04:** exposed. The score is shown per finding, and hovering it gives the full signal breakdown that produced it. Deterministic additive scoring is the project's differentiator over black-box tools, so hiding the number would have concealed the most defensible thing about it.
+4. ~~Should `multi_tool_corroboration` weight scale with the *number* of tools, or stay flat?~~ **Resolved 2026-08-04:** flat, as leaned. Shipped and validated across the ground-truth set; no evidence emerged that a third or fourth corroborating tool is meaningfully stronger than a second, and a flat weight keeps the breakdown readable.
 5. ~~Exact weight/sign for the new liveness signal — zero out entirely, or just penalise?~~ **Resolved:** penalised (`stale_no_dns`, −3), not a hard zero — sized to offset `sensitive_hostname_pattern` exactly, so a dead-but-named entity nets to 0 rather than being force-excluded by a special case. A stale finding with other independent signals (e.g. a `breach_hit`) can still surface.
 6. ~~Should a plain positive "this resolves" signal exist for subdomains, to counter stale historical noise outranking live infrastructure?~~ **Resolved: no.** Considered and rejected in favour of `cert_superseded` — the actual defect was `cert_expired` misfiring on routine, superseded certificate history, not an absence of a liveness reward. A blanket liveness signal would have traded one noise-as-signal failure for its mirror image (every ordinary live host reading as a priority). See D2's 2026-07-23 correction.
-7. `cert_superseded`'s "same hostname" check needs a precise definition once implemented: exact SAN-set match, or "at least one SAN in common"? Leaning toward "at least one SAN in common" for v1 (simpler, and a partial-overlap case — e.g. a wildcard cert superseded by several single-name certs — should still count as routine rotation, not a finding), but not yet exercised against real multi-SAN rotation data.
+7. ~~`cert_superseded`'s "same hostname" check needs a precise definition once implemented: exact SAN-set match, or "at least one SAN in common"?~~ **Resolved 2026-08-04:** "at least one SAN in common", as leaned — implemented in `scoring.py`, whose own docstring already cited this question as settled.
 
 ## Validation
 

@@ -95,7 +95,7 @@ The `scan` block records the target, an `authorisation` note (the basis on which
 
 ## Open questions (status after pilot)
 
-1. Entity-type enum completeness — confirmed sufficient for crt.sh and theHarvester output; Amass/BBOT/dnsx not yet pilot-tested.
+1. Entity-type enum completeness — ~~confirmed sufficient for crt.sh and theHarvester output; Amass/BBOT/dnsx not yet pilot-tested.~~ **Partly answered 2026-08-04:** dnsx, httpx and subfinder have all since been wired as real adapters against real captures, and none needed a new entity type — `dns_record`/`ip_address` covered dnsx, `service`/`web_tech` covered httpx, `subdomain` covered subfinder. Five tools have now exercised the enum without extending it. Amass and BBOT remain untested, so the question stays open for those two only.
 2. ~~Confirm `certificate` identity on fingerprint is available from crt.sh output in practice.~~ **Resolved: no, it is not available. Serial+issuer is the primary identity path for crt.sh, not a fallback.** See D3.
 3. Decide whether `breach_exposure` stays in v1 — still open, not exercised by this pilot (no breach source was queried).
 4. ~~How is `*.example.com` represented — its own entity, or just a SAN annotation on the certificate?~~ **Resolved 2026-07-23:** its own `subdomain` entity, `wildcard` attribute set true, `id`/`value` keep the literal `*.` prefix rather than collapsing into the apex. See D3/D4.

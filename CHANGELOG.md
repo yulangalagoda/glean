@@ -9,6 +9,41 @@ point was a real release, just pre-dev groundwork. That bar was reached on
 
 ## [Unreleased]
 
+### Changed
+- **ADR open-question cleanup.** Eleven ADRs carried open questions that
+  shipped work had already answered, so anyone reading the decision record
+  saw a project still deliberating things the code had settled — in one
+  case (`cert_superseded`'s SAN rule) `scoring.py`'s own docstring already
+  called the question "resolved" while the ADR still posed it.
+
+  21 questions closed, each with the evidence that closed it rather than a
+  bare strike-through: the shared `normalise` module exists; the runner got
+  its own ADR (0008); apex and `www` stayed distinct entities linked by a
+  `subdomain_of` edge; `_conflicts` stayed internal; the rubric stayed
+  additive and flat-weighted, validated across 10 real targets; the
+  priority score is exposed with its signal breakdown; `top_n` stayed fixed
+  at 5; the model still cannot merge findings; both `overlap@N` and
+  `nDCG@N` are reported so no headline choice was needed; the fifth tool
+  (subfinder) needed no richer `build_command()` signature; stage-2
+  faithfulness was built without a new ADR; and the entity-graph and
+  `glean serve` questions were both answered by ADR-0011.
+
+  ADR-0001's entity-type question is marked *partly* answered rather than
+  resolved — dnsx, httpx and subfinder have now exercised the enum without
+  extending it, but Amass and BBOT remain untested, so it stays open for
+  those two.
+
+  **28 of 74 open questions are now resolved.** What remains is genuinely
+  open, and deliberately left so: breach sources, BBOT streaming,
+  shared-hosting deprioritisation, ground-truth tie-breaks and buffer size,
+  judge reliability (ADR-0006 Q5), a second annotator, `--dry-run`,
+  narrating the tail, and the web interface's deferred PDF/multi-user
+  questions.
+
+  Documentation only — no code changed, and `docs/` does not ship in the
+  package, so this needs no release.
+
+
 ## [0.1.1] — 2026-08-04
 
 Packaging and release-process fixes found while preparing the first PyPI

@@ -57,9 +57,9 @@ Every brief ends with: findings count, findings-with-valid-provenance count, and
 
 ## Open questions
 
-1. Default N for "Top priorities" — 5, or scale with surface size?
-2. Should the model get to *merge* two near-identical findings into one line, or is that a contract violation? (Leaning: no — merging is a code/dedup job, already done upstream.)
-3. Do we show a numeric priority score to the reader, or only the rank + reason? (Example shows the score in parentheses — decide if that's noise.)
+1. ~~Default N for "Top priorities" — 5, or scale with surface size?~~ **Resolved 2026-08-04:** fixed at 5 (`DEFAULT_TOP_N`), with `--top-n` for anyone who wants otherwise. A number that silently changed with surface size would make two briefs incomparable, which matters more than fitting the tail.
+2. ~~Should the model get to *merge* two near-identical findings into one line, or is that a contract violation?~~ **Resolved 2026-08-04:** a violation, as leaned, and now structurally impossible rather than merely forbidden — ADR-0009 D1 confines the model to rewriting `body` and `why_ranked` on findings the code already selected, so it has no mechanism to combine two.
+3. ~~Do we show a numeric priority score to the reader, or only the rank + reason?~~ **Resolved 2026-08-04:** shown, with the per-signal breakdown behind it. See ADR-0004 Q3, resolved the same way for the same reason.
 
 ## Validation
 

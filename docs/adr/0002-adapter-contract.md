@@ -86,8 +86,8 @@ Whether Glean ran the tool or ingested it, the raw bytes are saved and reference
 
 ## Open questions
 
-1. Shared canonicalisation helpers — a `glean.normalise` module every adapter imports, to guarantee identical rules. (Leaning yes; almost required for id stability.)
-2. Does the runner (invocation, timeouts, retries) deserve its own ADR, separate from the adapter? (Likely yes as tool count grows.)
+1. ~~Shared canonicalisation helpers — a `glean.normalise` module every adapter imports, to guarantee identical rules.~~ **Resolved 2026-08-04:** built as `glean_osint/normalise.py`, imported by every adapter. The leaning was right for the reason given — id stability across tools depends on all five canonicalising identically, which is what makes `merge_graph`'s exact-id merge work at all.
+2. ~~Does the runner (invocation, timeouts, retries) deserve its own ADR, separate from the adapter?~~ **Resolved 2026-08-04:** yes — ADR-0008, which turned out to carry considerably more than invocation mechanics (three-stage pipeline, the active-tool gate, crt.sh caching, concurrency, cancellation). Folding that into this ADR would have buried it.
 3. Streaming vs whole-file parse for firehose tools like BBOT (NDJSON) — parse line-by-line to bound memory? (Defer until BBOT is wired.)
 
 ## Validation

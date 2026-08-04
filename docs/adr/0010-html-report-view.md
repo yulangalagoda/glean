@@ -45,9 +45,9 @@ Semantic HTML (real headings/lists, not divs styled to look like them), priority
 
 ## Open questions
 
-1. Does the charter's "prioritised entity graph" (the actual "hairball problem" fix) get built later as ADR-0011, once real usage shows a flat list stops being enough? Deliberately not decided here.
+1. ~~Does the charter's "prioritised entity graph" (the actual "hairball problem" fix) get built later as ADR-0011, once real usage shows a flat list stops being enough?~~ **Resolved 2026-08-04:** yes, and real usage did show it. ADR-0011 became the web interface, and the relationship view (`glean_osint/graph.py`, served at `/scan/{id}/graph`) is the graph itself — built only once persisted edges existed to draw it from.
 2. Should `glean eval`'s per-target output ever get an HTML form too? Out of scope for v1 — `eval` produces aggregate headline numbers across many targets, a different shape of output than one target's brief, already reasonably served by its current table.
-3. Should there eventually be a `glean serve` for live/interactive viewing? Not unless the static file genuinely stops being enough in practice — avoid building server infrastructure speculatively.
+3. ~~Should there eventually be a `glean serve` for live/interactive viewing?~~ **Resolved 2026-08-04:** yes, though not under that name — bare `glean` launches the web interface (ADR-0011 D2), localhost-only by default. The bar this question set was met: the static file genuinely stopped being enough once scans needed to be run, compared, triaged and traced back to source records.
 
 ## Validation
 

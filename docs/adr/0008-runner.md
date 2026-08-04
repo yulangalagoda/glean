@@ -116,7 +116,7 @@ The implied fallback announces itself on stderr, naming the tools it is about to
 2. ~~Should `--live` eventually become the default (closing MVP goal #1 fully), with something like `--offline` as the explicit opt-out?~~ **Resolved 2026-08-04 — see D10.**
 3. Retry/backoff parameters (max attempts, base delay) are hardcoded constants in v1. Promote to a config file (like `config/priority-signals.v1.yaml`) only if a real need for tuning them shows up — avoid premature configurability.
 4. A `--dry-run` that prints what *would* be invoked (including whether the active-tool gate is open) without touching the network — useful for auditability before a live active scan, but not built here unless requested.
-5. If a fifth tool ever needs dnsx/httpx's "dynamically-generated input" shape, does `build_command()` gain a second, richer signature, or does the runner keep hand-special-casing each one? Deferred until it's a real second case, not a hypothetical one.
+5. ~~If a fifth tool ever needs dnsx/httpx's "dynamically-generated input" shape, does `build_command()` gain a second, richer signature, or does the runner keep hand-special-casing each one?~~ **Resolved 2026-08-04:** the fifth tool arrived (subfinder) and needed neither — a plain `build_command()` returning `subfinder -d <target> -json -silent` was sufficient, exactly like theHarvester. The dnsx/httpx shape remains the exception rather than an emerging pattern, so the protocol stays as-is.
 
 ## Validation
 
