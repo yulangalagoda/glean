@@ -1,0 +1,1 @@
+{"candidates": ["scanme.nmap.org"], "resolved": [{"host": "scanme.nmap.org", "ttl": 3600, "resolver": ["1.0.0.1:53"], "a": ["45.33.32.156"], "all": ["scanme.nmap.org.\t3600\tIN\tA\t45.33.32.156"], "status_code": "NOERROR", "timestamp": "2026-07-27T03:47:47.673858336+01:00", "query-time": "18ms"}]}

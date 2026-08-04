@@ -21,6 +21,16 @@ raw/
 # descend into an excluded directory, so `!...raw/*.json` alone matches
 # nothing.
 !tests/fixtures/eval/**/raw/
+# The public reproduction set (eval/public/). One target -- scanme.nmap.org,
+# a host Nmap explicitly provides for public scanning -- so an outsider can
+# actually run `glean eval` against real captures and a real human ranking
+# rather than taking the numbers on trust. It names no private
+# infrastructure: its crt.sh capture is empty and dnsx resolved only the
+# scan target itself, both checked before committing.
+#
+# The private set in eval/scans/ stays excluded and remains the research
+# evidence; this one demonstrates the method, not the result.
+!eval/public/**/raw/
 scans/
 *.scan.json
 targets.txt

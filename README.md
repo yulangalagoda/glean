@@ -163,6 +163,37 @@ of the same target offers **Compare to previous scan** — new, removed and
 changed findings since last time, which is what turns a one-shot report
 into monitoring.
 
+### Reproducing the evaluation
+
+The 10-target ground-truth set is not in this repository — it names real
+infrastructure belonging to real people (`docs/ETHICS.md`). One target can
+be published, and is:
+
+```bash
+glean eval --scans-dir eval/public     # scanme.nmap.org, real capture + real blind ranking
+```
+
+That lets you check the harness is real and the numbers come from the shipped
+code. It is **not** a substitute for the private set, and
+[`eval/public/README.md`](eval/public/README.md) shows why with both sets'
+numbers side by side: the target is small enough that prioritisation
+saturates at 1.000, against 0.464 / 0.582 on the real set.
+
+### Auditing the judge
+
+`stage2_faith` is produced by an LLM judge that ADR-0006's own validation
+found makes real mistakes, so it ships as a lower bound. To put a number on
+that:
+
+```bash
+glean judge-audit --sample 50 --out judge-audit.yaml   # sample its verdicts
+#   ... label each `human_verdict` yourself ...
+glean judge-score judge-audit.yaml                     # score the judge
+```
+
+The labels have to be yours — the tool builds the packet and scores it, but
+never writes a verdict, and refuses to score a partially-labelled one.
+
 ## Scope & ethics
 
 For authorised security research only — targets you own or are explicitly cleared to assess. Passive and active reconnaissance are clearly separated. Full policy and threat model: [`docs/ETHICS.md`](docs/ETHICS.md). Found a vulnerability in Glean itself? See [`SECURITY.md`](SECURITY.md).

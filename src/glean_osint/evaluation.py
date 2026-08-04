@@ -193,6 +193,21 @@ def _parse_judge_response(
 
 
 @dataclass(frozen=True, slots=True)
+class ClaimVerdict:
+    """One atomic claim the judge extracted, and what it decided.
+
+    `entity_id` and `entity_facts` are carried alongside the claim so a
+    human re-checking the verdict has the same evidence the judge was
+    given, rather than having to reconstruct it from a scan directory.
+    """
+
+    entity_id: str
+    claim: str
+    supported: bool
+    entity_facts: str
+
+
+@dataclass(frozen=True, slots=True)
 class Stage2FaithfulnessResult:
     """ADR-0006 D1 stage 2: atomic-claim entailment via an LLM judge.
 
@@ -203,6 +218,14 @@ class Stage2FaithfulnessResult:
     supported_claims: int
     judge_model: str
     unjudged_findings: int  # degraded (no usable judge output), not fabricated
+    # Every individual verdict, not just the totals. The counts alone make
+    # the judge unauditable: `0.455` says some claims were rejected but not
+    # which, so there is no way to check whether the judge was *right* --
+    # and ADR-0006's own validation records that it makes real mistakes.
+    # Keeping the verdicts is what makes judge reliability measurable at
+    # all (open question 5). Defaulted, so nothing that only wants the
+    # score is affected.
+    claims: tuple[ClaimVerdict, ...] = ()
 
     @property
     def score(self) -> float:
@@ -248,6 +271,8 @@ def faithfulness_stage2(
     total = 0
     supported = 0
     unjudged = 0
+    verdicts: list[ClaimVerdict] = []
+    facts_by_id = {f.entity.id: _judge_finding_facts(f) for f in brief.top_priorities}
     for finding in brief.top_priorities:
         claims = judged.get(finding.entity.id)
         if claims is None:
@@ -255,12 +280,22 @@ def faithfulness_stage2(
             continue
         total += len(claims)
         supported += sum(1 for _, ok in claims if ok)
+        verdicts.extend(
+            ClaimVerdict(
+                entity_id=finding.entity.id,
+                claim=claim,
+                supported=ok,
+                entity_facts=json.dumps(facts_by_id[finding.entity.id], sort_keys=True),
+            )
+            for claim, ok in claims
+        )
 
     return Stage2FaithfulnessResult(
         total_claims=total,
         supported_claims=supported,
         judge_model=judge_model,
         unjudged_findings=unjudged,
+        claims=tuple(verdicts),
     )
 
 

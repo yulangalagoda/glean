@@ -10,6 +10,7 @@ explicit opt-in".
 
 from __future__ import annotations
 
+import json
 import subprocess
 import urllib.error
 from collections.abc import Callable
@@ -21,8 +22,10 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+import yaml
 
 from glean_osint import __version__, history, runner, synthesis
+from glean_osint import judge_audit as judge_audit_mod
 from glean_osint.adapters.base import ParseResult, ScanContext
 from glean_osint.adapters.crtsh import CrtshAdapter
 from glean_osint.adapters.dnsx import DnsxAdapter
@@ -872,6 +875,151 @@ def _faithfulness_caveat(*, measured_content: bool) -> str:
             "measured in this run. Pass --llm to also run the stage-2 judge.",
         ]
     return "\n".join(lines)
+
+
+@app.command(name="judge-audit")
+def judge_audit(
+    scans_dir: Annotated[
+        Path, typer.Option(help="Directory of ground-truth targets to draw claims from.")
+    ] = Path("eval/scans"),
+    out: Annotated[Path, typer.Option(help="Where to write the annotation packet.")] = Path(
+        "judge-audit.yaml"
+    ),
+    sample: Annotated[
+        int, typer.Option(help="How many claims to sample. 0 takes every claim.")
+    ] = 50,
+    seed: Annotated[
+        int, typer.Option(help="Sampling seed, so a packet can be regenerated exactly.")
+    ] = 0,
+    model: Annotated[str, typer.Option(help="Narration model.")] = synthesis.DEFAULT_MODEL,
+    judge_model: Annotated[str, typer.Option(help="Judge model.")] = DEFAULT_JUDGE_MODEL,
+    top_n: Annotated[int, typer.Option(help="Findings narrated per brief.")] = DEFAULT_TOP_N,
+) -> None:
+    """Build a packet of judge verdicts for a human to label (ADR-0006 Q5).
+
+    `glean eval --llm` reports `stage2_faith` with a documented caveat that
+    the judge makes mistakes, and no measure of how many. This samples the
+    judge's individual verdicts, together with the exact evidence it was
+    shown, so a person can rule on the same claims independently. Score the
+    labelled result with `glean judge-score`.
+
+    Nothing here writes a `human_verdict` -- those labels are research data
+    and have to come from a person.
+    """
+    if not scans_dir.is_dir():
+        typer.secho(f"{scans_dir} is not a directory.", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+    target_dirs = sorted(
+        d for d in scans_dir.iterdir() if d.is_dir() and (d / "ground_truth.yaml").exists()
+    )
+    if not target_dirs:
+        typer.secho(f"No targets under {scans_dir}.", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    collected: list[tuple[str, object]] = []
+    for index, target_dir in enumerate(target_dirs, start=1):
+        try:
+            with Spinner(f"Judging {target_dir.name} ({index}/{len(target_dirs)})..."):
+                result = _evaluate_target(
+                    target_dir, top_n, llm=True, model=model, judge_model=judge_model
+                )
+        except Exception as error:  # noqa: BLE001 -- one bad target must not abort the packet
+            typer.secho(f"{target_dir.name}: skipped ({error}).", fg=typer.colors.YELLOW, err=True)
+            continue
+        if result.stage2 is not None:
+            collected.extend((result.target, c) for c in result.stage2.claims)
+
+    if not collected:
+        typer.secho(
+            "No judged claims collected — is Ollama running with the judge model pulled?",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    entries = judge_audit_mod.build_packet(collected, sample_size=sample, seed=seed)
+    out.write_text(_render_audit_packet(entries, judge_model=judge_model, seed=seed), "utf-8")
+    typer.echo(SECTION_BREAK)
+    typer.echo(f"{len(entries)} claim(s) sampled from {len(collected)} judged, written to {out}")
+    typer.secho(
+        "Fill in each `human_verdict` (supported | unsupported), then run "
+        f"`glean judge-score {out}`.",
+        fg=typer.colors.CYAN,
+    )
+
+
+@app.command(name="judge-score")
+def judge_score(
+    packet: Annotated[Path, typer.Argument(exists=True, readable=True)],
+) -> None:
+    """Score the judge against a labelled packet (ADR-0006 Q5)."""
+    data = yaml.safe_load(packet.read_text(encoding="utf-8")) or {}
+    entries = [
+        judge_audit_mod.AuditEntry(
+            index=e.get("index", i),
+            target=e.get("target", ""),
+            entity_id=e.get("entity_id", ""),
+            claim=e.get("claim", ""),
+            judge_verdict=e.get("judge_verdict", ""),
+            entity_facts=e.get("entity_facts", ""),
+            human_verdict=e.get("human_verdict"),
+        )
+        for i, e in enumerate(data.get("entries") or [], start=1)
+    ]
+    if not entries:
+        typer.secho("No entries in that packet.", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        result = judge_audit_mod.score_packet(entries)
+    except ValueError as error:
+        typer.secho(str(error), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1) from error
+
+    def pct(v: float | None) -> str:
+        return "n/a" if v is None else f"{v:.3f}"
+
+    typer.echo(SECTION_BREAK)
+    typer.echo(f"claims labelled     {result.labelled}")
+    typer.echo(f"raw agreement       {result.agreement:.3f}")
+    typer.echo(f"flag precision      {pct(result.flag_precision)}   (judge flagged, human agreed)")
+    typer.echo(f"flag recall         {pct(result.flag_recall)}   (real problems it caught)")
+    typer.echo(f"Cohen's kappa       {pct(result.kappa)}")
+    typer.secho("\n" + judge_audit_mod.interpret(result), fg=typer.colors.CYAN)
+
+
+def _render_audit_packet(
+    entries: list[judge_audit_mod.AuditEntry], *, judge_model: str, seed: int
+) -> str:
+    """Hand-rendered rather than `yaml.dump`ed: this is a document a person
+    has to read and edit dozens of times, so it carries its instructions
+    inline and keeps one blank `human_verdict` per entry sitting exactly
+    where the annotator's cursor needs to go."""
+    lines = [
+        "# Judge reliability annotation packet (ADR-0006 Q5).",
+        "#",
+        "# For each claim below, decide independently whether the entity facts",
+        "# support it, and write `supported` or `unsupported` in `human_verdict`.",
+        "# `judge_verdict` is what the model decided — it is shown so the packet",
+        "# stays auditable, but do not treat it as a prior.",
+        "#",
+        "# Then: glean judge-score <this file>",
+        f"judge_model: {judge_model}",
+        f"seed: {seed}",
+        "entries:",
+    ]
+    for e in entries:
+        lines += [
+            f"  - index: {e.index}",
+            f"    target: {json.dumps(e.target)}",
+            f"    entity_id: {json.dumps(e.entity_id)}",
+            f"    claim: {json.dumps(e.claim)}",
+            f"    entity_facts: {json.dumps(e.entity_facts)}",
+            f"    judge_verdict: {e.judge_verdict}",
+            "    human_verdict:   # supported | unsupported",
+            "",
+        ]
+    return "\n".join(lines) + "\n"
 
 
 def _default_raw_dir(domain: str, collected_at: datetime) -> Path:

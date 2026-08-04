@@ -1,0 +1,22 @@
+# Ground-truth ranking (ADR-0007). Single annotator, no inter-rater
+# agreement measured (ADR-0007 D1) -- an accepted, disclosed limitation,
+# not concealed.
+target: scanme.nmap.org
+annotator: Yulan Galagoda
+annotated_at: "2026-07-27T03:47:58Z"
+# D6 attestation: this ranking was produced before Glean's computed
+# priority.rank for this scan was revealed to the annotator.
+blind: true
+# D7: optional secondary source consulted for any entity below (empty = none).
+corroboration_sources: []
+entries:
+  - entity_id: "ip_address:45.33.32.156"
+    justification: >-
+      The actual new information a scan reveals -- glean scan <domain> always
+      takes the domain as the given input, never the IP, so the IP is what
+      recon actually discovered here, not the domain.
+  - entity_id: "domain:scanme.nmap.org"
+    justification: >-
+      Included for completeness/context as the known scan input (not itself
+      a "finding"), so the record is still useful if this output is saved as
+      a report for later evaluation.

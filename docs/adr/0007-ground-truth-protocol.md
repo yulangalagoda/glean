@@ -63,6 +63,16 @@ A ground-truth file necessarily names real target infrastructure — the same se
 - **Positive:** avoids the circularity trap explicitly; bounded annotation cost independent of graph size; the blind-annotation rule is a concrete, checkable process guarantee rather than an aspiration; the single-annotator limitation is disclosed by construction (baked into the file format), not something to remember to mention later.
 - **Costs / accepted limits:** genuine inter-rater independence isn't achievable solo — the mitigation is process rigor (blind annotation, written-first rubric) rather than a substitute for a second annotator. Business-context judgment, the richest source of expected human/code divergence, is also the least auditable factor — there's no way to fully separate "good judgment" from "annotator's personal bias" with N=1.
 
+## Public reproduction (added 2026-08-04)
+
+The ground-truth set is gitignored because it names real infrastructure, which makes the project's headline numbers unverifiable by anyone but its author — an awkward position for work whose central claim is that the evaluation is the evidence.
+
+`eval/public/` holds the one target whose data can be published: `scanme.nmap.org`, a host Nmap explicitly provides for public scanning, with its real captures and its real blind annotation. `glean eval --scans-dir eval/public` runs the same harness over the same file format, so a reader can check that the reported numbers are produced by the shipped code rather than asserted.
+
+It deliberately does **not** stand in for the private set, and `eval/public/README.md` says so with the numbers side by side: the target's two-entity graph makes overlap@5 and nDCG@5 saturate at 1.000, against 0.464 and 0.582 on the real set. Publishing that comparison rather than the flattering figure alone is the point — a reproduction set that quietly implied better results than the evidence supports would be worse than none.
+
+Synthetic targets were considered and rejected for this purpose: an invented domain with an invented ranking demonstrates nothing about whether the tool ranks real findings sensibly.
+
 ## Open questions
 
 1. Is a top-~10 (2×N) slice the right buffer size, or should it scale with graph size for very large or very small scans?

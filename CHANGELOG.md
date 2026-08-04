@@ -9,6 +9,61 @@ point was a real release, just pre-dev groundwork. That bar was reached on
 
 ## [Unreleased]
 
+### Added
+- **The stage-2 judge can now be audited** (ADR-0006 Q5, apparatus). `glean
+  eval --llm` reports `stage2_faith` with a documented caveat that the judge
+  makes real mistakes and no measure of how many — a number qualified by
+  "sometimes wrong, unknown how often" is close to unusable as evidence.
+
+  `faithfulness_stage2` previously summed its `(claim, supported)` verdicts
+  into counts and discarded them, so `0.455` said some claims were rejected
+  but not which, and there was no way to check whether the judge was right.
+  The verdicts are now retained on `Stage2FaithfulnessResult.claims`.
+
+  `glean judge-audit` samples them into a packet carrying each claim, the
+  judge's verdict and the exact evidence the judge was shown, for a human to
+  rule on independently. `glean judge-score` scores the judge against those
+  labels. Sampling is seeded so a labelled packet can be regenerated exactly
+  — a reliability figure nobody could recompute would be unauditable.
+
+  The headline is precision on the *flagged* class, because flags are the
+  only thing that moves `stage2_faith` below 1.000, and the direction is
+  counter-intuitive: a judge that over-flags makes published faithfulness
+  look **worse** than reality, not better. Cohen's kappa accompanies raw
+  agreement, since agreement flatters any judge on a skewed set — one that
+  says "supported" every time scores 90% on a set that is 90% supported
+  while being worthless at the only job that matters. Precision, recall and
+  kappa report `None` rather than a flattering 1.0 or 0.0 where a sample
+  genuinely cannot measure them.
+
+  **The labels are research data and must come from a human.** Nothing here
+  generates them, and scoring refuses a partially-labelled packet rather than
+  treating unlabelled rows as agreement. Until a packet is labelled the
+  question stays open and `stage2_faith` keeps its lower-bound caveat.
+- **A public reproduction set** (`eval/public/`, one target). The
+  ground-truth set is gitignored because it names real infrastructure, which
+  left the project's headline numbers unverifiable by anyone but its author
+  — awkward for work whose central claim is that the evaluation is the
+  evidence. `scanme.nmap.org` is the one target whose data can be published:
+  a host Nmap explicitly provides for public scanning, with real captures and
+  a real blind annotation. `glean eval --scans-dir eval/public` runs the same
+  harness over the same format.
+
+  It deliberately does not stand in for the private set, and its README says
+  so with both sets' numbers side by side: a two-entity graph makes overlap@5
+  and nDCG@5 saturate at **1.000**, against **0.464** and **0.582** on the
+  real 10 targets. Publishing the flattering figure without that comparison
+  would have been worse than publishing nothing. Synthetic targets were
+  considered and rejected — an invented domain with an invented ranking
+  demonstrates nothing about ranking real findings.
+- **A forward roadmap** (`ROADMAP.md`). The only planning document was the
+  pre-development gate, which closed before the first line of code — so a
+  project that had just shipped to PyPI had nothing saying what came next.
+  Records six themes in dependency order, three open decisions that block
+  work, and the items deliberately *not* planned so they are not mistaken
+  for oversights.
+
+
 ### Changed
 - **ADR open-question cleanup.** Eleven ADRs carried open questions that
   shipped work had already answered, so anyone reading the decision record

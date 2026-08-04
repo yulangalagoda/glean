@@ -1,0 +1,148 @@
+# Roadmap
+
+Forward-looking plan after `v0.1.1`. The only previous planning document
+(`_private/planning/ROADMAP_Pre-Development.md`) was the gate for *starting*
+to build, and closed long ago.
+
+`v0.1.1` met the charter's §4 MVP bar: one command produces a brief, five
+tools are unified, dedup is deterministic and measured, and the evaluation
+harness reports three numbers over ten ground-truth targets. What follows is
+about making that output *usable* and its evidence *checkable* — not about
+adding capability for its own sake.
+
+Ordered by what unblocks what, not by size.
+
+---
+
+## 1. Information architecture — the interface has no hierarchy
+
+The biggest gap, and the cheapest to close. The UI is deliberately minimal
+and reads cleanly, but minimal is not the same as organised: it currently
+gives the user no sense of what belongs with what.
+
+**The scan form is five sibling `<div>`s.** Target, Presets, Tools,
+Authorisation and Narration all sit at the same visual level, so a first-time
+reader cannot tell that Presets and Tools are two views of one decision,
+that Authorisation is a record-keeping obligation rather than a scan
+parameter, or that Narration is optional and independent of everything above
+it. Grouping these into labelled sections with real hierarchy — what you are
+scanning, how you are scanning it, what you want written afterwards — is
+mostly restructuring markup, not new behaviour.
+
+**The app opens on New Scan.** There is no landing page. A user arriving at
+the tool is immediately asked to fill in a form, before being told what the
+tool is or what it has already done for them. A landing page should
+summarise recent scans, surface counts and warnings, and offer the routes
+onward (new scan, history, relationships) rather than assuming the answer is
+always "scan something now".
+
+**There is nowhere to explain the tool.** No About page, no user guide. The
+README carries all of it, which is invisible to anyone using the web
+interface. In-app pages should cover at minimum: what passive vs active
+means and why the distinction is enforced, how to read a brief (priority
+score, signals, provenance links), and what the faithfulness numbers do and
+do not claim.
+
+*Depends on nothing. Everything below lands inside whatever structure this
+establishes, so it goes first.*
+
+## 2. Make the relationship view an actual diagram
+
+`/scan/{id}/graph` is currently `<ul class="graph-list">` — a nested list
+describing relationships in text. The correlation stage computes a real typed
+graph (`edges.json`, ADR-0003) and the charter's "prioritised entity graph"
+was always meant to be the fix for the hairball problem; rendering it as a
+list keeps the data one step away from the understanding it exists to
+produce.
+
+Visual mapping of hosts → IPs → services → certificates is where a reader
+stops reading and starts *seeing* the target's shape.
+
+**This needs a decision first** (see Open decisions): ADR-0011 D1 committed
+to no build step, no framework and no CDN, so a diagram has to be either
+hand-rolled SVG or a single vendored library. That constraint is real and
+was chosen for good reasons — it should be honoured or explicitly revised,
+not quietly bypassed.
+
+## 3. Wider tool coverage
+
+The adapter contract (ADR-0002) has now been exercised by five tools, and the
+registry means a new one appears in the UI with no template changes — that
+promise was tested when subfinder was added. Candidates already named in the
+ADRs: Amass, BBOT (which would also force ADR-0002 Q3's streaming-parse
+question), and a breach source, which would finally exercise the
+`breach_exposure` entity type that ADR-0001 Q3 has been unsure about since
+the beginning.
+
+Each new tool is cheap individually. The value is coverage: more of the
+attack surface seen, and more corroboration between sources, which the
+scoring rubric already rewards.
+
+## 4. Identity and feedback
+
+- **A logo and visual identity.** The tool is published on PyPI and has a
+  public repository; it currently has no mark of its own.
+- **Real progress feedback during a scan.** The watch page has a stage
+  checklist and a live event stream, but no motion — a scan that takes 30
+  seconds looks identical to one that has stalled. A spinner attached to the
+  item actually being processed would make the difference visible. Cheap,
+  and it addresses the same confusion the queued-vs-running fix addressed
+  in history.
+
+## 5. Access control — a posture change, not a feature
+
+The tool displays reconnaissance findings about real infrastructure, which
+is exactly the kind of thing that should not be casually readable by anyone
+who can reach the port. That instinct is right.
+
+But this is not "add a login page". ADR-0011 D8 currently states that
+localhost-only binding **is** the security boundary, and that no
+authentication is needed precisely because nothing else can reach the
+process. Adding authentication only means something if the intent is to
+expose the interface beyond localhost — and that changes the threat model
+completely: session handling, transport security, and a real answer to who
+the users are and what they may see.
+
+**This needs its own ADR before any code**, revisiting D8 and open question
+4 (remote access / multi-user, currently out of scope rather than deferred).
+The decision to make first is not "which auth library" but "is this a
+single-operator local tool or a shared service", because almost everything
+else follows from it.
+
+## 6. Finish the research claims
+
+Engineering-light, credibility-heavy, and runnable in parallel with all of
+the above.
+
+- **Label a judge-audit packet.** `glean judge-audit` / `glean judge-score`
+  now exist; what is missing is a human labelling one, which is what turns
+  `stage2_faith`'s "the judge is sometimes wrong" caveat into a measured
+  bound and closes ADR-0006 Q5. Roughly an hour for 50 claims.
+- **A second annotator on a subset** (ADR-0007 Q4) would give at least a
+  partial inter-rater agreement figure, which the ground-truth protocol
+  currently discloses as absent.
+
+---
+
+## Open decisions
+
+These block work above and are worth settling deliberately.
+
+1. **How to draw the graph**, given ADR-0011 D1's no-build-step rule.
+   Hand-rolled SVG keeps the constraint intact and stays dependency-free but
+   means implementing layout; a vendored library is faster but adds a file
+   nobody here maintains. Either is defensible — quietly adding a CDN script
+   tag is not.
+2. **What authentication is actually for**: locking a local tool, or serving
+   it over a network. These need different designs, and only the second
+   justifies the complexity.
+3. **Whether the brief's "also found" tail should be narrated** (ADR-0009
+   Q1). Relevant to readable output, and currently leaning "no — the tail is
+   supposed to stay terse".
+
+## Deliberately not planned
+
+Recorded so they are not mistaken for oversights: server-side PDF rendering
+(ADR-0011 Q3 — the browser prints), user-editable presets (Q2), and an HTML
+form for `glean eval`'s aggregate output (ADR-0010 Q2). All remain deferred
+for the reasons their ADRs give.
