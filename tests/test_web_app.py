@@ -23,6 +23,8 @@ records, not by this suite.
 from __future__ import annotations
 
 import json
+import threading
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -34,6 +36,7 @@ from glean_osint.brief import Brief, build_brief
 from glean_osint.pipeline import ScanOutcome, ScanRequest
 from glean_osint.registry import PRESETS, TOOL_REGISTRY
 from glean_osint.schema.entities import Edge, Entity, Priority, ProvenanceEntry, ScanMeta
+from glean_osint.web import app as app_module
 from glean_osint.web.app import create_app
 
 
@@ -59,6 +62,22 @@ def _fake_outcome(request: ScanRequest) -> ScanOutcome:
 
 def _client(tmp_path: Path) -> TestClient:
     return TestClient(create_app(history_root=tmp_path))
+
+
+def _settle(client: TestClient) -> None:
+    """Wait for every submitted scan to finish.
+
+    Scans now run in a bounded executor (ADR-0011 D9), so POST /scan returns
+    as soon as the scan is *queued* -- unlike the previous BackgroundTasks
+    dispatch, which TestClient ran to completion before returning. Any test
+    asserting on a finished scan's output has to wait for a real completion
+    signal; without this they pass only because a stubbed run_scan usually
+    wins the race, which is a flaky test rather than a passing one.
+    """
+    with client.app.state.scan_futures_lock:  # type: ignore[attr-defined]
+        pending = list(client.app.state.scan_futures)  # type: ignore[attr-defined]
+    for future in pending:
+        future.result(timeout=10)
 
 
 def test_index_lists_every_registered_tool_and_preset(tmp_path: Path) -> None:
@@ -115,6 +134,7 @@ def test_submit_scan_redirects_to_the_watch_page_immediately(
         data={"target": "example.com", "tools": ["crtsh"], "authorisation": "Owned"},
         follow_redirects=False,
     )
+    _settle(client)
 
     assert response.status_code == 303
     location = response.headers["location"]
@@ -135,6 +155,7 @@ def test_submit_scan_eventually_serves_the_saved_html_report(
     redirect = client.post(
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
+    _settle(client)
     scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
     result = client.get(f"/scan/{scan_id}")
 
@@ -157,6 +178,7 @@ def test_view_scan_response_has_a_nav_bar_but_the_saved_file_does_not(
     redirect = client.post(
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
+    _settle(client)
     scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
 
     result = client.get(f"/scan/{scan_id}")
@@ -176,9 +198,11 @@ def test_view_scan_response_has_a_nav_bar_but_the_saved_file_does_not(
 def test_submit_scan_writes_a_manifest(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(pipeline, "run_scan", lambda request, **kw: _fake_outcome(request))
 
-    redirect = _client(tmp_path).post(
+    client = _client(tmp_path)
+    redirect = client.post(
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
+    _settle(client)
     scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
     manifest = json.loads((tmp_path / scan_id / "manifest.json").read_text(encoding="utf-8"))
 
@@ -199,6 +223,7 @@ def test_watch_page_redirects_straight_to_results_once_the_scan_has_finished(
     redirect = client.post(
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
+    _settle(client)
     watch_response = client.get(redirect.headers["location"], follow_redirects=False)
 
     assert watch_response.status_code in (302, 307)
@@ -226,6 +251,7 @@ def test_scan_events_streams_status_and_a_final_done_event(
     redirect = client.post(
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
+    _settle(client)
     scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
     events_response = client.get(f"/scan/{scan_id}/events")
 
@@ -250,6 +276,7 @@ def test_scan_events_streams_warnings_too(monkeypatch: pytest.MonkeyPatch, tmp_p
     redirect = client.post(
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
+    _settle(client)
     scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
     events_response = client.get(f"/scan/{scan_id}/events")
 
@@ -272,6 +299,7 @@ def test_scan_events_reports_an_unexpected_exception_instead_of_hanging_forever(
     redirect = client.post(
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
+    _settle(client)
     scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
     events_response = client.get(f"/scan/{scan_id}/events")
 
@@ -324,6 +352,7 @@ def test_history_page_lists_a_completed_scan(
     redirect = client.post(
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
+    _settle(client)
     scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
 
     response = client.get("/history")
@@ -350,6 +379,7 @@ def test_history_page_shows_a_warning_pill_when_a_scan_had_warnings(
     client.post("/scan", data={"target": "example.com", "tools": ["crtsh"]})
 
     response = client.get("/history")
+    _settle(client)
 
     assert "1 warning" in response.text
 
@@ -402,9 +432,11 @@ def test_submit_scan_writes_an_entities_snapshot(
         pipeline, "run_scan", lambda request, **kw: _fake_scored_entity_finding_outcome(request)
     )
 
-    redirect = _client(tmp_path).post(
+    client = _client(tmp_path)
+    redirect = client.post(
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
+    _settle(client)
     scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
     entities = json.loads((tmp_path / scan_id / "entities.json").read_text(encoding="utf-8"))
 
@@ -458,9 +490,11 @@ def test_submit_scan_writes_an_edges_snapshot(
         pipeline, "run_scan", lambda request, **kw: _fake_outcome_with_edges(request)
     )
 
-    redirect = _client(tmp_path).post(
+    client = _client(tmp_path)
+    redirect = client.post(
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
+    _settle(client)
     scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
     edges = json.loads((tmp_path / scan_id / "edges.json").read_text(encoding="utf-8"))
 
@@ -494,7 +528,8 @@ def test_llm_form_fields_reach_the_pipeline_and_land_in_the_manifest(
 
     monkeypatch.setattr(pipeline, "run_scan", fake_run)
 
-    redirect = _client(tmp_path).post(
+    client = _client(tmp_path)
+    redirect = client.post(
         "/scan",
         data={
             "target": "example.com",
@@ -504,6 +539,7 @@ def test_llm_form_fields_reach_the_pipeline_and_land_in_the_manifest(
         },
         follow_redirects=False,
     )
+    _settle(client)
     scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
     manifest = json.loads((tmp_path / scan_id / "manifest.json").read_text(encoding="utf-8"))
 
@@ -522,11 +558,13 @@ def test_blank_model_box_means_the_default_not_a_model_named_empty(
         lambda request, **kw: (seen.append(request), _fake_outcome(request))[1],
     )
 
-    _client(tmp_path).post(
+    client = _client(tmp_path)
+    client.post(
         "/scan",
         data={"target": "example.com", "tools": ["crtsh"], "llm": "true", "model": "  "},
         follow_redirects=False,
     )
+    _settle(client)
 
     assert seen[0].model == synthesis.DEFAULT_MODEL
 
@@ -536,9 +574,11 @@ def test_a_template_narrated_scan_records_no_model(
 ) -> None:
     monkeypatch.setattr(pipeline, "run_scan", lambda request, **kw: _fake_outcome(request))
 
-    redirect = _client(tmp_path).post(
+    client = _client(tmp_path)
+    redirect = client.post(
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
+    _settle(client)
     scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
     manifest = json.loads((tmp_path / scan_id / "manifest.json").read_text(encoding="utf-8"))
 
@@ -555,6 +595,7 @@ def _scan_with_one_finding(
     redirect = client.post(
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
+    _settle(client)
     return client, _scan_id_from_watch_redirect(redirect.headers["location"])
 
 
@@ -650,6 +691,7 @@ def test_graph_route_renders_the_relationship_view(
     redirect = client.post(
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
+    _settle(client)
     scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
 
     response = client.get(f"/scan/{scan_id}/graph")
@@ -674,6 +716,7 @@ def test_graph_route_distinguishes_no_edges_from_no_edges_recorded(
     redirect = client.post(
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
+    _settle(client)
     scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
 
     # Simulate a scan from before this feature existed.
@@ -695,6 +738,7 @@ def test_view_scan_response_carries_scan_id_and_report_script(
     redirect = client.post(
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
+    _settle(client)
     scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
     result = client.get(f"/scan/{scan_id}")
 
@@ -714,6 +758,7 @@ def test_download_html_serves_the_saved_report_as_an_attachment(
     redirect = client.post(
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
+    _settle(client)
     scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
     response = client.get(f"/scan/{scan_id}/download/html")
 
@@ -735,6 +780,7 @@ def test_download_json_returns_findings_and_scan_metadata(
     redirect = client.post(
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
+    _settle(client)
     scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
     response = client.get(f"/scan/{scan_id}/download/json")
 
@@ -756,6 +802,7 @@ def test_download_csv_flattens_findings_into_rows(
     redirect = client.post(
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
+    _settle(client)
     scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
     response = client.get(f"/scan/{scan_id}/download/csv")
 
@@ -802,6 +849,7 @@ def test_view_raw_serves_the_archived_output_for_a_tool(
     redirect = client.post(
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
+    _settle(client)
     scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
     response = client.get(f"/scan/{scan_id}/raw/crtsh")
 
@@ -824,6 +872,7 @@ def test_view_raw_is_404_when_no_raw_output_was_archived_for_that_tool(
     redirect = client.post(
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
+    _settle(client)
     scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
     response = client.get(f"/scan/{scan_id}/raw/subfinder")
 
@@ -894,6 +943,7 @@ def test_history_page_shows_a_search_input_once_scans_exist(
     client.post("/scan", data={"target": "example.com", "tools": ["crtsh"]})
 
     response = client.get("/history")
+    _settle(client)
 
     assert 'id="history-search"' in response.text
     assert 'data-target="example.com"' in response.text
@@ -913,6 +963,7 @@ def test_history_page_shows_the_actual_warning_text(
     client.post("/scan", data={"target": "example.com", "tools": ["crtsh"]})
 
     response = client.get("/history")
+    _settle(client)
 
     assert "crt.sh: live invocation failed (boom), skipping." in response.text
 
@@ -925,6 +976,7 @@ def test_deleting_a_scan_removes_it_from_history(
     redirect = client.post(
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
+    _settle(client)
     scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
     assert (tmp_path / scan_id).is_dir()
 
@@ -1061,6 +1113,7 @@ def test_cancelling_a_scan_records_it_rather_than_erasing_it(
     redirect = client.post(
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
+    _settle(client)
     scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
 
     manifest = history.read_manifest(tmp_path / scan_id)
@@ -1085,6 +1138,7 @@ def test_a_cancelled_scan_emits_a_cancelled_event_not_an_error(
     redirect = client.post(
         "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
     )
+    _settle(client)
     scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
     events = client.get(f"/scan/{scan_id}/events").text
 
@@ -1118,9 +1172,220 @@ def test_a_cancelled_scan_is_shown_as_cancelled_in_history(
 
     client = _client(tmp_path)
     client.post("/scan", data={"target": "example.com", "tools": ["crtsh"]})
+    _settle(client)
 
     page = client.get("/history").text
 
     assert "cancelled" in page
     # No link to a report, because there is no report.
     assert 'href="/scan/example-com-' not in page
+
+
+# ── Bounded scan concurrency (ADR-0011 D9) ───────────────────────────────
+
+
+def test_no_more_than_the_limit_of_scans_run_at_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The bound D9 exists to enforce. Before it, dispatch went through
+    Starlette's shared worker pool with no limit at all -- so aggregate
+    traffic at targets, crt.sh load, and thread consumption all scaled with
+    however many scans happened to be submitted.
+    """
+    running = 0
+    peak = 0
+    lock = threading.Lock()
+    release = threading.Event()
+
+    def blocking_run(request, *, raw_dir, on_status=None, on_warning=None, cancel=None):
+        nonlocal running, peak
+        with lock:
+            running += 1
+            peak = max(peak, running)
+        release.wait(timeout=10)
+        with lock:
+            running -= 1
+        return _fake_outcome(request)
+
+    monkeypatch.setattr(pipeline, "run_scan", blocking_run)
+
+    client = _client(tmp_path)
+    for i in range(app_module.MAX_CONCURRENT_SCANS + 2):
+        client.post("/scan", data={"target": f"t{i}.example.com", "tools": ["crtsh"]})
+
+    # Let the running slots fill before measuring, then let everything go.
+    time.sleep(0.5)
+    observed_peak = peak
+    release.set()
+    _settle(client)
+
+    assert observed_peak <= app_module.MAX_CONCURRENT_SCANS
+    assert observed_peak > 0, "nothing ran at all -- the test never exercised the bound"
+
+
+def test_a_queued_scan_can_be_cancelled_before_it_ever_starts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Queueing only helps if a queued scan is genuinely cancellable. The
+    token is created at submission rather than at start precisely so a scan
+    waiting for a slot can be cancelled, and must then never invoke a single
+    tool when its slot finally comes up.
+    """
+    started: list[str] = []
+    release = threading.Event()
+
+    def blocking_run(request, *, raw_dir, on_status=None, on_warning=None, cancel=None):
+        started.append(request.target)
+        release.wait(timeout=10)
+        return _fake_outcome(request)
+
+    monkeypatch.setattr(pipeline, "run_scan", blocking_run)
+
+    client = _client(tmp_path)
+    # Fill every slot, so the next submission can only be queued.
+    for i in range(app_module.MAX_CONCURRENT_SCANS):
+        client.post("/scan", data={"target": f"busy{i}.example.com", "tools": ["crtsh"]})
+    time.sleep(0.3)
+
+    redirect = client.post(
+        "/scan",
+        data={"target": "queued.example.com", "tools": ["crtsh"]},
+        follow_redirects=False,
+    )
+    queued_id = _scan_id_from_watch_redirect(redirect.headers["location"])
+    assert client.post(f"/scan/{queued_id}/cancel").status_code == 204
+
+    release.set()
+    _settle(client)
+
+    assert "queued.example.com" not in started, "a cancelled scan still ran its tools"
+    manifest = history.read_manifest(tmp_path / queued_id)
+    assert manifest is not None and manifest.cancelled is True
+
+
+# ── Multi-target bulk scan (roadmap item #27) ────────────────────────────
+
+
+def test_parse_targets_accepts_newlines_and_commas_and_drops_duplicates() -> None:
+    """Both separators, because both are how a list of domains actually
+    arrives -- pasted from a file, or typed inline. Duplicates are dropped
+    because two scans of one target submitted together would collide on
+    `scan_id` (slug plus second-granularity timestamp) and write into the
+    same directory.
+    """
+    assert app_module.parse_targets("a.example.com\nb.example.com") == [
+        "a.example.com",
+        "b.example.com",
+    ]
+    assert app_module.parse_targets("a.example.com, b.example.com") == [
+        "a.example.com",
+        "b.example.com",
+    ]
+    assert app_module.parse_targets("  a.example.com \n\n b.example.com  ") == [
+        "a.example.com",
+        "b.example.com",
+    ]
+    assert app_module.parse_targets("a.example.com\na.example.com") == ["a.example.com"]
+    assert app_module.parse_targets("   \n  ") == []
+
+
+def test_submitting_several_targets_queues_one_scan_each(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    scanned: list[str] = []
+
+    def record(request, *, raw_dir, on_status=None, on_warning=None, cancel=None):
+        scanned.append(request.target)
+        return _fake_outcome(request)
+
+    monkeypatch.setattr(pipeline, "run_scan", record)
+
+    client = _client(tmp_path)
+    response = client.post(
+        "/scan",
+        data={"target": "a.example.com\nb.example.com\nc.example.com", "tools": ["crtsh"]},
+        follow_redirects=False,
+    )
+    _settle(client)
+
+    # A batch goes to history, not to one target's watch page: only some of
+    # them are running at any moment, so one stream would say nothing about
+    # the rest.
+    assert response.status_code == 303
+    assert response.headers["location"] == "/history"
+    assert sorted(scanned) == ["a.example.com", "b.example.com", "c.example.com"]
+
+
+def test_a_single_target_still_gets_its_live_watch_page(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Bulk submission must not regress the single-target path, which is
+    still the common case and the only one a live stream makes sense for."""
+    monkeypatch.setattr(pipeline, "run_scan", lambda request, **kw: _fake_outcome(request))
+
+    client = _client(tmp_path)
+    response = client.post(
+        "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
+    )
+    _settle(client)
+
+    assert "/watch?" in response.headers["location"]
+
+
+def test_one_failing_target_does_not_affect_the_others(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Each target is an independent scan, so a batch needs no failure
+    policy of its own -- there is no batch-level state to corrupt
+    (ADR-0002 D5 applied at the batch level for free)."""
+
+    def one_bad_apple(request, *, raw_dir, on_status=None, on_warning=None, cancel=None):
+        if request.target == "bad.example.com":
+            raise RuntimeError("this target blew up")
+        return _fake_outcome(request)
+
+    monkeypatch.setattr(pipeline, "run_scan", one_bad_apple)
+
+    client = _client(tmp_path)
+    client.post(
+        "/scan",
+        data={
+            "target": "good1.example.com\nbad.example.com\ngood2.example.com",
+            "tools": ["crtsh"],
+        },
+    )
+    _settle(client)
+
+    finished = {m.target for m in history.list_scans(tmp_path)}
+    assert "good1.example.com" in finished
+    assert "good2.example.com" in finished
+
+
+def test_queued_scans_are_visible_on_the_history_page(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A queued scan has no manifest yet, so without this a bulk submission
+    would appear to have done nothing until its scans finished one by one --
+    exactly when the operator most wants to see them."""
+    release = threading.Event()
+
+    def blocking_run(request, *, raw_dir, on_status=None, on_warning=None, cancel=None):
+        release.wait(timeout=10)
+        return _fake_outcome(request)
+
+    monkeypatch.setattr(pipeline, "run_scan", blocking_run)
+
+    client = _client(tmp_path)
+    client.post(
+        "/scan",
+        data={"target": "q1.example.com\nq2.example.com\nq3.example.com", "tools": ["crtsh"]},
+    )
+    time.sleep(0.3)
+    page = client.get("/history").text
+
+    assert "In progress" in page
+    for target in ("q1.example.com", "q2.example.com", "q3.example.com"):
+        assert target in page
+
+    release.set()
+    _settle(client)

@@ -1160,6 +1160,55 @@ point is a real release, just pre-dev groundwork.
   was cancelled from the UI with theHarvester mid-flight, and that process
   (confirmed running by pid beforehand) was gone within two seconds, with no
   orphaned recon processes left behind.
+- Scan concurrency is now bounded with an explicit queue (**ADR-0011 D9**,
+  resolving that ADR's open question 1), and multiple targets can be
+  submitted at once (roadmap item #27).
+
+  Q1 asked whether scans should run concurrently or one-at-a-time behind a
+  queue, and leaned one-at-a-time. Both halves of the framing turned out
+  wrong. Nothing had ever implemented either: `execute_scan` was a sync
+  function handed to Starlette's `BackgroundTasks`, so concurrent scans were
+  already happening, *unbounded*, by accident — verified empirically before
+  changing anything. Unbounded is wrong for three reasons, of which the
+  third decided it: aggregate traffic at targets scaling with no one
+  authorising the aggregate; multiplied load on crt.sh, whose fragility
+  under *sequential* load is the entire reason ADR-0008 D9 exists; and
+  worker-thread starvation making **cancellation unavailable** — every scan
+  and every open SSE stream holds a thread, and the cancel route is itself a
+  sync handler needing one. A feature that fails under the load that
+  motivates using it is not a working feature. Strict serialisation is
+  equally wrong now that ADR-0008's Stage 1 runs three tools in parallel
+  within one scan.
+
+  So: at most `MAX_CONCURRENT_SCANS` (2) run at once, the rest queue. A
+  `ThreadPoolExecutor` is exactly the right shape — queued work waits in its
+  queue rather than parked on a thread, which a bounding semaphore would not
+  have achieved. The limit is chosen from crt.sh's demonstrated fragility,
+  not from available CPU. A queued scan is genuinely cancellable and must
+  never spawn a tool when its slot arrives, which falls out of the
+  cancellation token being created at submission rather than at start.
+
+  Bulk scanning then needed almost nothing: each target is an independent
+  scan, so a batch has no failure policy of its own — one target failing
+  degrades only itself, ADR-0002 D5 applying at the batch level for free.
+  The target field takes several domains (one per line, or comma-separated),
+  duplicates are dropped because two scans of one target submitted together
+  would collide on `scan_id`, and a batch redirects to history rather than
+  one target's watch page, since only some are running at any moment.
+  Queued and running scans are now listed on the history page: they have no
+  manifest until they finish, so a batch would otherwise appear to have done
+  nothing until its scans completed one by one.
+
+  Tests that relied on `BackgroundTasks` completing before the POST returned
+  now wait on a real completion signal. Only one had actually failed — the
+  rest were passing by winning a race, which is a flaky test rather than a
+  passing one. The concurrency bound is proven by a test that was
+  falsified first (widening the executor makes it fail `4 <= 2`).
+
+  Live-validated with a real 4-target batch (`hazelmoor.org`, `larnby.com`,
+  `yulan.me`, `felgrove.com`): all four queued and visible immediately,
+  observed draining strictly two at a time, all four completing with real
+  findings (23 / 8 / 524 / 9) and no orphaned processes.
 
 ### Fixed
 - The triage route required its `state` form field, so clearing a finding's

@@ -60,6 +60,24 @@
 {% block content %}
 <h1>Scan history</h1>
 
+{% if pending %}
+<section class="pending-scans">
+  <h2 class="target-group-heading">In progress <span class="hint">({{ pending | length }})</span></h2>
+  <ul class="history-list">
+    {% for scan in pending %}
+    <li class="history-row">
+      <a class="history-target" href="/scan/{{ scan.scan_id }}/watch?target={{ scan.target | urlencode }}">{{ scan.target }}</a>
+      <span class="history-meta">queued or running</span>
+      <form method="post" action="/scan/{{ scan.scan_id }}/cancel" class="delete-form">
+        <button type="submit" class="delete-btn">Cancel</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="hint">At most {{ max_concurrent_scans }} scan(s) run at once; the rest wait their turn.</p>
+</section>
+{% endif %}
+
 {% if not groups %}
 <p class="hint">No scans yet — <a href="/">run one</a>.</p>
 {% else %}

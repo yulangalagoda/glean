@@ -11,10 +11,14 @@
 
 <form method="post" action="/scan">
   <div>
-    <label for="target">Target domain</label>
-    <input type="text" id="target" name="target" placeholder="example.com"
-           value="{{ form.get('target', '') }}" required autofocus>
-    <p class="field-hint">A bare domain, e.g. <code>example.com</code> — not a URL or IP address.</p>
+    <label for="target">Target domain(s)</label>
+    {# A textarea rather than a text input so several targets can be pasted
+       straight from a list, one per line -- the shape they actually arrive
+       in. One line behaves exactly as the single-target field always did. #}
+    <textarea id="target" name="target" rows="2" placeholder="example.com"
+              required autofocus>{{ form.get('target', '') }}</textarea>
+    <p class="field-hint">A bare domain, e.g. <code>example.com</code> — not a URL or IP address.
+      Enter several (one per line, or comma-separated) to queue a scan for each.</p>
     <p class="error field-hint" id="target-format-hint" hidden></p>
   </div>
 
@@ -237,13 +241,23 @@ function buildCliCommand() {
 
 const targetField = document.getElementById('target');
 const targetHint = document.getElementById('target-format-hint');
+// Checked per line, not over the whole box: with several targets a single
+// bad one has to be named, and testing the joined text would either miss it
+// or blame the entire list.
 function checkTargetFormat() {
-  const value = targetField.value.trim();
+  const lines = targetField.value.split(/[\n,]/).map(function (l) { return l.trim(); })
+    .filter(Boolean);
   let message = '';
-  if (/^https?:\/\//i.test(value)) {
-    message = 'Looks like a URL — enter just the domain, e.g. "example.com" not "https://example.com".';
-  } else if (value.includes('/')) {
-    message = 'Looks like it includes a path — enter just the bare domain.';
+  for (const value of lines) {
+    if (/^https?:\/\//i.test(value)) {
+      message = 'Looks like a URL — enter just the domain, e.g. "example.com" not '
+        + '"https://example.com" (' + value + ').';
+      break;
+    }
+    if (value.includes('/')) {
+      message = 'Looks like it includes a path — enter just the bare domain (' + value + ').';
+      break;
+    }
   }
   targetHint.textContent = message;
   targetHint.hidden = !message;

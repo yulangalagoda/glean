@@ -15,7 +15,9 @@ import csv
 import io
 import json
 import queue
+import threading
 from collections.abc import AsyncIterator
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 from html import escape as _escape_html
 from pathlib import Path
@@ -23,7 +25,7 @@ from typing import Annotated
 from urllib.parse import urlencode
 
 import uvicorn
-from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -54,6 +56,15 @@ from glean_osint.history import (
 from glean_osint.pipeline import ScanRequest
 from glean_osint.registry import PRESETS, TOOL_REGISTRY, normalise_selection
 
+# How many scans run at once (ADR-0011 D9). Deliberately low, and chosen
+# from the binding constraint rather than from available CPU: every scan
+# queries crt.sh, whose 502/429 responses under repeated *sequential* load
+# are the whole reason ADR-0008 D9's caching and retry exist. Concurrent
+# scans of different targets share no cache, so they multiply that load
+# exactly where it is already known to be fragile. Raising this trades
+# politeness toward shared public infrastructure for wall-clock time.
+MAX_CONCURRENT_SCANS = 2
+
 _WEB_DIR = Path(__file__).parent
 
 
@@ -69,6 +80,7 @@ def _build_templates(*, network_exposed: bool) -> Jinja2Templates:
     # Shared with the brief header so the two renderings of the same
     # breakdown can't word it differently ("4 IP addresses" vs "4 ips").
     templates.env.globals["surface_label"] = surface_label
+    templates.env.globals["max_concurrent_scans"] = MAX_CONCURRENT_SCANS
     return templates
 
 
@@ -205,6 +217,24 @@ def _pretty_print_raw(content: str) -> str:
     return "\n\n".join(pretty_lines) if pretty_lines else content
 
 
+def parse_targets(raw: str) -> list[str]:
+    """Split the target field into individual targets (roadmap item #27).
+
+    Newline- or comma-separated, because both are how a list of domains
+    actually arrives: pasted from a file, or typed inline. Order is
+    preserved and duplicates are dropped -- submitting the same target
+    twice in one batch would otherwise collide on `scan_id` (which is
+    slug + second-granularity timestamp) and have two scans writing to
+    one directory.
+    """
+    seen: dict[str, None] = {}
+    for chunk in raw.replace(",", "\n").splitlines():
+        target = chunk.strip()
+        if target:
+            seen.setdefault(target, None)
+    return list(seen)
+
+
 def _is_safe_scan_id(scan_id: str) -> bool:
     """`scan_id` is a path segment, not a filesystem path -- reject
     anything that could escape `history_root` before it ever touches
@@ -236,6 +266,34 @@ def create_app(
     # the moment its terminal event is delivered, while the token must stay
     # reachable for as long as the background task might still be running.
     scan_tokens: dict[str, runner.CancellationToken] = {}
+    # Bounded scan execution (ADR-0011 D9). A ThreadPoolExecutor is exactly
+    # the shape needed: `submit` returns immediately, at most
+    # `MAX_CONCURRENT_SCANS` run at once, and -- the part that matters --
+    # queued work waits in the executor's own queue rather than parked on a
+    # worker thread. Bounding with a semaphore instead would still burn a
+    # thread per queued scan, which is precisely the starvation D9 exists to
+    # prevent: the cancel route is a synchronous handler and needs a free
+    # thread of its own to run at all.
+    #
+    # Daemon threads, so a queued scan can never keep the process alive
+    # after the operator closes it.
+    scan_executor = ThreadPoolExecutor(
+        max_workers=MAX_CONCURRENT_SCANS, thread_name_prefix="glean-scan"
+    )
+    # Every scan submitted but not yet finished, running or still queued.
+    # Self-pruning via a done-callback, so this stays the size of the real
+    # backlog rather than growing forever. Exposed on `app.state` below: it
+    # is what makes "is anything still in flight?" answerable, which both a
+    # graceful shutdown and the tests need -- the latter because a POST now
+    # returns before the scan finishes, so asserting on a finished scan
+    # means waiting for a real signal rather than sleeping and hoping.
+    in_flight: set[Future[None]] = set()
+    in_flight_lock = threading.Lock()
+    # scan_id -> target for scans that are queued or running. They have no
+    # manifest yet (that is written when a scan finishes), so without this
+    # a bulk submission would vanish until its scans completed one by one --
+    # which is precisely when the operator most wants to see them.
+    pending_scans: dict[str, str] = {}
 
     def execute_scan(
         scan_id: str,
@@ -249,6 +307,15 @@ def create_app(
     ) -> None:
         q = active_scans[scan_id]
         try:
+            # The slot may have come up long after submission, and the
+            # operator may have cancelled while this was still queued.
+            # Checking here is what makes a queued scan genuinely
+            # cancellable rather than merely marked: it must never start a
+            # tool. The token exists from submission time, not start time,
+            # which is what allows this at all.
+            token = scan_tokens.get(scan_id)
+            if token is not None:
+                token.raise_if_cancelled()
             outcome = pipeline.run_scan(
                 ScanRequest(
                     target=target,
@@ -320,6 +387,8 @@ def create_app(
             q.put(("done", f"/scan/{scan_id}"))
         finally:
             scan_tokens.pop(scan_id, None)
+            with in_flight_lock:
+                pending_scans.pop(scan_id, None)
 
     @app.get("/", response_class=HTMLResponse)
     def index(
@@ -371,7 +440,6 @@ def create_app(
     @app.post("/scan", response_model=None)
     def submit_scan(
         request: Request,
-        background_tasks: BackgroundTasks,
         # target defaults to "" rather than being a required Form field so
         # a genuinely missing key (not just an empty string) still reaches
         # this function's own validation below, instead of FastAPI
@@ -384,13 +452,13 @@ def create_app(
         llm: Annotated[bool, Form()] = False,
         model: Annotated[str, Form()] = "",
     ) -> HTMLResponse | RedirectResponse:
-        target = target.strip()
+        targets = parse_targets(target)
         selected = normalise_selection(frozenset(tools))
         # An empty model box means "the default", not a request to narrate
         # with a model named "".
         model = model.strip() or synthesis.DEFAULT_MODEL
         error = None
-        if not target:
+        if not targets:
             error = "Enter a target domain."
         elif not selected:
             error = "Select at least one tool."
@@ -418,25 +486,52 @@ def create_app(
             )
 
         started_at = datetime.now(timezone.utc)
-        scan_id = scan_id_for(target, started_at)
-        scan_dir = history_root / scan_id
-        # Created explicitly, not relied on as a side effect of
-        # archive_raw() -- a scan where every tool degrades never calls
-        # archive_raw at all, and brief.html still needs somewhere to land.
-        scan_dir.mkdir(parents=True, exist_ok=True)
-        active_scans[scan_id] = queue.Queue()
-        scan_tokens[scan_id] = runner.CancellationToken()
-        background_tasks.add_task(
-            execute_scan,
-            scan_id,
-            scan_dir,
-            target,
-            selected,
-            authorisation or None,
-            top_n,
-            llm,
-            model,
-        )
+        scan_ids: list[str] = []
+
+        def _forget(finished: Future[None]) -> None:
+            with in_flight_lock:
+                in_flight.discard(finished)
+
+        # One independent scan per target (roadmap item #27). Independent is
+        # the whole design: a target that fails, degrades or is cancelled
+        # affects only its own scan, exactly as a single submission already
+        # behaved (ADR-0002 D5). Nothing here needs a batch-level failure
+        # policy, because there is no batch-level state to corrupt.
+        for one_target in targets:
+            scan_id = scan_id_for(one_target, started_at)
+            scan_dir = history_root / scan_id
+            # Created explicitly, not relied on as a side effect of
+            # archive_raw() -- a scan where every tool degrades never calls
+            # archive_raw at all, and brief.html still needs somewhere to land.
+            scan_dir.mkdir(parents=True, exist_ok=True)
+            active_scans[scan_id] = queue.Queue()
+            scan_tokens[scan_id] = runner.CancellationToken()
+            with in_flight_lock:
+                pending_scans[scan_id] = one_target
+            future = scan_executor.submit(
+                execute_scan,
+                scan_id,
+                scan_dir,
+                one_target,
+                selected,
+                authorisation or None,
+                top_n,
+                llm,
+                model,
+            )
+            with in_flight_lock:
+                in_flight.add(future)
+            future.add_done_callback(_forget)
+            scan_ids.append(scan_id)
+
+        # A single target keeps its live watch page. A batch does not: only
+        # `MAX_CONCURRENT_SCANS` of them are running at any moment (ADR-0011
+        # D9), so watching one target's stream would say nothing about the
+        # rest. History shows all of them, queued ones included.
+        if len(scan_ids) > 1:
+            return RedirectResponse(url="/history", status_code=303)
+        scan_id = scan_ids[0]
+        target = targets[0]
         # `tools` rides along so the watch page's stage checklist can show
         # only the stages this particular scan will actually run (a
         # passive-only scan never reaches a "Probing... (httpx)" status
@@ -728,8 +823,21 @@ def create_app(
     @app.get("/history", response_class=HTMLResponse)
     def history(request: Request) -> HTMLResponse:
         groups = group_scans_by_target(list_scans(history_root))
+        # Queued and running scans have no manifest yet -- one is written
+        # only when a scan finishes -- so without listing them separately a
+        # bulk submission would appear to have done nothing until its scans
+        # completed one at a time. Sorted by scan_id, which embeds the
+        # submission timestamp, so a batch reads in the order it was given.
+        with in_flight_lock:
+            pending = sorted(pending_scans.items())
         return templates.TemplateResponse(
-            request, "history.html", {"groups": groups, "tool_names": TOOL_REGISTRY}
+            request,
+            "history.html",
+            {
+                "groups": groups,
+                "tool_names": TOOL_REGISTRY,
+                "pending": [{"scan_id": sid, "target": t} for sid, t in pending],
+            },
         )
 
     @app.post("/scan/{scan_id}/cancel", response_model=None)
@@ -760,6 +868,12 @@ def create_app(
             raise HTTPException(status_code=404, detail="Scan not found.")
         delete_scan(history_root / scan_id)
         return RedirectResponse(url="/history", status_code=303)
+
+    # Exposed for lifecycle management: what is still queued or running is
+    # a real property of the server, not a test-only concern.
+    app.state.scan_executor = scan_executor
+    app.state.scan_futures = in_flight
+    app.state.scan_futures_lock = in_flight_lock
 
     return app
 

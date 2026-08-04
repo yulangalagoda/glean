@@ -59,6 +59,24 @@ A finished scan's results render using `render_html()` (ADR-0010) directly in th
 
 The server binds to `127.0.0.1` only, never `0.0.0.0` — this is a local single-operator tool, and an unauthenticated control plane that can trigger *active* recon (real requests at a real target) must never be reachable from the network by default. No login/auth system in v1: the OS-level boundary (only processes on this machine can reach `127.0.0.1`) is the actual security boundary, and adding a real auth system for a single local user would be complexity with no corresponding real threat addressed.
 
+### D9 — Scan concurrency: bounded, with an explicit queue (resolves open question 1)
+
+Open question 1 asked whether two scans could run concurrently or whether v1 should be one-at-a-time with a queue, and leaned one-at-a-time. Both halves of that framing turned out to be wrong, so it is decided here on evidence rather than on the original lean.
+
+**What the code actually did.** Nothing ever implemented either answer. `execute_scan` is a synchronous function handed to Starlette's `BackgroundTasks`, which runs it in the shared anyio worker thread pool — so concurrent scans were already possible, *unbounded*, and by accident rather than decision. Verified empirically: two simultaneous submissions genuinely overlap.
+
+**Why unbounded is wrong.**
+
+- *Ethics.* The passive/active split is this project's spine, and it works because each active scan is an explicit, individually authorised act. Unbounded concurrency lets aggregate traffic at targets scale without anyone authorising the aggregate — every individual scan was consented to, the pile-up was not.
+- *Rate limits.* Every scan queries crt.sh, whose real 502/429 responses under repeated *sequential* load are the entire reason D9-of-ADR-0008 (response caching + retry) exists. The cache is per-target, so concurrent scans of different targets share nothing and multiply that load precisely where it is already known to be fragile.
+- *Availability of cancellation.* The decisive one. Every running scan holds a worker thread, every open SSE stream holds another while blocked on its queue, and the cancel route is itself a synchronous handler needing a thread of its own. Enough concurrent scans starves the pool and makes cancelling impossible at exactly the moment an operator most wants it — a scan they need to stop. A feature that fails under the load that motivates using it is not a working feature.
+
+**Why strict one-at-a-time is also wrong.** It was the original lean, but ADR-0008's Stage 1 has since become genuinely concurrent (three tools in parallel within a single scan), so serialising whole scans now contradicts the pipeline's own design. A scan is dominated by waiting on external network I/O, not local work, so serialising a batch multiplies wall-clock time for no resource saved — and multi-target scanning is the next feature this has to serve.
+
+**Decision.** A small fixed number of scans run at once; the rest queue and start as slots free. The limit is a named constant rather than a magic number, defaulting deliberately low (2) — chosen from the binding constraint, which is crt.sh's demonstrated fragility under load, not from available CPU. Queued scans are real, visible, cancellable entries: cancelling one that has not started must work and must never spawn anything, which falls out of the cancellation token already being created at submission time rather than at start time.
+
+This keeps the concurrency the pipeline already assumes, caps the aggregate footprint at targets, and guarantees a thread is always free for the control plane — cancel and history stay responsive no matter how many scans are queued behind them.
+
 ## Consequences
 
 - **Positive:** directly closes every piece of the user's request (tool selection, live progress, results/export, persistent cross-session history) without adding a second toolchain; the adapter registry (D3) pays for itself immediately and makes future tools cheaper to add on both the CLI and web side; one unified history (D6) makes the CLI and web interface feel like one tool rather than two.
@@ -74,7 +92,7 @@ Scans now also archive `edges.json` (and `triage.json`, once a finding is triage
 
 ## Open questions
 
-1. Can two scans run concurrently from the UI, or is v1 one-at-a-time with a queue? Leaning one-at-a-time first — simpler to reason about and matches how the CLI is used today; revisit if it's a real friction point in practice.
+1. ~~Can two scans run concurrently from the UI, or is v1 one-at-a-time with a queue?~~ **Resolved 2026-08-04: neither — bounded concurrency with an explicit queue. See D9.** The lean toward one-at-a-time was never implemented; unbounded concurrency was what actually shipped, by accident. D9 records why both extremes are wrong, including the decisive finding that thread-pool starvation could make cancellation unavailable.
 2. Should the preset list (D4) itself become user-editable via the UI later? Not built now — the fixed starter set (Passive only / Full scan / Certificate check / Custom) covers the real usage seen so far.
 3. Server-side PDF rendering (D7) — deferred until the browser-print path genuinely proves insufficient, not built speculatively.
 4. Remote access / multi-user (D8) is out of scope entirely for v1, not just deferred — would need a real auth/threat-model decision this project hasn't needed to make yet.
