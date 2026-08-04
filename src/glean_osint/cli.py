@@ -153,7 +153,17 @@ def scan(
         bool,
         typer.Option(
             help="Actually invoke tools live (ADR-0008) instead of only ingesting files. "
-            "A per-tool file option, if given, still overrides live invocation for that tool."
+            "A per-tool file option, if given, still overrides live invocation for that tool. "
+            "Implied when no per-tool input file is given at all."
+        ),
+    ] = False,
+    offline: Annotated[
+        bool,
+        typer.Option(
+            "--offline",
+            help="Never invoke tools live: ingest the given files and nothing else. "
+            "Only needed to refuse the live fallback that otherwise applies when no input "
+            "file is given.",
         ),
     ] = False,
     active: Annotated[
@@ -269,24 +279,52 @@ def scan(
     (--crtsh / --theharvester / --subfinder / --dnsx / --httpx). Pass
     --live to actually invoke tools (ADR-0008); a per-tool file option
     still overrides live invocation for that specific tool (mixed mode).
+    Given no input file at all, live invocation is implied, so
+    `glean scan <domain>` produces a report on its own.
     --active is required in addition to --live to invoke httpx, the
     only active-method tool.
     """
-    if (
-        not live
-        and crtsh is None
+    if live and offline:
+        typer.secho("--live and --offline contradict each other.", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    no_input_files = (
+        crtsh is None
         and theharvester is None
         and subfinder is None
         and dnsx is None
         and httpx is None
-    ):
+    )
+    if no_input_files and offline:
         typer.secho(
-            "Provide at least one of --crtsh, --theharvester, --subfinder, --dnsx, --httpx, "
-            "or --live.",
+            "--offline needs at least one of --crtsh, --theharvester, --subfinder, --dnsx "
+            "or --httpx to ingest.",
             fg=typer.colors.RED,
             err=True,
         )
         raise typer.Exit(code=1)
+    if no_input_files and not live:
+        # Closes the charter's MVP criterion 1 -- "glean scan <domain> ->
+        # one report, no manual steps" -- which a bare invocation did not
+        # meet while it exited asking for input (ADR-0008 open question 2).
+        #
+        # Narrow on purpose: live is implied only when *no* input file was
+        # given at all, which is precisely the case that previously did
+        # nothing. Passing any file still means ingest-only, so every
+        # existing ingest workflow is untouched rather than silently
+        # acquiring network calls it never asked for.
+        #
+        # Only passive tools are reached this way. httpx stays behind
+        # --active (ADR-0008 D4), so nothing here touches the target
+        # directly without a second, explicit opt-in -- the charter's
+        # active/passive split is unaffected by this default.
+        live = True
+        typer.secho(
+            "No input files given — fetching with passive tools (crt.sh, theHarvester, "
+            "subfinder, dnsx). Pass --offline with input files to ingest instead.",
+            fg=typer.colors.CYAN,
+            err=True,
+        )
 
     # Every degraded-tool warning this scan emits, collected as well as
     # printed. Previously the CLI only printed them, so a scan run from the

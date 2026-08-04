@@ -41,10 +41,89 @@ def test_top_level_help_lists_scan_as_a_subcommand() -> None:
     assert "scan" in result.output
 
 
-def test_scan_requires_at_least_one_tool_input_or_live() -> None:
-    result = runner.invoke(app, ["scan", "example.com"])
+def test_a_bare_scan_runs_live_and_produces_a_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The charter's MVP criterion 1: `glean scan <domain>` -> one report,
+    no manual steps. It previously exited 1 asking for input, so a bare
+    invocation produced nothing (ADR-0008 open question 2).
+
+    Every tool is stubbed here: this asserts the *decision* to go live, and
+    a test that reached the real network to prove it would be exactly the
+    mistake this project already made once with the crt.sh cache.
+    """
+    monkeypatch.setattr(live_runner, "fetch_crtsh", lambda target: b"[]")
+    monkeypatch.setattr(live_runner, "run_theharvester", _empty_theharvester)
+    monkeypatch.setattr(live_runner, "run_subfinder", _empty_subfinder)
+    monkeypatch.setattr(live_runner, "run_dnsx", _empty_dnsx_envelope)
+
+    result = runner.invoke(app, ["scan", "example.com", "--raw-dir", str(tmp_path)])
+
+    assert result.exit_code == 0
+    assert "fetching with passive tools" in result.output
+    assert "Glean Brief" in result.output
+
+
+def test_a_bare_scan_never_reaches_the_active_tool(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Implying --live must not imply --active. httpx is the only tool that
+    touches the target directly, and the charter's passive/active split
+    requires a second, explicit opt-in -- a convenience default must never
+    quietly erode that.
+    """
+    monkeypatch.setattr(live_runner, "fetch_crtsh", lambda target: b"[]")
+    monkeypatch.setattr(live_runner, "run_theharvester", _empty_theharvester)
+    monkeypatch.setattr(live_runner, "run_subfinder", _empty_subfinder)
+    monkeypatch.setattr(live_runner, "run_dnsx", _empty_dnsx_envelope)
+
+    def fail_if_called(*args: object, **kwargs: object) -> bytes:
+        raise AssertionError("httpx was invoked without --active")
+
+    monkeypatch.setattr(live_runner, "run_httpx", fail_if_called)
+
+    result = runner.invoke(app, ["scan", "example.com", "--raw-dir", str(tmp_path)])
+
+    assert result.exit_code == 0
+
+
+def test_offline_refuses_to_fetch_and_says_what_it_needs() -> None:
+    """The explicit opt-out. Only needed to refuse the live fallback, so
+    with no files to ingest it has nothing to do and says so."""
+    result = runner.invoke(app, ["scan", "example.com", "--offline"])
+
     assert result.exit_code == 1
-    assert "Provide at least one" in result.output
+    assert "--offline needs at least one" in result.output
+
+
+def test_live_and_offline_together_is_rejected() -> None:
+    result = runner.invoke(app, ["scan", "example.com", "--live", "--offline"])
+
+    assert result.exit_code == 1
+    assert "contradict" in result.output
+
+
+def test_passing_an_input_file_still_means_ingest_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The narrowness that makes this default safe. Live is implied only
+    when *no* input file was given -- the case that previously did nothing.
+    Handing Glean a file must never silently acquire network calls the
+    operator did not ask for.
+    """
+
+    def fail_if_called(*args: object, **kwargs: object) -> bytes:
+        raise AssertionError("a live tool ran despite an input file being given")
+
+    for name in ("fetch_crtsh", "run_theharvester", "run_subfinder", "run_dnsx", "run_httpx"):
+        monkeypatch.setattr(live_runner, name, fail_if_called)
+
+    result = runner.invoke(
+        app, ["scan", "example.com", "--crtsh", str(FIXTURES / "crtsh-example-com.json")]
+    )
+
+    assert result.exit_code == 0
+    assert "fetching with passive tools" not in result.output
 
 
 def test_scan_with_both_tools_produces_a_brief() -> None:

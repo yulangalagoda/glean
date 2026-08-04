@@ -1302,6 +1302,38 @@ point is a real release, just pre-dev groundwork.
   `data-ref` inert there since it has no server to resolve against
   (ADR-0010 D3).
 
+- **`glean scan <domain>` now produces a report on its own** (ADR-0008 D10,
+  resolving that ADR's open question 2). It previously exited 1 asking for
+  input, so the charter's own MVP criterion 1 — "runs end-to-end from the
+  CLI: `glean scan <domain>` → one report, no manual steps" — was not met
+  by a literal reading of the command it names.
+
+  Deliberately **not** "make `--live` default to true". That would mean
+  passing `--crtsh capture.json` also invoked the other tools live, so
+  every existing ingest workflow would silently acquire network calls its
+  operator never asked for — a bad trade for closing a wording gap.
+  Instead live is implied in exactly one case: **no per-tool input file was
+  given at all**, which is precisely the invocation that previously did
+  nothing. Hand Glean a file and it ingests, as always. `--offline` refuses
+  the fallback explicitly, and `--live --offline` is rejected as
+  contradictory.
+
+  The passive/active split is untouched: only passive tools are reachable
+  this way, `httpx` still requires `--active`, and a test asserts httpx is
+  never invoked on the implied path. The fallback announces itself on
+  stderr naming the tools it will run — a command that reaches the network
+  should say so rather than leave the operator inferring it from a delay.
+
+  Live-validated: `glean scan hazelmoor.org` with no flags produced a
+  23-finding brief in 30s, 62.3% duplicate rate, all collection passive.
+
+  One thing worth recording about the test suite: the obsolete test
+  asserting the old "provide at least one input" error started genuinely
+  reaching the network once the default changed, taking the suite from ~5s
+  to 51s. That runtime was the tell. Replaced with stubbed tests covering
+  the new behaviour, and the suite is back to 4.9s — the same
+  no-real-network discipline the crt.sh cache bug established.
+
 ### Fixed
 - **A queued scan was indistinguishable from a hung one.** Reported from
   real pre-release testing: a bulk submission sat reading "queued or

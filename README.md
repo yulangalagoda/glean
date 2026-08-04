@@ -65,11 +65,13 @@ pip install -e ".[dev]"
 # Web interface: scan form, live progress, browsable history
 glean
 
-# Live: actually invoke tools (requires theHarvester/subfinder/dnsx/httpx installed)
-glean scan example.com --live
-glean scan example.com --live --active   # also runs httpx (ACTIVE — see below)
+# One command, one report. With no input file given, Glean fetches with the
+# passive tools itself (requires theHarvester/subfinder/dnsx installed).
+glean scan example.com
+glean scan example.com --active          # also runs httpx (ACTIVE — see below)
 
-# Ingest-only: build the brief from raw output you've already fetched
+# Ingest-only: build the brief from raw output you've already fetched.
+# Passing any input file means ingest, never live — no --offline needed.
 glean scan example.com \
   --crtsh path/to/crtsh-output.json \
   --theharvester path/to/theharvester-output.json \

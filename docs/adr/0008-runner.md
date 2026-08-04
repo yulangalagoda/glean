@@ -98,10 +98,22 @@ Considered and deferred: swapping crt.sh for an alternative CT-log API as a hedg
 - **Positive:** real "no manual steps" invocation becomes possible for the first time; the passive/active split moves from a policy sentence to an enforced code path; the crt.sh retry/backoff logic already proven by hand in `_private/scripts/` gets promoted into tested, real code instead of living only in an ad hoc shell script; raw output is archived for every live run the same way it already is for ingest-only mode.
 - **Costs / accepted limits:** dnsx/httpx's dynamically-generated-input invocation is hand-written in the runner rather than flowing through the uniform `Adapter.build_command()` interface — an accepted asymmetry, not a gap to paper over. A full active scan is inherently slower than a passive-only one, since Stage 3 cannot start before Stage 2 finishes. Only crt.sh gets explicit retry/backoff in v1 — theHarvester/dnsx/httpx rely on their own tool-level behaviour plus the runner's timeout, since this project has only observed real flakiness on crt.sh so far.
 
+### D10 — Live invocation is implied when no input file is given (resolves open question 2)
+
+`glean scan <domain>` exited 1 asking for input, so the charter's own MVP criterion 1 — "runs end-to-end from the CLI: `glean scan <domain>` → one report, no manual steps" — was not met by a literal reading of the command it names. Open question 2 deferred this until `--live` had real running experience; it now has a great deal.
+
+Deliberately **not** "make `--live` default to true". That would mean passing `--crtsh capture.json` also invoked the other tools live, so every existing ingest workflow would silently acquire network calls its operator never asked for — a bad trade for closing a wording gap.
+
+Instead, live is implied in exactly one case: **no per-tool input file was given at all.** That is precisely the invocation that previously did nothing, so nothing that worked before changes behaviour. Hand Glean a file and it ingests, as always; hand it nothing and it fetches, because that is the only reading of the command that does anything useful. `--offline` refuses the fallback explicitly, and `--live` with `--offline` is rejected as contradictory.
+
+The passive/active split is untouched. Only passive tools are reachable this way — `httpx` still requires `--active` (D4), so no default path touches the target directly. That boundary is the charter's ethical spine and is not something a convenience default gets to erode; a test asserts httpx is never invoked on this path.
+
+The implied fallback announces itself on stderr, naming the tools it is about to run. A command that reaches the network should say so rather than leaving the operator to infer it from a delay.
+
 ## Open questions
 
 1. ~~Should Stage 1's tools (crt.sh, theHarvester, subfinder) run concurrently (threads) given they're independent and theHarvester/subfinder in particular can be slow, or is sequential simpler to reason about and debug for v1?~~ **Resolved 2026-07-28:** yes, concurrent — see D1's Implementation correction above.
-2. Should `--live` eventually become the default (closing MVP goal #1 fully), with something like `--offline` as the explicit opt-out? Deliberately not decided here — revisit once `--live` has real running experience behind it.
+2. ~~Should `--live` eventually become the default (closing MVP goal #1 fully), with something like `--offline` as the explicit opt-out?~~ **Resolved 2026-08-04 — see D10.**
 3. Retry/backoff parameters (max attempts, base delay) are hardcoded constants in v1. Promote to a config file (like `config/priority-signals.v1.yaml`) only if a real need for tuning them shows up — avoid premature configurability.
 4. A `--dry-run` that prints what *would* be invoked (including whether the active-tool gate is open) without touching the network — useful for auditability before a live active scan, but not built here unless requested.
 5. If a fifth tool ever needs dnsx/httpx's "dynamically-generated input" shape, does `build_command()` gain a second, richer signature, or does the runner keep hand-special-casing each one? Deferred until it's a real second case, not a hypothetical one.
