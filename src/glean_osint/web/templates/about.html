@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Glean — about{% endblock %}
+{% block content %}
+
+<h1>About Glean</h1>
+<p class="lede-text">
+  An OSINT synthesis tool: it unifies {{ tools | length }} open-source reconnaissance tools
+  into one provenance-tracked, deterministically prioritised brief.
+</p>
+
+<section class="doc-section">
+  <h2>The problem it addresses</h2>
+  <p>
+    Existing reconnaissance automation is good at <em>collection</em> and poor at
+    <em>judgement</em>. Results arrive as flat, unprioritised piles: hundreds of hostnames
+    with no indication of which matter, no record of which tool claimed what, and no way to
+    check a surprising result short of re-running everything by hand.
+  </p>
+  <p>
+    Glean runs the same tools, then does the part they leave out — merging their output into
+    one entity model, deduplicating deterministically, ranking by an explicit rubric, and
+    keeping every finding traceable to the exact record that produced it.
+  </p>
+</section>
+
+<section class="doc-section">
+  <h2>The design that matters</h2>
+  <div class="callout">
+    <strong>Ranking and correlation happen in code. A model never decides what matters.</strong>
+  </div>
+  <p>
+    Optional narration by a local LLM rewrites the prose of the top findings and nothing
+    else. It cannot introduce a finding, reorder anything, merge two findings, or alter
+    provenance — those are structural properties of how the brief is built, not instructions
+    the model is asked to follow. Any finding it fails to narrate falls back to the
+    template rather than failing the scan.
+  </p>
+  <p>
+    That split is the reason the output is checkable. A ranking a model produced would be a
+    ranking nobody could audit; this one is the same rubric every time, and the tool will
+    show you the arithmetic.
+  </p>
+</section>
+
+<section class="doc-section">
+  <h2>Reconnaissance responsibly</h2>
+  <p>
+    Passive and active collection are separated in code, not just in documentation. Passive
+    sources are queried by default; anything that touches a target directly requires an
+    explicit opt-in on every path, and no convenience default has ever been allowed to
+    imply it.
+  </p>
+  <p class="section-note">
+    For authorised security research only — targets you own, or are explicitly cleared to
+    assess. The tool records the basis you state; it cannot verify it, and the
+    responsibility stays with you.
+  </p>
+</section>
+
+<section class="doc-section">
+  <h2>How decisions were made</h2>
+  <p>
+    Every significant design decision is recorded as an Architecture Decision Record in the
+    repository — the entity schema, the adapter contract, the dedup rules, the prioritisation
+    rubric, the brief contract, the evaluation protocol, the ground-truth method, the runner,
+    LLM synthesis, the report view and this web interface.
+  </p>
+  <p>
+    They include the open questions that are still open and the mistakes found along the way,
+    because a decision record that only lists what went well is not much of a record.
+  </p>
+</section>
+
+<section class="doc-section">
+  <h2>This build</h2>
+  <dl class="doc-list doc-meta">
+    <dt>Version</dt><dd><code>{{ version }}</code></dd>
+    <dt>Tools</dt>
+    <dd>{% for tool_id, info in tools.items() %}{{ info.display_name }}{% if not loop.last %}, {% endif %}{% endfor %}</dd>
+    <dt>Licence</dt><dd>MIT</dd>
+    <dt>Source</dt>
+    <dd><a href="https://github.com/yulangalagoda/glean" rel="noopener">github.com/yulangalagoda/glean</a></dd>
+    <dd class="section-note">
+      Runs entirely on your machine. Nothing is sent anywhere except to the reconnaissance
+      tools' own sources, and to a local Ollama instance if you enable narration.
+    </dd>
+  </dl>
+</section>
+{% endblock %}

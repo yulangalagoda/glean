@@ -9,6 +9,54 @@ point was a real release, just pre-dev groundwork. That bar was reached on
 
 ## [Unreleased]
 
+### Changed
+- **The web interface has an information architecture** (ROADMAP theme 1).
+  Real feedback: the UI was clean but confusing — nothing said what was a
+  topic, what was an option and what was a description, so a user had to
+  read the whole page to find the part they wanted.
+
+  **The scan form was five sibling `<div>`s.** Target, Presets, Tools,
+  Authorisation and Narration all sat at one visual level, so nothing
+  conveyed that Presets and Tools are two views of a single decision, that
+  Authorisation is a record-keeping obligation rather than a scan
+  parameter, or that Narration is optional. Now four numbered
+  `<fieldset>` sections — *What to scan · How to collect · Authorisation ·
+  Output* — each with a note explaining its purpose, with the equivalent
+  terminal command sitting outside them since it is a read-back rather
+  than another decision. `<fieldset>`/`<legend>` rather than styled divs,
+  so the grouping is announced to screen readers for free.
+
+  **The type scale was inverted.** Section headings rendered at
+  0.95rem/600 while the control labels *inside* them were 1rem/600 —
+  options were literally larger than their own topics, and three tiers of
+  description were all `--text-muted` within 0.05rem of each other. There
+  are now five levels separated by size *and* weight *and* colour, with a
+  new `--text-faint` tone so micro-copy genuinely recedes. Two inline
+  `style="font-weight: 400"` attributes were removed from the tool labels;
+  no stylesheet could override them, which is part of why this was stuck.
+
+  **The app opened on the scan form**, asking for a target before saying
+  what the tool was or showing what it already held. `/` is now an
+  overview — running scans first (the only thing that may need acting on),
+  then totals, then recent scans — and the form moved to `/new`. Cancelled
+  scans are excluded from the totals: they produced no findings and no
+  report, and counting them would inflate "scans kept" with runs that were
+  deliberately stopped.
+
+  **Nothing explained the tool to anyone using it.** `/guide` covers
+  running a scan, the passive/active split, reading a brief, checking a
+  finding back to its source record, comparing scans, and what the
+  faithfulness numbers do and do not claim. `/about` covers the problem
+  addressed, the design split that makes the output checkable, the ethics
+  posture, and this build's version. Both are reachable from every page,
+  visually separated in the nav as reference rather than workflow.
+
+  The guide's scoring table is **generated from `scoring.WEIGHTS` and
+  `brief.SIGNAL_PHRASES`**, not transcribed — documentation of a rubric
+  that can drift away from the rubric is worse than none, and a test
+  asserts every signal and its real weight appears.
+
+
 ### Added
 - **The stage-2 judge can now be audited** (ADR-0006 Q5, apparatus). `glean
   eval --llm` reports `stage2_faith` with a documented caveat that the judge

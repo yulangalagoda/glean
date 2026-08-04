@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Glean{% endblock %}
+{% block content %}
+
+<section class="lede">
+  <h1>Glean</h1>
+  <p class="lede-text">
+    Runs {{ tool_count }} open-source reconnaissance tools against a target and merges what
+    they find into one brief — deduplicated, ranked by a deterministic rubric, and traceable
+    line by line back to the tool that reported it.
+  </p>
+  <div class="lede-actions">
+    <a class="btn-primary" href="/new">New scan</a>
+    <a class="btn-secondary" href="/history">Browse history</a>
+  </div>
+</section>
+
+{% if pending %}
+{# Above the fold and before anything else: something is happening right now,
+   and it is the only thing on this page the operator may need to act on. #}
+<section class="panel panel-live">
+  <h2>Running now <span class="count-badge">{{ pending | length }}</span></h2>
+  <ul class="history-list">
+    {% for scan in pending %}
+    <li class="history-row">
+      <a class="history-target" href="/scan/{{ scan.scan_id }}/watch?target={{ scan.target | urlencode }}">{{ scan.target }}</a>
+      {% if scan.started %}
+      <span class="history-meta running-pill">running</span>
+      {% else %}
+      <span class="history-meta">queued</span>
+      {% endif %}
+      <span class="history-meta">
+        {% if scan.elapsed_minutes < 1 %}just submitted{% else %}{{ scan.elapsed_minutes }}m ago{% endif %}
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if stats.scans %}
+<section class="stat-row">
+  <div class="stat">
+    <span class="stat-value">{{ stats.scans }}</span>
+    <span class="stat-label">scan{{ "s" if stats.scans != 1 else "" }} kept</span>
+  </div>
+  <div class="stat">
+    <span class="stat-value">{{ stats.targets }}</span>
+    <span class="stat-label">target{{ "s" if stats.targets != 1 else "" }}</span>
+  </div>
+  <div class="stat">
+    <span class="stat-value">{{ stats.findings }}</span>
+    <span class="stat-label">findings recorded</span>
+  </div>
+  <div class="stat">
+    <span class="stat-value">{{ stats.with_warnings }}</span>
+    <span class="stat-label">scan{{ "s" if stats.with_warnings != 1 else "" }} with warnings</span>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Recent scans</h2>
+  <ul class="history-list">
+    {% for scan in recent %}
+    <li class="history-row">
+      {% if scan.cancelled %}
+      <span class="history-target history-cancelled">{{ scan.target }}</span>
+      <span class="history-meta cancelled-pill">cancelled</span>
+      {% else %}
+      <a class="history-target" href="/scan/{{ scan.scan_id }}">{{ scan.target }}</a>
+      <span class="history-meta">{{ scan.started_at[:16] | replace("T", " ") }} UTC</span>
+      <span class="history-meta history-findings">
+        {{ scan.findings_count }} finding{{ "s" if scan.findings_count != 1 else "" }}
+      </span>
+      {% endif %}
+      {% if scan.warnings %}
+      <span class="history-meta warning-pill">{{ scan.warnings | length }} warning{{ "s" if scan.warnings | length != 1 else "" }}</span>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="panel-foot"><a href="/history">All scans and comparisons →</a></p>
+</section>
+{% else %}
+<section class="panel empty-state">
+  <h2>Nothing scanned yet</h2>
+  <p class="section-note">
+    A scan needs a domain you own or are explicitly authorised to assess. Passive collection
+    queries third-party sources only; anything that touches the target directly is a separate,
+    explicit opt-in.
+  </p>
+  <p class="panel-foot"><a href="/new">Run the first scan →</a></p>
+</section>
+{% endif %}
+{% endblock %}

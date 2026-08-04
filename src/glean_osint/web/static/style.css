@@ -9,7 +9,8 @@
   --border: #e4e4e4;
   --surface: #fff;
   --text: #1a1a1a;
-  --text-muted: #666;
+  --text-muted: #5c5c5c;
+  --text-faint: #8a8a8a;
   --bg: #fdfdfd;
   --danger-bg: #fde8e8;
   --danger-border: #f3b6b6;
@@ -31,7 +32,8 @@
     --border: #2b2d32;
     --surface: #202226;
     --text: #e8e8e8;
-    --text-muted: #a3a3a3;
+    --text-muted: #b0b0b0;
+    --text-faint: #83868c;
     --bg: #16171a;
     --danger-bg: #3a2222;
     --danger-border: #6b3232;
@@ -113,14 +115,203 @@ body {
 .nav-links a:hover { color: var(--text); }
 .nav-links a.active { color: var(--text); border-bottom-color: var(--accent); }
 
-h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
+/* --- Type scale -------------------------------------------------------
+   Five deliberate levels, each separated by size *and* weight *and* colour
+   rather than one of the three. The form previously had section headings at
+   0.95rem/600 and the control labels beneath them at 1rem/600 -- options
+   were literally larger than the topics containing them, so nothing told
+   the eye where a section began. Three tiers of description were all
+   --text-muted within 0.05rem of each other and read as one block of grey.
+
+   1  page title      1.6rem   700  --text
+   2  section heading 1.15rem  700  --text
+   3  control label   0.95rem  600  --text
+   4  description     0.88rem  400  --text-muted
+   5  micro-copy      0.8rem   400  --text-faint
+
+   The point is scanning: a reader should be able to find the section they
+   want without reading the prose inside any of the others. */
+h1 { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.015em; margin: 0 0 0.3rem; }
 .hint { color: var(--text-muted); font-size: 0.9rem; margin: 0 0 2rem; }
 
-form { display: flex; flex-direction: column; gap: 1.5rem; }
-label { font-weight: 600; display: block; margin-bottom: 0.4rem; }
+form { display: flex; flex-direction: column; gap: 2.3rem; }
+label { font-size: 0.95rem; font-weight: 600; display: block; margin-bottom: 0.4rem; }
 input[type="text"], input[type="number"], textarea {
   width: 100%; padding: 0.55rem 0.7rem; border: 1px solid var(--border); border-radius: 8px;
   font-size: 1rem; font-family: inherit; background: var(--surface); color: var(--text);
+}
+/* --- Documentation pages (guide, about) ------------------------------
+   Prose, so it gets a narrower measure than the data-heavy pages and a
+   heading rhythm that supports skimming to a section rather than reading
+   top to bottom. */
+.doc-section { margin: 0 0 2.6rem; max-width: 68ch; }
+.doc-section > h2 {
+  font-size: 1.25rem; font-weight: 700; letter-spacing: -0.01em;
+  margin: 0 0 0.7rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--border);
+  scroll-margin-top: 1rem;
+}
+.doc-section p { margin: 0 0 0.85rem; line-height: 1.65; }
+
+/* Jump list. Deliberately not sticky -- these pages are short enough that
+   a floating element would cost more attention than it saves. */
+.toc {
+  display: flex; flex-wrap: wrap; gap: 0.4rem 0.5rem;
+  margin: 0 0 2.4rem; padding: 0.85rem 1rem;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+}
+.toc a {
+  font-size: 0.85rem; color: var(--text-muted); text-decoration: none;
+  border: 1px solid var(--border); border-radius: 999px; padding: 0.2rem 0.7rem;
+}
+.toc a:hover { color: var(--text); border-color: var(--accent); }
+
+/* Term/definition pairs, where the term is an option and the definition is
+   the description -- levels 3 and 4 of the type scale, kept consistent with
+   how the same relationship reads on the scan form. */
+.doc-list { margin: 0 0 1rem; }
+.doc-list dt {
+  font-size: 0.95rem; font-weight: 600; color: var(--text); margin: 0.9rem 0 0.25rem;
+}
+.doc-list dd {
+  margin: 0; font-size: 0.88rem; color: var(--text-muted); line-height: 1.55;
+}
+.doc-meta dt { margin-top: 0.6rem; }
+
+.doc-table { width: 100%; border-collapse: collapse; margin: 0.9rem 0 1rem; font-size: 0.88rem; }
+.doc-table th, .doc-table td {
+  text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border);
+}
+.doc-table th {
+  font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-faint); font-weight: 700;
+}
+.doc-table td.num { font-variant-numeric: tabular-nums; font-weight: 600; }
+.doc-table td.num.pos { color: var(--danger-text); }
+.doc-table td.num.neg { color: var(--text-faint); }
+
+/* Callouts carry the same colour meanings as the rest of the app: the
+   active-recon palette for anything that touches a target, the danger
+   palette for a caveat that must not be skimmed past. */
+.callout {
+  border: 1px solid var(--border); border-left-width: 3px; border-radius: 8px;
+  background: var(--surface); padding: 0.75rem 0.95rem; margin: 0 0 0.9rem;
+  font-size: 0.9rem; line-height: 1.55;
+}
+.callout-passive { border-left-color: var(--accent); }
+.callout-active {
+  border-left-color: var(--active-border); background: var(--active-bg); color: var(--active-text);
+}
+.callout-caution {
+  border-left-color: var(--danger-border); background: var(--danger-bg); color: var(--danger-text);
+}
+
+.nav-divider {
+  width: 1px; align-self: stretch; background: var(--border); margin: 0 0.2rem;
+}
+.nav-links a.nav-secondary { color: var(--text-faint); }
+.nav-links a.nav-secondary:hover { color: var(--text); }
+
+/* --- Landing page ----------------------------------------------------
+   The tool used to open on the scan form, which asked for a target before
+   saying what it was or what it already held. This page answers "where am
+   I, what is here, what can I do" in that order, using the same type scale
+   as everywhere else so the hierarchy reads identically page to page. */
+.lede { margin: 0 0 2.5rem; }
+.lede h1 { font-size: 2rem; margin-bottom: 0.5rem; }
+.lede-text {
+  font-size: 1.05rem; line-height: 1.6; color: var(--text-muted);
+  max-width: 62ch; margin: 0 0 1.4rem;
+}
+.lede-actions { display: flex; gap: 0.7rem; flex-wrap: wrap; }
+.btn-primary, .btn-secondary {
+  display: inline-block; border-radius: 8px; padding: 0.6rem 1.15rem;
+  font-size: 0.95rem; font-weight: 600; text-decoration: none; border: 1px solid transparent;
+}
+.btn-primary { background: var(--text); color: var(--bg); }
+.btn-primary:hover { opacity: 0.88; }
+.btn-secondary { background: var(--surface); color: var(--text); border-color: var(--border); }
+.btn-secondary:hover { border-color: var(--accent); }
+
+.panel {
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+  padding: 1.1rem 1.2rem; margin: 0 0 1.5rem;
+}
+.panel > h2 {
+  font-size: 1.05rem; font-weight: 700; margin: 0 0 0.85rem;
+  display: flex; align-items: center; gap: 0.5rem;
+}
+/* A running scan is the one thing here that may need acting on, so it is
+   marked rather than left to look like another list. */
+.panel-live { border-color: var(--accent); }
+.count-badge {
+  background: var(--accent); color: #fff; border-radius: 999px;
+  padding: 0.05rem 0.55rem; font-size: 0.78rem; font-weight: 700;
+}
+.panel-foot { margin: 0.9rem 0 0; font-size: 0.88rem; }
+.panel-foot a { color: var(--accent); text-decoration: none; font-weight: 500; }
+.panel-foot a:hover { text-decoration: underline; }
+.panel .history-row { border: none; padding: 0.45rem 0; background: none; }
+.panel .history-row + .history-row { border-top: 1px solid var(--border); }
+.empty-state .section-note { margin-top: 0.3rem; }
+
+/* Numbers first, label second: the figure is what the eye is scanning for,
+   so it carries the weight and the label recedes to micro-copy. */
+.stat-row {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.7rem; margin: 0 0 1.5rem;
+}
+.stat {
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+  padding: 0.85rem 1rem; display: flex; flex-direction: column; gap: 0.15rem;
+}
+.stat-value { font-size: 1.5rem; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.stat-label { font-size: 0.8rem; color: var(--text-faint); }
+
+/* Grouped form sections (see index.html). A <fieldset> carries the
+   grouping semantics but arrives with browser chrome nobody wants, so the
+   border and padding are stripped and the structure is re-expressed as a
+   numbered legend plus generous separation. `min-width: 0` is not
+   decorative: a fieldset defaults to an intrinsic min-width that stops it
+   shrinking inside the form's flex column, which makes long content push
+   the layout wider on narrow screens. */
+/* Kept a plain block rather than a flex column. `<legend>` is laid out
+   specially by browsers (it is painted into the fieldset's border), and its
+   behaviour as a flex item is inconsistent across engines -- margins on the
+   children are predictable where that is not. */
+.form-section { border: none; padding: 0; margin: 0; min-width: 0; }
+.form-section > legend {
+  display: block; width: 100%; padding: 0; margin: 0 0 0.45rem;
+  font-size: 1.15rem; font-weight: 700; letter-spacing: -0.01em; color: var(--text);
+}
+.form-section > legend .step,
+.form-section > legend .optional { vertical-align: middle; }
+.form-section > * + * { margin-top: 0.7rem; }
+.form-section .step {
+  margin-right: 0.55rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.6rem; height: 1.6rem; border-radius: 50%;
+  background: var(--accent); border: 1px solid var(--accent);
+  color: #fff; font-size: 0.8rem; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.form-section .optional {
+  font-weight: 400; font-size: 0.78rem; color: var(--text-muted);
+  border: 1px solid var(--border); border-radius: 999px; padding: 0.05rem 0.5rem;
+}
+.section-note {
+  margin: 0; font-size: 0.88rem; font-weight: 400; color: var(--text-muted);
+  line-height: 1.5; max-width: 58ch;
+}
+/* Micro-copy: bound to one specific control, and the level a scanning
+   reader should be able to skip entirely. Faintest of the five. */
+.field-hint {
+  margin: 0.35rem 0 0; font-size: 0.8rem; font-weight: 400;
+  color: var(--text-faint); line-height: 1.45;
+}
+/* ...except when it is carrying an error, which must not recede. */
+.field-hint.error {
+  color: var(--danger-text); font-weight: 500;
+  padding: 0.35rem 0.6rem; border-radius: 6px;
 }
 .presets { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
 .preset-btn {
@@ -136,7 +327,13 @@ input[type="text"], input[type="number"], textarea {
   border-radius: 8px; padding: 0.6rem 0.8rem; background: var(--surface); cursor: pointer;
 }
 .tool-card:hover { border-color: var(--accent); }
-.tool-card label { cursor: pointer; }
+/* An option inside a section, not a section heading -- it must read as
+   selectable text rather than compete with the legend above it. Was set by
+   an inline style attribute on each label, which no stylesheet could
+   override. */
+.tool-card label {
+  cursor: pointer; margin: 0; font-size: 0.95rem; font-weight: 500; color: var(--text);
+}
 /* The passive/active split is the ethical spine of this project, but both
    badges rendered in the same grey -- ticking the one tool that sends real
    packets at the target looked identical to ticking a CT-log lookup. The
@@ -180,8 +377,7 @@ button[type="submit"]:not(.delete-btn):hover { opacity: 0.88; }
   font-size: 0.82rem; line-height: 1.5; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
   color: var(--text);
 }
-.field-hint { margin: 0.35rem 0 0; font-size: 0.82rem; color: var(--text-muted); }
-.field-hint.error { padding: 0.35rem 0.6rem; border-radius: 6px; }
+
 .warning.active-warning {
   margin: 0.75rem 0 0; padding: 0.6rem 0.85rem; border-radius: 8px;
   background: var(--danger-bg); border: 1px solid var(--danger-border); color: var(--danger-text);

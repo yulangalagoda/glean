@@ -10,8 +10,18 @@
 {% endif %}
 
 <form method="post" action="/scan">
-  <div>
-    <label for="target">Target domain(s)</label>
+  {# Grouped into numbered sections rather than a flat run of fields.
+     Previously Target, Presets, Tools, Authorisation and Narration were
+     five sibling <div>s at the same visual level, which gave a reader no
+     way to tell that Presets and Tools are two views of one decision,
+     that Authorisation is a record-keeping obligation rather than a scan
+     parameter, or that Narration is optional and independent of both.
+     <fieldset>/<legend> rather than styled divs: the grouping is real, so
+     it should be the element that means grouping -- screen readers then
+     announce which section a control belongs to for free. #}
+
+  <fieldset class="form-section">
+    <legend><span class="step">1</span> What to scan</legend>
     {# A textarea rather than a text input so several targets can be pasted
        straight from a list, one per line -- the shape they actually arrive
        in. One line behaves exactly as the single-target field always did. #}
@@ -20,10 +30,14 @@
     <p class="field-hint">A bare domain, e.g. <code>example.com</code> — not a URL or IP address.
       Enter several (one per line, or comma-separated) to queue a scan for each.</p>
     <p class="error field-hint" id="target-format-hint" hidden></p>
-  </div>
+  </fieldset>
 
-  <div>
-    <label>Presets</label>
+  <fieldset class="form-section">
+    <legend><span class="step">2</span> How to collect</legend>
+    <p class="section-note">
+      Presets are shortcuts for the tool list below — picking one just ticks boxes,
+      and changing any box afterwards is expected.
+    </p>
     <div class="presets">
       {% for name, tool_ids in presets.items() %}
       <button type="button" class="preset-btn" data-preset="{{ name }}"
@@ -31,17 +45,13 @@
       {% endfor %}
       <span class="preset-state" id="preset-state" hidden></span>
     </div>
-  </div>
-
-  <div>
-    <label>Tools</label>
     <div class="tools">
       {% for tool_id, info in tools.items() %}
       <div class="tool-card">
         <input type="checkbox" id="tool-{{ tool_id }}" name="tools" value="{{ tool_id }}"
                data-method="{{ info.default_method }}"
                {% if tool_id in form.get('tools', []) %}checked{% endif %}>
-        <label for="tool-{{ tool_id }}" style="margin: 0; font-weight: 400;">{{ info.display_name }}</label>
+        <label for="tool-{{ tool_id }}">{{ info.display_name }}</label>
         <span class="method method-{{ info.default_method }}">{{ info.default_method }}</span>
       </div>
       {% endfor %}
@@ -49,22 +59,31 @@
     <p class="warning active-warning" id="active-warning" hidden>
       <strong>Active collection selected.</strong> This sends real requests directly to the
       target, not just third-party lookups. Only run this against a target you're authorised
-      to test — see the authorisation field below.
+      to test — record the basis in the next section.
     </p>
-  </div>
+  </fieldset>
 
-  <div>
-    <label for="authorisation">Authorisation basis</label>
+  <fieldset class="form-section">
+    <legend><span class="step">3</span> Authorisation</legend>
+    <p class="section-note">
+      Why you are permitted to scan this target. Recorded in the brief and kept with the
+      scan — it is a record you are keeping, not a setting that changes what runs.
+    </p>
+    <label class="visually-hidden" for="authorisation">Authorisation basis</label>
     <input type="text" id="authorisation" name="authorisation"
            placeholder="e.g. Domain owned by operator" value="{{ form.get('authorisation', '') }}">
-  </div>
+  </fieldset>
 
-  <div>
-    <label>Narration</label>
+  <fieldset class="form-section">
+    <legend><span class="step">4</span> Output <span class="optional">optional</span></legend>
+    <p class="section-note">
+      Changes only how the brief reads. The findings, their ranking and their provenance are
+      identical either way.
+    </p>
     <div class="tool-card llm-card">
       <input type="checkbox" id="cli-llm" name="llm" value="true"
              {% if form.get('llm') %}checked{% endif %}>
-      <label for="cli-llm" style="margin: 0; font-weight: 400;">
+      <label for="cli-llm">
         Narrate top priorities with a local LLM
       </label>
       <span class="method">ollama</span>
@@ -81,8 +100,10 @@
         template rather than failing the scan.
       </p>
     </div>
-  </div>
+  </fieldset>
 
+  {# Outside the numbered sections on purpose: this is not another thing to
+     decide, it is a read-back of everything decided above. #}
   <div class="cli-preview" id="cli-preview" data-passive-tools="{{ cli_passive_tools | join(',') }}"
        data-llm-model="{{ default_llm_model }}">
     <div class="cli-preview-head">

@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+{% block title %}Glean — guide{% endblock %}
+{% block content %}
+
+<h1>Guide</h1>
+<p class="lede-text">
+  How to run a scan, read what comes back, and know what the numbers do and don't claim.
+</p>
+
+<nav class="toc" aria-label="On this page">
+  <a href="#running">Running a scan</a>
+  <a href="#passive-active">Passive vs active</a>
+  <a href="#reading">Reading a brief</a>
+  <a href="#scoring">How ranking works</a>
+  <a href="#provenance">Checking a finding</a>
+  <a href="#comparing">Comparing scans</a>
+  <a href="#numbers">What the numbers claim</a>
+</nav>
+
+<section class="doc-section" id="running">
+  <h2>Running a scan</h2>
+  <p>The form is four decisions, in order.</p>
+  <dl class="doc-list">
+    <dt>What to scan</dt>
+    <dd>
+      A bare domain — <code>example.com</code>, not a URL and not an IP. Enter several
+      (one per line, or comma-separated) and each gets its own independent scan;
+      one failing never affects the others.
+    </dd>
+    <dt>How to collect</dt>
+    <dd>
+      Which tools run. Presets are shortcuts that tick boxes for you — changing a box
+      afterwards is expected, and the preset simply stops being highlighted.
+      {% for name, ids in presets.items() %}<strong>{{ name }}</strong>{% if not loop.last %}, {% endif %}{% endfor %}
+      are the starting points.
+    </dd>
+    <dt>Authorisation</dt>
+    <dd>
+      Why you are permitted to scan this target. It is recorded in the brief and kept
+      with the scan. Nothing validates it — it is a record you are keeping for yourself,
+      not a gate.
+    </dd>
+    <dt>Output</dt>
+    <dd>
+      Optional narration by a local LLM. It changes only how the brief reads: the
+      findings, their ranking and their provenance are byte-for-byte identical either way.
+    </dd>
+  </dl>
+  <p class="section-note">
+    Scans run two at a time; the rest queue. A queued scan can be cancelled before it
+    starts, and cancelling a running one stops its tools rather than just abandoning them.
+  </p>
+</section>
+
+<section class="doc-section" id="passive-active">
+  <h2>Passive vs active</h2>
+  <p>
+    This is the distinction the tool is built around, and the only one it enforces in code.
+  </p>
+  <div class="callout callout-passive">
+    <strong>Passive</strong> collection asks third parties what they already know —
+    certificate transparency logs, public DNS, search aggregators. The target never sees you.
+  </div>
+  <div class="callout callout-active">
+    <strong>Active</strong> collection sends real requests to the target's own
+    infrastructure. It appears in their logs. It requires a separate, explicit opt-in
+    every time, and is never implied by any default or convenience path.
+  </div>
+  <table class="doc-table">
+    <thead><tr><th>Tool</th><th>Method</th></tr></thead>
+    <tbody>
+      {% for tool_id, info in tools.items() %}
+      <tr>
+        <td><code>{{ info.display_name }}</code></td>
+        <td><span class="method method-{{ info.default_method }}">{{ info.default_method }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="section-note">
+    Only scan what you own or have written permission to assess. That constraint is
+    yours to honour — the tool records your stated basis but cannot check it.
+  </p>
+</section>
+
+<section class="doc-section" id="reading">
+  <h2>Reading a brief</h2>
+  <p>
+    Every scan produces one page, split in two. <strong>Top priorities</strong> is the
+    highest-ranked {{ top_n }} findings, each with a sentence on what it is, why it ranked
+    there, and which tools saw it. <strong>Also found</strong> is everything else — sortable,
+    filterable and searchable, because on a large target it runs to hundreds of rows.
+  </p>
+  <p>
+    The split is by score, not importance-in-general: a finding lands in the tail because
+    nothing about it scored, which is not the same as it being irrelevant to you. The
+    filters exist so you can go looking.
+  </p>
+</section>
+
+<section class="doc-section" id="scoring">
+  <h2>How ranking works</h2>
+  <p>
+    Ranking is computed in code, never by a model. Each finding accumulates points from
+    signals that either did or did not fire; the total is its priority. Hovering a score in
+    a brief shows exactly which signals produced it.
+  </p>
+  <p class="section-note">
+    That is the whole rubric, below — there is no hidden component, and the same input
+    always produces the same ranking.
+  </p>
+  <table class="doc-table">
+    <thead><tr><th>Signal</th><th>Weight</th><th>Means</th></tr></thead>
+    <tbody>
+      {% for s in signals %}
+      <tr>
+        <td><code>{{ s.name }}</code></td>
+        <td class="num {{ 'neg' if s.weight < 0 else 'pos' }}">{{ "%+d" | format(s.weight) }}</td>
+        <td>{{ s.phrase }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="section-note">
+    Negative weights are deprioritisers — a renewed certificate or a host that stopped
+    resolving is recorded, but pushed down rather than dropped.
+  </p>
+</section>
+
+<section class="doc-section" id="provenance">
+  <h2>Checking a finding</h2>
+  <p>
+    Every finding names the tools that reported it under <em>Seen by</em>. Those are links:
+    following one opens the exact record in that tool's archived output that produced the
+    finding — not the whole file, the line.
+  </p>
+  <p>
+    That is the point of the tool. If a finding looks wrong, you can see what it was
+    derived from without re-running anything.
+  </p>
+  <dl class="doc-list">
+    <dt>Triage</dt>
+    <dd>
+      Mark a finding <em>Reviewed</em>, <em>Flagged</em> or <em>False positive</em>. It is
+      stored per finding and survives re-scanning — the one thing in a scan that re-running
+      cannot regenerate, because everything else is derived from tool output and this is
+      your judgement.
+    </dd>
+    <dt>Relationships</dt>
+    <dd>
+      How findings connect — which host resolves to which IP, what a certificate covers.
+      This is the correlation stage's own output, which is otherwise only visible as
+      phrasing inside finding text.
+    </dd>
+    <dt>Export</dt>
+    <dd>
+      JSON and CSV for feeding onward, or the self-contained HTML file, which needs no
+      server and opens anywhere.
+    </dd>
+  </dl>
+</section>
+
+<section class="doc-section" id="comparing">
+  <h2>Comparing scans</h2>
+  <p>
+    Any scan with an earlier run of the same target offers <strong>Compare to previous
+    scan</strong>: what is new, what disappeared, and what changed score or signals since
+    last time. Findings are matched by identity, not position, so a host that moved rank
+    is not reported as a new discovery.
+  </p>
+</section>
+
+<section class="doc-section" id="numbers">
+  <h2>What the numbers claim</h2>
+  <p>
+    <code>glean eval</code> reports faithfulness, provenance retention and prioritisation
+    quality. Two of those need reading carefully.
+  </p>
+  <div class="callout callout-caution">
+    <strong>stage-1 faithfulness cannot fail.</strong> It checks that every finding resolves
+    to a real entity in the graph, and invented entities are filtered out before a brief is
+    ever built — so it reads 1.000 by construction. It confirms the plumbing, not that the
+    prose is true.
+  </div>
+  <p>
+    Content-level fabrication — a real entity described with a false claim — is measured only
+    by stage&nbsp;2, which needs <code>--llm</code> and uses a second model as a judge. That
+    judge makes real mistakes of its own, so its score is a lower bound rather than an exact
+    figure. A real narrated brief has scored 1.000 on stage&nbsp;1 and 0.455 on stage&nbsp;2
+    for the same text.
+  </p>
+  <p class="section-note">
+    Both limits are stated in the tool's own output rather than left to documentation,
+    because the numbers are what gets pasted into a report.
+  </p>
+</section>
+{% endblock %}

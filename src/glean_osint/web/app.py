@@ -32,8 +32,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.concurrency import run_in_threadpool
 
-from glean_osint import pipeline, runner, synthesis
-from glean_osint.brief import DEFAULT_TOP_N, render_html, surface_counts, surface_label
+from glean_osint import __version__, pipeline, runner, synthesis
+from glean_osint.brief import (
+    DEFAULT_TOP_N,
+    SIGNAL_PHRASES,
+    render_html,
+    surface_counts,
+    surface_label,
+)
 from glean_osint.diff import diff_entities
 from glean_osint.graph import build_graph_view
 from glean_osint.history import (
@@ -57,6 +63,7 @@ from glean_osint.history import (
 from glean_osint.pipeline import ScanRequest
 from glean_osint.provenance import resolve_record
 from glean_osint.registry import PRESETS, TOOL_REGISTRY, normalise_selection
+from glean_osint.scoring import WEIGHTS
 
 # How many scans run at once (ADR-0011 D9). Deliberately low, and chosen
 # from the binding constraint rather than from available CPU: every scan
@@ -102,7 +109,7 @@ _WEB_NAV_SNIPPET = """<header class="site-header">
   <nav class="nav">
     <a class="nav-brand" href="/">Glean</a>
     <div class="nav-links">
-      <a href="/">New scan</a>
+      <a href="/new">New scan</a>
       <a href="/history">History</a>
     </div>
   </nav>
@@ -423,7 +430,84 @@ def create_app(
                 pending_scans.pop(scan_id, None)
 
     @app.get("/", response_class=HTMLResponse)
-    def index(
+    def landing(request: Request) -> HTMLResponse:
+        """The page the tool opens on.
+
+        It previously opened straight onto the scan form, which asked the
+        operator to fill in a target before telling them what the tool was
+        or showing what it had already done for them. A dashboard answers
+        "where am I and what is here" first, and offers scanning as one
+        route among several rather than the only thing on offer.
+
+        Everything shown is derived from the same history the rest of the
+        app reads -- no separate store to drift out of sync.
+        """
+        scans = list_scans(history_root)
+        with in_flight_lock:
+            pending = sorted(pending_scans.items())
+        now = datetime.now(timezone.utc)
+        completed = [s for s in scans if not s.cancelled]
+        return templates.TemplateResponse(
+            request,
+            "landing.html",
+            {
+                "recent": scans[:5],
+                "tool_names": TOOL_REGISTRY,
+                "pending": [
+                    {
+                        "scan_id": sid,
+                        "target": entry.target,
+                        "started": entry.started,
+                        "elapsed_minutes": int((now - entry.submitted_at).total_seconds() // 60),
+                    }
+                    for sid, entry in pending
+                ],
+                "stats": {
+                    "scans": len(completed),
+                    "targets": len({s.target for s in completed}),
+                    "findings": sum(s.findings_count for s in completed),
+                    "with_warnings": sum(1 for s in completed if s.warnings),
+                },
+                "tool_count": len(TOOL_REGISTRY),
+            },
+        )
+
+    @app.get("/guide", response_class=HTMLResponse)
+    def guide(request: Request) -> HTMLResponse:
+        """How to use the tool, for people using the web interface.
+
+        The README is the only place any of this was written down, which is
+        invisible to anyone who never opens the repository. The scoring
+        table is built from `scoring.WEIGHTS` and `brief.SIGNAL_PHRASES`
+        rather than transcribed, so documentation of the rubric cannot
+        drift away from the rubric itself -- the failure mode that makes
+        most in-app help worse than none.
+        """
+        signals = sorted(WEIGHTS.items(), key=lambda kv: (-kv[1], kv[0]))
+        return templates.TemplateResponse(
+            request,
+            "guide.html",
+            {
+                "tools": TOOL_REGISTRY,
+                "presets": PRESETS,
+                "top_n": DEFAULT_TOP_N,
+                "signals": [
+                    {"name": name, "weight": weight, "phrase": SIGNAL_PHRASES.get(name, name)}
+                    for name, weight in signals
+                ],
+            },
+        )
+
+    @app.get("/about", response_class=HTMLResponse)
+    def about(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(
+            request,
+            "about.html",
+            {"version": __version__, "tools": TOOL_REGISTRY},
+        )
+
+    @app.get("/new", response_class=HTMLResponse)
+    def new_scan(
         request: Request,
         target: str = "",
         tools: str = "",

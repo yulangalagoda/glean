@@ -81,8 +81,8 @@ def _settle(client: TestClient) -> None:
         future.result(timeout=10)
 
 
-def test_index_lists_every_registered_tool_and_preset(tmp_path: Path) -> None:
-    response = _client(tmp_path).get("/")
+def test_the_scan_form_lists_every_registered_tool_and_preset(tmp_path: Path) -> None:
+    response = _client(tmp_path).get("/new")
     assert response.status_code == 200
     for info in TOOL_REGISTRY.values():
         assert info.display_name in response.text
@@ -90,10 +90,18 @@ def test_index_lists_every_registered_tool_and_preset(tmp_path: Path) -> None:
         assert preset_name in response.text
 
 
-def test_nav_marks_new_scan_active_on_the_index_page(tmp_path: Path) -> None:
-    response = _client(tmp_path).get("/")
-    assert 'href="/" class="active"' in response.text
-    assert 'href="/history" class="active"' not in response.text
+def test_nav_marks_the_page_you_are_on(tmp_path: Path) -> None:
+    """Three destinations now, so "which am I on" has to be unambiguous
+    rather than a two-way toggle."""
+    client = _client(tmp_path)
+
+    overview = client.get("/")
+    assert 'href="/" class="active"' in overview.text
+    assert 'href="/new" class="active"' not in overview.text
+
+    form = client.get("/new")
+    assert 'href="/new" class="active"' in form.text
+    assert 'href="/" class="active"' not in form.text
 
 
 def test_nav_marks_history_active_on_the_history_page(tmp_path: Path) -> None:
@@ -880,20 +888,20 @@ def test_view_raw_is_404_when_no_raw_output_was_archived_for_that_tool(
     assert response.status_code == 404
 
 
-def test_index_marks_active_tool_checkboxes_for_the_ethics_warning(tmp_path: Path) -> None:
+def test_the_form_marks_active_tool_checkboxes_for_the_ethics_warning(tmp_path: Path) -> None:
     """The client-side warning banner (index.html's own JS) reads this
     data-method attribute -- httpx is currently the only active-method
     tool in the registry."""
-    response = _client(tmp_path).get("/")
+    response = _client(tmp_path).get("/new")
 
     assert 'data-method="active"' in response.text
     assert 'id="active-warning"' in response.text
 
 
-def test_index_has_a_target_format_hint_and_a_conditional_format_warning(
+def test_the_form_has_a_target_format_hint_and_a_conditional_format_warning(
     tmp_path: Path,
 ) -> None:
-    response = _client(tmp_path).get("/")
+    response = _client(tmp_path).get("/new")
 
     assert "not a URL or IP address" in response.text
     assert 'id="target-format-hint"' in response.text
@@ -1558,3 +1566,158 @@ def test_the_manifest_records_when_a_scan_started_not_when_it_finished(
         else datetime.fromisoformat(manifest.started_at)
     )
     assert recorded.strftime("%Y%m%dT%H%M%SZ") == stamp
+
+
+# ── Landing page (roadmap theme 1) ───────────────────────────────────────
+
+
+def test_the_app_opens_on_an_overview_not_the_scan_form(tmp_path: Path) -> None:
+    """It previously opened straight onto the form, asking for a target
+    before saying what the tool was or showing what it already held."""
+    response = _client(tmp_path).get("/")
+
+    assert response.status_code == 200
+    assert "Nothing scanned yet" in response.text
+    assert 'name="target"' not in response.text  # the form lives at /new now
+    assert 'href="/new"' in response.text
+
+
+def test_the_overview_summarises_what_is_on_disk(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    for scan_id, target, findings in [
+        ("a-example-com-20260801T120000Z", "a.example.com", 12),
+        ("b-example-com-20260802T120000Z", "b.example.com", 30),
+    ]:
+        history.write_manifest(
+            tmp_path / scan_id,
+            history.ScanManifest(
+                scan_id=scan_id,
+                target=target,
+                started_at="2026-08-02T12:00:00Z",
+                tools_run=("crtsh",),
+                authorisation="Owned",
+                findings_count=findings,
+                warnings=("something degraded",) if findings == 12 else (),
+            ),
+        )
+
+    page = _client(tmp_path).get("/").text
+
+    assert "Recent scans" in page
+    assert "a.example.com" in page and "b.example.com" in page
+    assert ">42<" in page  # findings summed across both scans
+    assert ">2<" in page  # two scans, two targets
+    assert "1 warning" in page
+
+
+def test_a_cancelled_scan_is_not_counted_in_the_overview_totals(tmp_path: Path) -> None:
+    """A cancelled scan produced no findings and no report. Counting it
+    would inflate "scans kept" with runs that were deliberately stopped."""
+    history.write_manifest(
+        tmp_path / "x-example-com-20260801T120000Z",
+        history.ScanManifest(
+            scan_id="x-example-com-20260801T120000Z",
+            target="x.example.com",
+            started_at="2026-08-01T12:00:00Z",
+            tools_run=(),
+            authorisation=None,
+            findings_count=0,
+            cancelled=True,
+        ),
+    )
+
+    page = _client(tmp_path).get("/").text
+
+    assert "Nothing scanned yet" in page  # nothing countable happened
+    assert "cancelled" in page or "Nothing scanned yet" in page
+
+
+def test_a_running_scan_is_surfaced_on_the_overview(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The one thing on the page that may need acting on, so it appears
+    above the summary rather than only inside history."""
+    release = threading.Event()
+
+    def blocking_run(request, *, raw_dir, on_status=None, on_warning=None, cancel=None):
+        release.wait(timeout=10)
+        return _fake_outcome(request)
+
+    monkeypatch.setattr(pipeline, "run_scan", blocking_run)
+
+    client = _client(tmp_path)
+    client.post("/scan", data={"target": "live.example.com", "tools": ["crtsh"]})
+    time.sleep(0.3)
+
+    page = client.get("/").text
+
+    assert "Running now" in page
+    assert "live.example.com" in page
+
+    release.set()
+    _settle(client)
+
+
+# ── Guide and About (roadmap theme 1) ────────────────────────────────────
+
+
+def test_the_guide_explains_the_passive_active_split(tmp_path: Path) -> None:
+    """The distinction the tool enforces in code was documented only in the
+    README, invisible to anyone using the web interface."""
+    page = _client(tmp_path).get("/guide").text
+
+    assert "Passive" in page and "Active" in page
+    assert "appears in their logs" in page
+    for info in TOOL_REGISTRY.values():
+        assert info.display_name in page
+
+
+def test_the_guides_scoring_table_is_generated_from_the_rubric(tmp_path: Path) -> None:
+    """Transcribing the weights into prose is how documentation of a rubric
+    drifts away from the rubric. Every signal and its real weight is
+    rendered from `scoring.WEIGHTS`, so the page cannot describe a scoring
+    system the code does not implement.
+    """
+    from glean_osint.scoring import WEIGHTS
+
+    page = _client(tmp_path).get("/guide").text
+
+    for name, weight in WEIGHTS.items():
+        assert name in page, f"{name} missing from the guide"
+        assert f"{weight:+d}" in page
+
+
+def test_the_guide_states_that_stage_one_faithfulness_cannot_fail(tmp_path: Path) -> None:
+    """The number most likely to be misread, so the page says so plainly
+    rather than leaving it to the ADRs."""
+    page = _client(tmp_path).get("/guide").text
+
+    assert "cannot fail" in page
+    assert "1.000" in page and "0.455" in page
+
+
+def test_about_reports_the_running_version(tmp_path: Path) -> None:
+    from glean_osint import __version__
+
+    page = _client(tmp_path).get("/about").text
+
+    assert __version__ in page
+    assert "MIT" in page
+
+
+def test_about_states_the_core_design_split(tmp_path: Path) -> None:
+    """The claim the whole project rests on: a model never decides what
+    matters, it only rewrites prose."""
+    page = _client(tmp_path).get("/about").text
+
+    assert "Ranking and correlation happen in code" in page
+    assert "cannot introduce a finding" in page
+
+
+def test_reference_pages_are_reachable_from_every_page(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    for url in ["/", "/new", "/history", "/guide", "/about"]:
+        page = client.get(url).text
+        assert 'href="/guide"' in page, f"{url} has no route to the guide"
+        assert 'href="/about"' in page, f"{url} has no route to about"

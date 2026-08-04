@@ -41,7 +41,7 @@
      unwarned row. Keeping both action controls to its right lets them share
      one straight edge down the list. #}
   <a class="rerun-link"
-     href="/?target={{ scan.target | urlencode }}&amp;tools={{ scan.tools_run | join(',') | urlencode }}{% if scan.authorisation %}&amp;authorisation={{ scan.authorisation | urlencode }}{% endif %}"
+     href="/new?target={{ scan.target | urlencode }}&amp;tools={{ scan.tools_run | join(',') | urlencode }}{% if scan.authorisation %}&amp;authorisation={{ scan.authorisation | urlencode }}{% endif %}"
      title="Open a new scan pre-filled with this target and tool selection">Re-run</a>
   <form method="post" action="/scan/{{ scan.scan_id }}/delete" class="delete-form"
         onsubmit="return confirm('Delete this scan? This cannot be undone.');">
@@ -86,7 +86,7 @@
 {% endif %}
 
 {% if not groups %}
-<p class="hint">No scans yet — <a href="/">run one</a>.</p>
+<p class="hint">No scans yet — <a href="/new">run one</a>.</p>
 {% else %}
 <div class="filter-bar history-filters" role="search" aria-label="Filter scan history">
   <input type="search" id="history-search" class="filter-search"
