@@ -104,9 +104,15 @@ body {
   display: flex; align-items: center; justify-content: space-between;
 }
 .nav-brand {
-  font-weight: 700; font-size: 1.05rem; letter-spacing: -0.01em;
+  display: inline-flex; align-items: center;
   color: var(--text); text-decoration: none;
 }
+/* The lockup is inlined SVG so its currentColor parts (wordmark and outer
+   ring) inherit the nav's colour and follow the theme; only the centre dot
+   is a fixed accent. Sized here rather than in the file so one rule governs
+   it everywhere. */
+.nav-lockup { height: 26px; width: auto; display: block; }
+.nav-brand:hover .nav-lockup { opacity: 0.85; }
 .nav-links { display: flex; gap: 1.5rem; font-size: 0.9rem; }
 .nav-links a {
   color: var(--text-muted); text-decoration: none; font-weight: 500;
@@ -140,6 +146,20 @@ input[type="text"], input[type="number"], textarea {
   width: 100%; padding: 0.55rem 0.7rem; border: 1px solid var(--border); border-radius: 8px;
   font-size: 1rem; font-family: inherit; background: var(--surface); color: var(--text);
 }
+/* Brand marks -------------------------------------------------------- */
+.hero-mark { height: 48px; width: auto; display: block; margin: 0 0 0.9rem; }
+
+/* The loader sits beside the stage checklist rather than above it, so the
+   motion reads as "this list is being worked through" rather than as a
+   decoration parked at the top of the page. */
+.scan-progress { display: flex; align-items: flex-start; gap: 1.15rem; margin: 0 0 1rem; }
+.scan-progress .stage-checklist { flex: 1; margin-bottom: 0; }
+.scan-loader { flex: none; display: block; }
+@media (max-width: 30rem) {
+  .scan-progress { gap: 0.8rem; }
+  .scan-loader { width: 52px; height: 52px; }
+}
+
 /* --- Documentation pages (guide, about) ------------------------------
    Prose, so it gets a narrower measure than the data-heavy pages and a
    heading rhythm that supports skimming to a section rather than reading

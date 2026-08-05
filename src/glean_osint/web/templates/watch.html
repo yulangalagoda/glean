@@ -7,7 +7,14 @@
   <button type="submit" class="cancel-btn" id="cancel-btn">Cancel scan</button>
 </form>
 <div id="watch-root" data-tools="{{ tools_csv }}">
-  <ol class="stage-checklist" id="stage-checklist"></ol>
+  {# Served as a plain <img>: the animation lives inside the SVG, so it runs
+     without script and holds the static mark at rest -- a stalled scan, a
+     background tab or reduced-motion all show the logo rather than a
+     half-collapsed frame. #}
+  <div class="scan-progress">
+    <img class="scan-loader" src="/static/glean-loader.svg" alt="" width="72" height="72">
+    <ol class="stage-checklist" id="stage-checklist"></ol>
+  </div>
   <p class="hint" id="status-line">{% if queued %}Queued — waiting for a free scan slot. This page will update as soon as it starts.{% else %}Starting…{% endif %}</p>
   <ul id="log" class="log"></ul>
 </div>

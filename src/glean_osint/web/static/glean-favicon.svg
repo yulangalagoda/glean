@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32"
+     role="img" aria-labelledby="glean-favicon-title">
+  <title id="glean-favicon-title">Glean</title>
+  <!--
+    Favicon build. Deliberately NOT the same geometry as glean-mark.svg.
+
+    At 16px one viewBox unit is half a pixel, so the primary mark's smallest
+    ring dot (r=1.3) would render at ~1.3px across and disappear into the
+    background. Optical correction rather than mechanical scaling:
+
+      - ring dots equalised at r=2.6 and pulled in to radius 10.8
+      - centre grown to r=6 so it still dominates once antialiased
+      - opacity raised to 0.6, because thin coverage reads lighter at
+        small sizes than the same value does at large ones
+
+    Colours are hard-coded, not `currentColor`: a favicon has no inheritable
+    text colour to pick up.
+  -->
+  <g fill="#1a1a1a" opacity="0.6">
+    <circle cx="16"   cy="5.2"  r="2.6"/>
+    <circle cx="25.4" cy="10.6" r="2.6"/>
+    <circle cx="25.4" cy="21.4" r="2.6"/>
+    <circle cx="16"   cy="26.8" r="2.6"/>
+    <circle cx="6.6"  cy="21.4" r="2.6"/>
+    <circle cx="6.6"  cy="10.6" r="2.6"/>
+  </g>
+  <circle cx="16" cy="16" r="6" fill="#2a5adb"/>
+</svg>

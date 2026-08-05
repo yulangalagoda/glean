@@ -117,7 +117,11 @@ def test_nav_appears_on_both_form_and_history_pages(tmp_path: Path) -> None:
     client = _client(tmp_path)
     for url in ["/", "/history"]:
         response = client.get(url)
-        assert 'class="nav-brand" href="/">Glean</a>' in response.text
+        # The brand is the SVG lockup now, so assert what actually matters:
+        # it still links home and still has an accessible name, since the
+        # visible word "Glean" is no longer text a screen reader can read.
+        assert 'class="nav-brand" href="/"' in response.text
+        assert 'aria-label="Glean' in response.text
         assert "New scan" in response.text
         assert "History" in response.text
 
@@ -1721,3 +1725,73 @@ def test_reference_pages_are_reachable_from_every_page(tmp_path: Path) -> None:
         page = client.get(url).text
         assert 'href="/guide"' in page, f"{url} has no route to the guide"
         assert 'href="/about"' in page, f"{url} has no route to about"
+
+
+# ── Brand assets ─────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "glean-favicon.svg",
+        "glean-favicon-dark.svg",
+        "glean-lockup.svg",
+        "glean-loader.svg",
+        "glean-mark.svg",
+    ],
+)
+def test_brand_assets_have_not_drifted_from_the_source_set(filename: str) -> None:
+    """The served copies under `web/static/` are duplicates of `assets/logo/`,
+    and duplicated files drift. Compared byte-wise so an edit to one that
+    leaves the size unchanged is still caught.
+    """
+    import filecmp
+
+    root = Path(__file__).resolve().parent.parent
+    source = root / "assets" / "logo" / filename
+    served = root / "src" / "glean_osint" / "web" / "static" / filename
+
+    assert source.is_file() and served.is_file()
+    assert filecmp.cmp(source, served, shallow=False), (
+        f"{filename} differs between assets/logo/ and web/static/ — update both"
+    )
+
+
+def test_every_page_declares_a_favicon(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    for url in ["/", "/new", "/history", "/guide", "/about"]:
+        page = client.get(url).text
+        assert 'href="/static/glean-favicon.svg"' in page, f"{url} has no favicon"
+        assert "prefers-color-scheme: dark" in page, f"{url} has no dark favicon"
+
+
+def test_the_report_page_also_gets_the_favicon(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """It has its own <head> from render_html(), so it would otherwise be the
+    one page in the app with a blank tab icon -- while the file on disk stays
+    untouched (ADR-0010 D3)."""
+    monkeypatch.setattr(pipeline, "run_scan", lambda request, **kw: _fake_outcome(request))
+
+    client = _client(tmp_path)
+    redirect = client.post(
+        "/scan", data={"target": "example.com", "tools": ["crtsh"]}, follow_redirects=False
+    )
+    _settle(client)
+    scan_id = _scan_id_from_watch_redirect(redirect.headers["location"])
+
+    served = client.get(f"/scan/{scan_id}").text
+    assert 'href="/static/glean-favicon.svg"' in served
+
+    saved = (tmp_path / scan_id / "brief.html").read_text(encoding="utf-8")
+    assert "favicon" not in saved  # the standalone file stays self-contained
+
+
+def test_the_nav_lockup_is_inlined_so_it_follows_the_theme(tmp_path: Path) -> None:
+    """As an <img> the lockup's currentColor parts cannot inherit the nav's
+    colour and would render black in dark mode."""
+    page = _client(tmp_path).get("/").text
+
+    assert 'class="nav-lockup"' in page
+    assert "currentColor" in page
+    assert 'src="/static/glean-lockup.svg"' not in page

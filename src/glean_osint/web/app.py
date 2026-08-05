@@ -195,7 +195,13 @@ def _wrap_scan_result_for_web(
     thing that's easy to get subtly wrong (e.g. an embedded `</script`
     sequence), so it's avoided entirely rather than risked.
     """
-    html = html.replace("<style>", '<link rel="stylesheet" href="/static/style.css">\n<style>', 1)
+    head_links = (
+        '<link rel="icon" href="/static/glean-favicon.svg" type="image/svg+xml">\n'
+        '<link rel="icon" href="/static/glean-favicon-dark.svg" type="image/svg+xml" '
+        'media="(prefers-color-scheme: dark)">\n'
+        '<link rel="stylesheet" href="/static/style.css">\n'
+    )
+    html = html.replace("<style>", head_links + "<style>", 1)
     html = html.replace(
         "<body>",
         f'<body data-scan-id="{_escape_html(scan_id)}">\n'

@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="256" height="256"
+     role="img" aria-labelledby="glean-loader-title">
+  <title id="glean-loader-title">Working…</title>
+  <!--
+    GLEAN — animated loading mark. The same logo in motion: each source
+    travels inward and is absorbed by the centre, staggered clockwise from
+    the top. The motion is the definition of the word, and a diagram of the
+    pipeline: many sources, one brief.
+
+    The animation lives INSIDE the file, so it runs when used as
+    <img src="glean-loader.svg"> as well as when inlined. Pure SVG + CSS —
+    no library, no external request, no script.
+
+    Home and fully visible at both ends of the cycle (0% and 100%), so any
+    frame this can be caught on — a stall, a background tab, a renderer that
+    never starts it, reduced-motion — is the static logo rather than a
+    half-collapsed shape.
+
+    Colours are explicit so this works anywhere. To make it follow the
+    surrounding text colour when inlined, change the ring fill to
+    currentColor and point the centre fill at your accent CSS custom
+    property. Dark backgrounds: swap #1a1a1a for #e8e8e8, and #2a5adb for
+    #7db8ff.
+
+    Speed: change the 1.9s duration on the gl-dot rule. Keep the delays
+    proportional (each is roughly 0.074 x the duration) or the stagger
+    bunches up.
+  -->
+  <style>
+    .gl-dot {
+      animation: gl-gather 1.9s cubic-bezier(.55, .1, .35, 1) infinite;
+      transform-box: fill-box;
+      transform-origin: center;
+    }
+    @keyframes gl-gather {
+      0%   { transform: translate(0, 0);                 opacity: 1; }
+      55%  { transform: translate(var(--dx), var(--dy)); opacity: 0; }
+      75%  { transform: translate(0, 0);                 opacity: 0; }
+      100% { transform: translate(0, 0);                 opacity: 1; }
+    }
+    /* Never animate for anyone who has asked not to see motion. It simply
+       stands still — and standing still is the logo, so nothing is lost. */
+    @media (prefers-reduced-motion: reduce) {
+      .gl-dot { animation: none; opacity: 1; }
+    }
+  </style>
+
+  <g fill="#1a1a1a" opacity="0.5">
+    <circle class="gl-dot" cx="16"    cy="4.5"   r="2.5"  style="--dx:0px;     --dy:11.5px;  animation-delay:0s"/>
+    <circle class="gl-dot" cx="25.96" cy="10.25" r="2.25" style="--dx:-9.96px; --dy:5.75px;  animation-delay:.14s"/>
+    <circle class="gl-dot" cx="25.96" cy="21.75" r="2"    style="--dx:-9.96px; --dy:-5.75px; animation-delay:.28s"/>
+    <circle class="gl-dot" cx="16"    cy="27.5"  r="1.75" style="--dx:0px;     --dy:-11.5px; animation-delay:.42s"/>
+    <circle class="gl-dot" cx="6.04"  cy="21.75" r="1.5"  style="--dx:9.96px;  --dy:-5.75px; animation-delay:.56s"/>
+    <circle class="gl-dot" cx="6.04"  cy="10.25" r="1.3"  style="--dx:9.96px;  --dy:5.75px;  animation-delay:.7s"/>
+  </g>
+  <circle cx="16" cy="16" r="4.6" fill="#2a5adb"/>
+</svg>

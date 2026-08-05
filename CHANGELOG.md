@@ -9,6 +9,33 @@ point was a real release, just pre-dev groundwork. That bar was reached on
 
 ## [Unreleased]
 
+### Added
+- **Brand marks wired into the web interface.** A logo lockup in the nav on
+  every page, light and dark favicons (including on the wrapped report page,
+  which has its own `<head>` and was otherwise the one page with a blank tab
+  icon), an animated loader on the watch page, and the mark on the landing
+  hero. Source set lives in `assets/logo/`; the served copies under
+  `web/static/` are guarded by a byte-wise drift test, since duplicated
+  files drift.
+
+  The lockup is **inlined SVG rather than `<img src>`**, and that is
+  load-bearing: its wordmark and outer ring use `currentColor`, which an
+  external SVG cannot inherit, so as an `<img>` it would render black in
+  dark mode. A test asserts it stays inlined.
+
+  The loader is the opposite — a plain `<img>`, because its animation lives
+  inside the file and needs no script. It rests on the static mark at both
+  ends of its cycle, so a stalled scan, a background tab or a
+  reduced-motion preference shows the logo rather than a half-collapsed
+  frame. Placed beside the stage checklist rather than above it, so the
+  motion reads as that list being worked through rather than as decoration.
+
+  Verified the assets actually ship in the wheel rather than only existing
+  in the repository — `static/*` was already covered by package-data, and a
+  rebuild confirms all five. The standalone `brief.html` is untouched: the
+  favicon goes into the HTTP response only (ADR-0010 D3).
+
+
 ### Changed
 - **The web interface has an information architecture** (ROADMAP theme 1).
   Real feedback: the UI was clean but confusing — nothing said what was a
