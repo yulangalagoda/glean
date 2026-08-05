@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from glean_osint.graph import RELATION_LABELS, anchor_slug, build_graph_view
+from glean_osint.graph import RELATION_LABELS, anchor_slug, build_diagram, build_graph_view
 
 
 def entity(
@@ -124,3 +124,111 @@ def test_anchor_slug_matches_the_expression_report_js_uses() -> None:
     assert anchor_slug("subdomain:admin.example.com") == "f-subdomain-admin-example-com"
     assert anchor_slug("service:203.0.113.1:443") == "f-service-203-0-113-1-443"
     assert anchor_slug("subdomain:*.example.com") == "f-subdomain---example-com"
+
+
+# ── Diagram layout (roadmap theme 2) ─────────────────────────────────────
+
+
+def _ent(entity_id: str, entity_type: str, value: str, score: float | None = None) -> dict:
+    e: dict = {"id": entity_id, "type": entity_type, "value": value}
+    if score is not None:
+        e["priority"] = {"score": score, "rank": 1, "signals": []}
+    return e
+
+
+def _edge(src: str, dst: str, relation: str) -> dict:
+    return {"source_id": src, "target_id": dst, "relation": relation}
+
+
+def test_certificates_annotate_a_host_instead_of_taking_boxes() -> None:
+    """The decision the layout turns on. Certificates were 313 of 531
+    entities on a real scan; drawing each one produces exactly the hairball
+    this view exists to replace. A certificate is evidence *about* a host,
+    not a step in the chain, so it collapses into a count on the host it
+    was issued for.
+    """
+    entities = [_ent("domain:example.com", "domain", "example.com")]
+    edges = []
+    for i in range(40):
+        entities.append(_ent(f"certificate:{i}", "certificate", f"cert-{i}"))
+        edges.append(_edge(f"certificate:{i}", "domain:example.com", "issued_for"))
+
+    diagram = build_diagram(entities, edges)
+
+    assert len(diagram.nodes) == 1  # forty certificates, one box
+    assert diagram.badge_total == 40
+    assert "40 certs" in diagram.nodes[0].badge
+
+
+def test_layers_are_capped_by_priority_and_say_what_was_left_out() -> None:
+    """Same top-N-plus-a-tail contract the brief uses. Silently dropping
+    the rest would make the picture a lie about the scan's size."""
+    entities = [_ent("domain:example.com", "domain", "example.com")]
+    for i in range(25):
+        entities.append(_ent(f"subdomain:h{i}.example.com", "subdomain", f"h{i}.example.com", i))
+
+    diagram = build_diagram(entities, [], max_per_layer=10)
+
+    hosts = [n for n in diagram.nodes if n.entity_type == "subdomain"]
+    assert len(hosts) == 10
+    assert diagram.hidden_total == 15
+    # Highest-scoring survive the cap, not whichever happened to be first.
+    assert hosts[0].score == 24
+    layer = next(layer for layer in diagram.layers if layer.title == "Hosts")
+    assert (layer.shown, layer.hidden) == (10, 15)
+
+
+def test_every_curve_runs_left_to_right() -> None:
+    """`subdomain_of` points child -> parent, against the reading order. A
+    curve that ran backwards would make the flow unreadable, so edges are
+    normalised to the layout direction rather than the data's direction."""
+    entities = [
+        _ent("domain:example.com", "domain", "example.com"),
+        _ent("subdomain:a.example.com", "subdomain", "a.example.com"),
+    ]
+    edges = [_edge("subdomain:a.example.com", "domain:example.com", "subdomain_of")]
+
+    diagram = build_diagram(entities, edges)
+
+    assert len(diagram.edges) == 1
+    path = diagram.edges[0].path
+    start_x = float(path.split(",")[0].lstrip("M"))
+    end_x = float(path.rsplit(" ", 1)[-1].split(",")[0])
+    assert start_x < end_x
+
+
+def test_an_edge_to_a_node_that_was_capped_away_is_not_drawn() -> None:
+    """A curve trailing off into blank space is worse than no curve."""
+    entities = [_ent("domain:example.com", "domain", "example.com")]
+    edges = []
+    for i in range(15):
+        entities.append(_ent(f"subdomain:h{i}.example.com", "subdomain", f"h{i}.example.com", i))
+        edges.append(_edge(f"subdomain:h{i}.example.com", "domain:example.com", "subdomain_of"))
+
+    diagram = build_diagram(entities, edges, max_per_layer=5)
+
+    drawn = {n.entity_id for n in diagram.nodes}
+    assert len(diagram.edges) == 5
+    assert len(drawn) == 6  # the apex plus five hosts
+
+
+def test_an_empty_graph_lays_out_without_raising() -> None:
+    diagram = build_diagram([], [])
+
+    assert diagram.nodes == ()
+    assert diagram.edges == ()
+    assert diagram.width > 0 and diagram.height > 0
+
+
+def test_layout_is_deterministic_for_equal_scores() -> None:
+    """Same scan, same picture. Ties break alphabetically rather than on
+    whatever order the snapshot happened to be written in."""
+    entities = [
+        _ent(f"subdomain:{c}.example.com", "subdomain", f"{c}.example.com", 1) for c in "cab"
+    ]
+
+    first = build_diagram(entities, [])
+    again = build_diagram(list(reversed(entities)), [])
+
+    assert [n.label for n in first.nodes] == [n.label for n in again.nodes]
+    assert [n.label for n in first.nodes] == ["a.example.com", "b.example.com", "c.example.com"]

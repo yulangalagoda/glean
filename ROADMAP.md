@@ -14,7 +14,7 @@ Ordered by what unblocks what, not by size.
 
 ---
 
-## 1. Information architecture — the interface has no hierarchy
+## 1. Information architecture — the interface has no hierarchy  ✅ *done*
 
 The biggest gap, and the cheapest to close. The UI is deliberately minimal
 and reads cleanly, but minimal is not the same as organised: it currently
@@ -46,7 +46,7 @@ do not claim.
 *Depends on nothing. Everything below lands inside whatever structure this
 establishes, so it goes first.*
 
-## 2. Make the relationship view an actual diagram
+## 2. Make the relationship view an actual diagram  ✅ *done*
 
 `/scan/{id}/graph` is currently `<ul class="graph-list">` — a nested list
 describing relationships in text. The correlation stage computes a real typed
@@ -78,7 +78,7 @@ Each new tool is cheap individually. The value is coverage: more of the
 attack surface seen, and more corroboration between sources, which the
 scoring rubric already rewards.
 
-## 4. Identity and feedback
+## 4. Identity and feedback  ✅ *done*
 
 - **A logo and visual identity.** The tool is published on PyPI and has a
   public repository; it currently has no mark of its own.
@@ -89,27 +89,7 @@ scoring rubric already rewards.
   and it addresses the same confusion the queued-vs-running fix addressed
   in history.
 
-## 5. Access control — a posture change, not a feature
-
-The tool displays reconnaissance findings about real infrastructure, which
-is exactly the kind of thing that should not be casually readable by anyone
-who can reach the port. That instinct is right.
-
-But this is not "add a login page". ADR-0011 D8 currently states that
-localhost-only binding **is** the security boundary, and that no
-authentication is needed precisely because nothing else can reach the
-process. Adding authentication only means something if the intent is to
-expose the interface beyond localhost — and that changes the threat model
-completely: session handling, transport security, and a real answer to who
-the users are and what they may see.
-
-**This needs its own ADR before any code**, revisiting D8 and open question
-4 (remote access / multi-user, currently out of scope rather than deferred).
-The decision to make first is not "which auth library" but "is this a
-single-operator local tool or a shared service", because almost everything
-else follows from it.
-
-## 6. Finish the research claims
+## 5. Finish the research claims
 
 Engineering-light, credibility-heavy, and runnable in parallel with all of
 the above.
@@ -128,15 +108,12 @@ the above.
 
 These block work above and are worth settling deliberately.
 
-1. **How to draw the graph**, given ADR-0011 D1's no-build-step rule.
-   Hand-rolled SVG keeps the constraint intact and stays dependency-free but
-   means implementing layout; a vendored library is faster but adds a file
-   nobody here maintains. Either is defensible — quietly adding a CDN script
-   tag is not.
-2. **What authentication is actually for**: locking a local tool, or serving
-   it over a network. These need different designs, and only the second
-   justifies the complexity.
-3. **Whether the brief's "also found" tail should be narrated** (ADR-0009
+1. ~~**How to draw the graph**~~ — **decided: hand-rolled SVG.** ADR-0011 D1's
+   no-build-step rule holds, nothing is fetched, and the layout lives in
+   `graph.build_diagram` as a pure function. The graph turned out regular
+   enough (a four-stage flow, tens of nodes after capping) that a general
+   force-directed library would have solved a harder problem than this one.
+2. **Whether the brief's "also found" tail should be narrated** (ADR-0009
    Q1). Relevant to readable output, and currently leaning "no — the tail is
    supposed to stay terse".
 
@@ -146,3 +123,10 @@ Recorded so they are not mistaken for oversights: server-side PDF rendering
 (ADR-0011 Q3 — the browser prints), user-editable presets (Q2), and an HTML
 form for `glean eval`'s aggregate output (ADR-0010 Q2). All remain deferred
 for the reasons their ADRs give.
+
+**Authentication and remote access are dropped, not deferred.** There is no
+requirement for either: the tool binds to localhost, the OS boundary is the
+security boundary, and ADR-0011 D8 already says so deliberately rather than
+by omission. Adding a login form would only mean something alongside an
+intent to expose the interface over a network, which nothing here needs.
+Revisit only if that intent appears.

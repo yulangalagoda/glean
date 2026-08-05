@@ -10,6 +10,48 @@ point was a real release, just pre-dev groundwork. That bar was reached on
 ## [Unreleased]
 
 ### Added
+- **The relationship view is an actual diagram** (ROADMAP theme 2). It
+  computed a real typed graph and then rendered it as a nested list, which
+  kept the data one step away from the understanding it exists to produce.
+
+  Hand-rolled SVG, laid out server-side by `graph.build_diagram` — no
+  charting library, no build step, nothing fetched, so ADR-0011 D1 holds.
+  The layout is pure geometry in and geometry out, with no I/O and no clock,
+  so the same scan always draws the same picture and it is testable without
+  a browser.
+
+  Two rules make it readable, and both came from real data rather than a
+  toy graph. **Infrastructure flows left to right** — Target → Hosts →
+  Addresses → Exposed — because that is the shape an operator is trying to
+  see. **Certificates and technologies annotate the node they belong to
+  rather than taking columns of their own:** certificates were 313 of 531
+  entities on one real target, and a column of them would drown the four
+  nodes that matter. A certificate is evidence *about* a host, not a stage
+  in the chain, so it becomes a count badge.
+
+  Within a layer nodes are ordered by priority and capped, the same
+  top-N-plus-a-tail contract the brief uses (ADR-0005), and what is left out
+  is stated rather than silently dropped. The effect on a real scan:
+  **531 entities → 20 boxes and 35 curves**, against 218 boxes and 233
+  curves uncapped — which is precisely the hairball the charter names as
+  the thing this project exists to fix.
+
+  Styled entirely with CSS classes rather than baked-in attributes, so it
+  inherits the palette and follows light/dark like every other component.
+  Type is carried by the box's stroke rather than a fill, so labels stay
+  legible; every box links to that finding's anchor in the brief.
+
+### Changed
+- **Access control is dropped from the roadmap, not deferred.** There is no
+  requirement for it: the tool binds to localhost, the OS boundary is the
+  security boundary, and ADR-0011 D8 already states that deliberately. A
+  login form would only mean something alongside an intent to expose the
+  interface over a network, which nothing here needs. Recorded as dropped
+  so it is not mistaken for an oversight, and revisitable if that intent
+  ever appears.
+
+
+### Added
 - **Brand marks wired into the web interface.** A logo lockup in the nav on
   every page, light and dark favicons (including on the wrapped report page,
   which has its own `<head>` and was otherwise the one page with a blank tab

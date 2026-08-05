@@ -160,6 +160,59 @@ input[type="text"], input[type="number"], textarea {
   .scan-loader { width: 52px; height: 52px; }
 }
 
+/* --- Relationship diagram -------------------------------------------
+   Hand-rolled SVG laid out server-side. Styled entirely with classes so it
+   inherits the palette and themes with everything else -- an SVG full of
+   baked-in hex values would be the one component that ignored dark mode. */
+.diagram-wrap { margin: 0 0 2rem; }
+.diagram-caption {
+  font-size: 0.88rem; color: var(--text-muted); line-height: 1.5;
+  max-width: 66ch; margin: 0 0 0.85rem;
+}
+/* Wide graphs scroll inside their own box rather than widening the page. */
+.diagram-scroll {
+  overflow-x: auto; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--surface); padding: 0.5rem;
+}
+.diagram { display: block; max-width: none; }
+
+.diagram-col {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  fill: var(--text-faint);
+}
+.diagram-col-more { font-size: 10px; fill: var(--text-faint); }
+
+/* Curves sit under the boxes and stay quiet: the nodes are the content, the
+   edges are the grammar joining them. */
+.diagram-edge {
+  fill: none; stroke: var(--border); stroke-width: 1.6;
+}
+.diagram-node rect {
+  fill: var(--bg); stroke: var(--border); stroke-width: 1.5;
+  transition: stroke 0.12s ease, fill 0.12s ease;
+}
+.diagram-node { cursor: pointer; }
+.diagram-node:hover rect, .diagram-node:focus-visible rect { stroke: var(--accent); }
+.diagram-label { font-size: 12.5px; font-weight: 600; fill: var(--text); }
+.diagram-meta { font-size: 10.5px; fill: var(--text-faint); }
+.diagram-score {
+  font-size: 11px; font-weight: 700; fill: var(--text-muted); text-anchor: end;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Type is carried by a left edge rather than a fill, so a box stays legible
+   at any density and the colour never fights the label. Same meanings as
+   the rest of the app: accent for the target, the active palette for
+   anything reached by touching the host directly. */
+.diagram-node.type-domain rect { stroke: var(--accent); stroke-width: 2.2; }
+.diagram-node.type-subdomain rect { stroke: var(--border); }
+.diagram-node.type-ip_address rect { stroke: var(--text-faint); }
+.diagram-node.type-service rect { stroke: var(--active-border); fill: var(--active-bg); }
+.diagram-node.type-service .diagram-label { fill: var(--active-text); }
+.diagram-node.type-web_tech rect { stroke: var(--border); stroke-dasharray: 3 2; }
+.diagram-node.type-breach_exposure rect { stroke: var(--danger-border); fill: var(--danger-bg); }
+.diagram-node.type-breach_exposure .diagram-label { fill: var(--danger-text); }
+
 /* --- Documentation pages (guide, about) ------------------------------
    Prose, so it gets a narrower measure than the data-heavy pages and a
    heading rhythm that supports skimming to a section rather than reading

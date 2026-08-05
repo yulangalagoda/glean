@@ -19,6 +19,59 @@
   {% endif %}
 </div>
 
+{% if diagram.nodes %}
+{# Hand-rolled SVG, laid out server-side by graph.build_diagram -- no
+   charting library, no build step, nothing fetched (ADR-0011 D1). Styled
+   with classes rather than inline attributes so it inherits the app's
+   palette and follows light/dark like everything else. #}
+<figure class="diagram-wrap">
+  <figcaption class="diagram-caption">
+    Infrastructure flows left to right. Certificates and technologies are folded into the
+    node they belong to — {{ diagram.badge_total }} of them here — because they describe a
+    host rather than being another step in the chain.
+  </figcaption>
+  <div class="diagram-scroll">
+    <svg class="diagram" viewBox="0 0 {{ diagram.width|round|int }} {{ diagram.height|round|int }}"
+         width="{{ diagram.width|round|int }}" height="{{ diagram.height|round|int }}"
+         role="img" aria-label="Relationship diagram for {{ manifest.target }}">
+      <g class="diagram-edges">
+        {% for edge in diagram.edges %}
+        <path class="diagram-edge" d="{{ edge.path }}"><title>{{ edge.relation_label }}</title></path>
+        {% endfor %}
+      </g>
+      <g class="diagram-headers">
+        {% for layer in diagram.layers %}
+        <text class="diagram-col" x="{{ layer.x|round|int }}" y="18">{{ layer.title }}</text>
+        {% if layer.hidden %}
+        <text class="diagram-col-more" x="{{ layer.x|round|int }}" y="32">+{{ layer.hidden }} more</text>
+        {% endif %}
+        {% endfor %}
+      </g>
+      <g class="diagram-nodes">
+        {% for node in diagram.nodes %}
+        <a href="/scan/{{ scan_id }}#{{ node.anchor }}" class="diagram-node type-{{ node.entity_type }}">
+          <title>{{ node.title }}{% if node.score is not none %} — priority {{ node.score }}{% endif %}</title>
+          <rect x="{{ node.x|round|int }}" y="{{ node.y|round|int }}"
+                width="{{ node.w|round|int }}" height="{{ node.h|round|int }}" rx="9"/>
+          <text class="diagram-label" x="{{ (node.x + 11)|round|int }}" y="{{ (node.y + 19)|round|int }}">{{ node.label }}</text>
+          <text class="diagram-meta" x="{{ (node.x + 11)|round|int }}" y="{{ (node.y + 34)|round|int }}">{{ node.entity_type }}{% if node.badge %} · {{ node.badge }}{% endif %}</text>
+          {% if node.score %}
+          <text class="diagram-score" x="{{ (node.x + node.w - 10)|round|int }}" y="{{ (node.y + 19)|round|int }}">{{ node.score|round|int }}</text>
+          {% endif %}
+        </a>
+        {% endfor %}
+      </g>
+    </svg>
+  </div>
+  {% if diagram.hidden_total %}
+  <p class="field-hint">
+    {{ diagram.hidden_total }} lower-priority node(s) are not drawn, so the shape stays
+    readable. Every one of them is in the list below and in the brief.
+  </p>
+  {% endif %}
+</figure>
+{% endif %}
+
 {% if view.relation_counts %}
 <div class="filter-bar" role="group" aria-label="Filter by relation type">
   <span class="filter-group-label" id="relation-label">Relation:</span>

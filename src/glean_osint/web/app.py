@@ -41,7 +41,7 @@ from glean_osint.brief import (
     surface_label,
 )
 from glean_osint.diff import diff_entities
-from glean_osint.graph import build_graph_view
+from glean_osint.graph import build_diagram, build_graph_view
 from glean_osint.history import (
     DEFAULT_HISTORY_ROOT,
     TRIAGE_STATES,
@@ -853,6 +853,7 @@ def create_app(
                 "scan_id": scan_id,
                 "manifest": manifest,
                 "view": build_graph_view(entities, edges),
+                "diagram": build_diagram(entities, edges),
             },
         )
 
