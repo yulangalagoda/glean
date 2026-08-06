@@ -866,8 +866,10 @@ def _faithfulness_caveat(*, measured_content: bool) -> str:
     ]
     if measured_content:
         lines += [
-            "stage2_faith judges the prose itself, but the judge makes real mistakes of its own",
-            "— treat it as a lower bound rather than an exact figure (ADR-0006 Validation).",
+            "stage2_faith judges the prose itself, but the judge over-flags: measured against",
+            "90 human-labelled claims it flagged 28 where a person found 9, so roughly three",
+            "quarters of what drags this number down is judge error, not fabrication. Read it",
+            "as a loose lower bound, not an estimate (ADR-0006 Validation, 2026-08-04).",
         ]
     else:
         lines += [
@@ -897,11 +899,15 @@ def judge_audit(
 ) -> None:
     """Build a packet of judge verdicts for a human to label (ADR-0006 Q5).
 
-    `glean eval --llm` reports `stage2_faith` with a documented caveat that
-    the judge makes mistakes, and no measure of how many. This samples the
-    judge's individual verdicts, together with the exact evidence it was
-    shown, so a person can rule on the same claims independently. Score the
-    labelled result with `glean judge-score`.
+    `glean eval --llm` reports `stage2_faith` on the judge's word alone. This
+    samples the judge's individual verdicts, together with the exact evidence
+    it was shown, so a person can rule on the same claims independently. Score
+    the labelled result with `glean judge-score`.
+
+    Run once already: 90 claims, flag precision 0.250, recall 0.778, kappa
+    0.268 (ADR-0006 Validation, 2026-08-04). Re-run it after any change to
+    the judge prompt or evidence -- that is what the numbers are a baseline
+    for.
 
     Nothing here writes a `human_verdict` -- those labels are research data
     and have to come from a person.
@@ -962,7 +968,8 @@ def judge_score(
             claim=e.get("claim", ""),
             judge_verdict=e.get("judge_verdict", ""),
             entity_facts=e.get("entity_facts", ""),
-            human_verdict=e.get("human_verdict"),
+            human_verdict=judge_audit_mod.parse_verdict(e.get("human_verdict"))[0],
+            note=judge_audit_mod.parse_verdict(e.get("human_verdict"))[1],
         )
         for i, e in enumerate(data.get("entries") or [], start=1)
     ]
@@ -998,10 +1005,30 @@ def _render_audit_packet(
     lines = [
         "# Judge reliability annotation packet (ADR-0006 Q5).",
         "#",
-        "# For each claim below, decide independently whether the entity facts",
-        "# support it, and write `supported` or `unsupported` in `human_verdict`.",
-        "# `judge_verdict` is what the model decided — it is shown so the packet",
-        "# stays auditable, but do not treat it as a prior.",
+        "# For each claim: does the recorded evidence support what the prose says?",
+        "# Write `supported` or `unsupported` in `human_verdict`. You may add your",
+        "# reasoning after it -- `unsupported - no service anywhere in the facts` --",
+        "# and it is kept with the label rather than discarded.",
+        "#",
+        "# WHAT COUNTS AS EVIDENCE. All three of these are facts about the entity:",
+        "#",
+        "#   attributes  what the tools recorded directly (dns_resolved, port, ...)",
+        "#   signals     facts DERIVED by the scoring rubric. These are evidence,",
+        "#               not commentary. `resolves to a live IP with an exposed",
+        "#               service` fires only when a service was actually found, so",
+        "#               prose mentioning a service IS supported when that signal",
+        "#               is present, even though `attributes` shows only",
+        "#               dns_resolved.",
+        "#   seen_by     which tools asserted it. `httpx (active)` is the only one",
+        "#               that probes services at all.",
+        "#",
+        "# A claim is unsupported when the prose asserts something none of the",
+        "# three record -- a service with no service signal and no httpx, or a",
+        "# characterisation the model supplied from world knowledge (calling a",
+        "# technology a CDN when nothing says so).",
+        "#",
+        "# `judge_verdict` is what the model decided. The whole value here is an",
+        "# independent second opinion, so decide from the evidence first.",
         "#",
         "# Then: glean judge-score <this file>",
         f"judge_model: {judge_model}",
@@ -1009,14 +1036,30 @@ def _render_audit_packet(
         "entries:",
     ]
     for e in entries:
+        try:
+            facts = json.dumps(json.loads(e.entity_facts), indent=2, ensure_ascii=False)
+        except (json.JSONDecodeError, ValueError):
+            facts = e.entity_facts
+        existing = e.human_verdict or ""
+        if existing and e.note:
+            existing = f"{existing} - {e.note}"
         lines += [
             f"  - index: {e.index}",
             f"    target: {json.dumps(e.target)}",
             f"    entity_id: {json.dumps(e.entity_id)}",
             f"    claim: {json.dumps(e.claim)}",
-            f"    entity_facts: {json.dumps(e.entity_facts)}",
+            "    entity_facts: |",
+            *("      " + line for line in facts.splitlines()),
             f"    judge_verdict: {e.judge_verdict}",
-            "    human_verdict:   # supported | unsupported",
+            # Quoted whenever it carries content: an annotator's note can
+            # contain a colon, a dash, or anything else, and an unquoted
+            # scalar would let that reshape the document. Losing labelled
+            # research data to a YAML quirk is not an acceptable failure.
+            (
+                f"    human_verdict: {json.dumps(existing)}"
+                if existing
+                else "    human_verdict:   # supported | unsupported"
+            ),
             "",
         ]
     return "\n".join(lines) + "\n"

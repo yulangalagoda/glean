@@ -10,6 +10,43 @@ point was a real release, just pre-dev groundwork. That bar was reached on
 ## [Unreleased]
 
 ### Added
+- **The judge is now measured, not just caveated** (ROADMAP theme 5,
+  ADR-0006 Q5 resolved). `stage2_faith` has always shipped with a warning
+  that the judge makes mistakes and no measure of how many. All 90 claims
+  from the ten-target run — the whole population, not a sample — were
+  labelled by hand with `glean judge-audit` and scored with
+  `glean judge-score`.
+
+  **Flag precision 0.250, recall 0.778, Cohen's kappa 0.268, raw agreement
+  0.744.** The judge flagged 28 claims as unsupported where a person found
+  9: it catches most real problems but **over-flags roughly three to one**,
+  so about three quarters of what drags `stage2_faith` down is judge error
+  rather than narrator fabrication. The error runs in the safe direction —
+  faithfulness is never overstated — which makes the published number a
+  *loose lower bound* rather than an estimate, and that is now what `glean
+  eval`, the README and the ADR all say instead of the vaguer "the judge
+  makes mistakes".
+
+  Annotation also produced a diagnosis rather than a shrug.
+  `_judge_finding_facts` builds the judge's evidence from **one entity in
+  isolation**, while a finding's prose legitimately refers to entities it
+  is linked to: "resolves to a live IP with an exposed HTTPS service" is
+  true, but `service: https` lives on a separate `service:` entity the
+  judge is never shown, so it answers "I cannot see it" and the metric
+  counts that as fabrication. **13 of the 21 false flags fit that
+  pattern**; including linked entities' facts predicts precision 0.25 →
+  0.47 on this same set. Filed as follow-up rather than fixed here, so the
+  measurement describes the judge as it actually shipped, and recorded as a
+  number so re-running the audit can confirm or refute it.
+
+  A defect in the *instrument* is recorded too: the packet presented
+  `attributes`, `signals` and `seen_by` as one undifferentiated block, and
+  an annotator reasonably read signals as commentary rather than as derived
+  facts — nine claims were mislabelled on the first pass because of it. The
+  packet header now states which fields count as evidence and why, and
+  annotated values are quoted so a comment containing `<<` or a colon
+  cannot corrupt the YAML.
+
 - **The relationship view is an actual diagram** (ROADMAP theme 2). It
   computed a real typed graph and then rendered it as a nested list, which
   kept the data one step away from the understanding it exists to produce.

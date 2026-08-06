@@ -94,13 +94,22 @@ scoring rubric already rewards.
 Engineering-light, credibility-heavy, and runnable in parallel with all of
 the above.
 
-- **Label a judge-audit packet.** `glean judge-audit` / `glean judge-score`
-  now exist; what is missing is a human labelling one, which is what turns
-  `stage2_faith`'s "the judge is sometimes wrong" caveat into a measured
-  bound and closes ADR-0006 Q5. Roughly an hour for 50 claims.
+- ~~**Label a judge-audit packet.**~~ ✅ *done* — all 90 claims labelled and
+  scored, closing ADR-0006 Q5. Flag precision **0.250**, recall 0.778, kappa
+  0.268: the judge over-flags roughly three to one, so `stage2_faith` is a
+  loose lower bound rather than an estimate. `glean eval`, the README and
+  ADR-0006 now say that with the numbers attached.
+- **Fix the judge's evidence scoping** — surfaced *by* the audit above, and
+  the highest-value item left in this theme. `_judge_finding_facts` shows
+  the judge one entity in isolation, while a finding's prose legitimately
+  refers to entities it is linked to; the graph already has the edges
+  (ADR-0003). 13 of the 21 false flags fit that pattern, and the fix
+  predicts precision **0.25 → 0.47** on the same set. Re-run the audit
+  afterwards — the prediction is written down so it can be refuted.
 - **A second annotator on a subset** (ADR-0007 Q4) would give at least a
   partial inter-rater agreement figure, which the ground-truth protocol
-  currently discloses as absent.
+  currently discloses as absent. The judge audit shares this limit: one
+  annotator, so its numbers have no inter-rater check either.
 
 ---
 

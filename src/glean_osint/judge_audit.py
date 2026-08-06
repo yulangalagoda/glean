@@ -3,10 +3,16 @@
 `glean eval --llm` reports `stage2_faith`, an LLM judge's verdict on
 whether a narrated brief's prose is supported by the entity data behind
 it. ADR-0006's own Validation records that the judge makes real mistakes,
-so the number ships with a caveat and no measure of how large the caveat
+so the number shipped with a caveat and no measure of how large the caveat
 is. A number qualified by "this is sometimes wrong, we don't know how
 often" is close to unusable as evidence, which is what open question 5
-has been asking about since it was raised.
+had been asking about since it was raised.
+
+Run once for real (ADR-0006 Validation, 2026-08-04): 90 claims, flag
+precision 0.250, recall 0.778, kappa 0.268. The judge over-flags roughly
+three to one, which is why the headline below is precision on the flagged
+class. Those numbers are a baseline -- change the judge prompt or the
+evidence it is shown and this is what tells you whether it got better.
 
 The missing ingredient is a second opinion. This module builds an
 **annotation packet** -- each atomic claim the judge ruled on, its verdict,
@@ -63,6 +69,31 @@ class AuditEntry:
     judge_verdict: str
     entity_facts: str
     human_verdict: str | None = None
+    # Free text an annotator wrote alongside their verdict. Kept rather
+    # than discarded: the reasoning behind a label is research data in its
+    # own right, and the first real annotation pass produced notes that
+    # revealed a defect in the packet itself -- see `parse_verdict`.
+    note: str = ""
+
+
+def parse_verdict(raw: str | None) -> tuple[str | None, str]:
+    """Split `supported - because ...` into its verdict and its reasoning.
+
+    An annotator working through ninety claims naturally writes down why,
+    and a format that rejects that is hostile to the person doing the work
+    -- the notes from the first real pass are what surfaced the fact that
+    `signals` were not being read as evidence. Only the leading token is
+    interpreted, so "not supported" fails validation loudly rather than
+    being silently read as "supported".
+    """
+    if raw is None:
+        return None, ""
+    text = str(raw).strip()
+    if not text:
+        return None, ""
+    head, _, tail = text.partition(" ")
+    verdict = head.strip().lower()
+    return verdict, tail.strip(" -\u2014:,")
 
 
 @dataclass(frozen=True, slots=True)

@@ -134,10 +134,15 @@ local model judges whether the narrated *prose* actually states only
 facts supported by that entity's real data (ADR-0006 D1 stage 2,
 ADR-0006 D4 requires the judge to differ from the narration model —
 `--judge-model` defaults to a different, larger model than `--model`).
-Treat the judge's own output with real skepticism — real validation
-found the judge itself makes mistakes (see ADR-0006's Validation
-section), so `stage2_faith` is closer to a lower bound on true narrator
-faithfulness than an exact figure.
+Treat the judge's own output with real skepticism, and with a number
+attached: scored against 90 human-labelled claims it flagged 28 as
+unsupported where a person found 9, so **it over-flags roughly three to
+one** and about three quarters of what pulls `stage2_faith` down is judge
+error rather than narrator fabrication (flag precision 0.250, recall
+0.778, Cohen's kappa 0.268 — ADR-0006 Validation, 2026-08-04). It errs in
+the safe direction, never overstating faithfulness, but that makes
+`stage2_faith` a *loose lower bound* rather than an estimate: true
+narrator faithfulness is materially higher than the figure printed.
 
 ### Working with a scan in the browser
 
@@ -181,9 +186,8 @@ saturates at 1.000, against 0.464 / 0.582 on the real set.
 
 ### Auditing the judge
 
-`stage2_faith` is produced by an LLM judge that ADR-0006's own validation
-found makes real mistakes, so it ships as a lower bound. To put a number on
-that:
+`stage2_faith` is produced by an LLM judge, so the number is only as good as
+the judge. That is measurable, and has been measured:
 
 ```bash
 glean judge-audit --sample 50 --out judge-audit.yaml   # sample its verdicts
@@ -193,6 +197,21 @@ glean judge-score judge-audit.yaml                     # score the judge
 
 The labels have to be yours — the tool builds the packet and scores it, but
 never writes a verdict, and refuses to score a partially-labelled one.
+
+Done once over all 90 claims from the ten-target run: **flag precision 0.250,
+recall 0.778, Cohen's kappa 0.268, raw agreement 0.744.** The judge catches
+most real problems but flags three false ones for every true one. Raw
+agreement looks respectable and is not — with 90% of claims genuinely
+supported, flagging nothing at all would score 0.90, which is why kappa is
+reported beside it.
+
+Annotation also found *why*: the judge is shown one entity's facts in
+isolation, while a finding's prose legitimately refers to entities it is
+linked to. "Resolves to a live IP with an exposed HTTPS service" is true, but
+the protocol lives on a separate `service:` entity the judge never sees, so it
+answers "I can't see it" and `stage2_faith` counts that as fabrication. 13 of
+the 21 false flags fit that pattern. Written up in ADR-0006's Validation
+section, along with the predicted effect of the fix.
 
 ## Scope & ethics
 

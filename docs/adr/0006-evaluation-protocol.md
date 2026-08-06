@@ -1,6 +1,6 @@
 # ADR-0006 — Evaluation Protocol: the Three Numbers (v1)
 
-- **Status:** Accepted (v0.1.0 — hand-validated 2026-07-23 against a real target under ADR-0007's protocol; see Validation). **`glean eval` (roadmap E4) built 2026-07-27** — the formulas are no longer hand-computed one target at a time; a single command now runs the full pipeline and reports all three numbers across every target with a ground-truth file.
+- **Status:** Accepted — extended 2026-08-04 with a measured judge-reliability figure (flag precision 0.250 over 90 human-labelled claims), resolving open question 5; see Validation (v0.1.0 — hand-validated 2026-07-23 against a real target under ADR-0007's protocol; see Validation). **`glean eval` (roadmap E4) built 2026-07-27** — the formulas are no longer hand-computed one target at a time; a single command now runs the full pipeline and reports all three numbers across every target with a ground-truth file.
 - **Date:** 2026-07-22
 - **Scope:** Glean v1 — the exact, computable definitions of faithfulness, prioritisation quality, and provenance retention
 - **Depends on:** ADR-0001 (entity schema — the reference set faithfulness checks against), ADR-0004 (prioritisation rubric — the ranking prioritisation quality is measured against), ADR-0005 (brief contract — the artifact all three metrics are computed over)
@@ -89,7 +89,7 @@ Borrowing Mezzi et al.'s repeated-sampling/confidence-interval approach and Self
 2. ~~Exact atomic-claim decomposition prompt template~~ — **resolved 2026-07-27:** decomposition and entailment are combined into a single judge call per brief (not two separate calls), asking the judge to both break each finding's prose into atomic claims *and* verdict each one against that entity's real facts in one pass — bounds cost to one call per brief, matching how ADR-0009's narration call is already batched. Prompt and parsing in `glean_osint.evaluation.build_judge_prompt`/`_parse_judge_response`.
 3. ~~nDCG@N vs. overlap@N as the *headline* reported number when only one fits in a summary table~~ — **Resolved 2026-08-04:** the constraint turned out not to bind. `glean eval` reports both per target and both in the summary line, so no choice of a single headline was needed.
 4. Ground-truth ranking tie-break rule — explicitly deferred to F2, not decided here.
-5. **Partly addressed 2026-08-04 — apparatus built, measurement outstanding.** `glean judge-audit` samples the judge's individual verdicts (now retained on `Stage2FaithfulnessResult.claims` rather than summed away) into a packet carrying each claim and the exact evidence the judge was shown; `glean judge-score` scores the judge once a human has labelled them. The headline it reports is precision on the *flagged* class, because flags are the only thing that moves `stage2_faith` below 1.000: a judge that over-flags makes published faithfulness look worse than reality, which is the counter-intuitive direction. Cohen's kappa accompanies raw agreement, since agreement flatters any judge on a skewed set. **The labels are research data and must come from a human annotator — nothing generates them, and scoring refuses a partially-labelled packet rather than treating unlabelled rows as agreement.** Until a packet is labelled the question stays open, and `stage2_faith` keeps its lower-bound caveat. Original question: **New, raised by real validation:** the judge itself made real errors in the first real run (see Validation) — is a documented per-target caveat in `glean eval`'s own output enough, or does this need a second judge-reliability metric (e.g. spot-checking a sample of judge verdicts by hand) before the stage-2 number can be trusted at face value? Not resolved here.
+5. ~~**Whether the judge's own errors need quantifying before `stage2_faith` can be read at face value**~~ — **Resolved 2026-08-04: they did, and now are.** Raised by real validation, which found the judge making real errors of its own (see Validation), and left open on 2026-08-04 with the apparatus built but the measurement outstanding. `glean judge-audit` samples the judge's individual verdicts (retained on `Stage2FaithfulnessResult.claims` rather than summed away) into a packet carrying each claim and the exact evidence the judge was shown; `glean judge-score` scores the judge once a human has labelled them. The headline is precision on the *flagged* class, because flags are the only thing that moves `stage2_faith` below 1.000: a judge that over-flags makes published faithfulness look worse than reality, which is the counter-intuitive direction. Cohen's kappa accompanies raw agreement, since agreement flatters any judge on a skewed set. **The labels are research data and must come from a human annotator — nothing generates them, and scoring refuses a partially-labelled packet rather than treating unlabelled rows as agreement.** A packet of all 90 claims has now been labelled and scored: the judge over-flags roughly three-to-one, so a documented caveat was *not* enough and `stage2_faith` is a loose lower bound rather than an estimate. Numbers, the diagnosis of why, and the fix they point at are in the 2026-08-04 Validation entry at the end of this ADR.
 
 ## Validation
 
@@ -102,3 +102,88 @@ Borrowing Mezzi et al.'s repeated-sampling/confidence-interval approach and Self
 This number needs a real caveat, found by reading actual judge output rather than trusting the score in isolation (checked by hand against `larnby.com`): **the judge itself made real errors.** Two claims — "seen independently by multiple tools" for `subdomain:*.larnby.com` and for `ip_address:172.67.202.117` — were marked *unsupported* despite each entity's real `seen_by` field genuinely listing two distinct tools (`crt.sh (passive), theHarvester (passive)` and `dnsx (passive), httpx (active)` respectively). Both narrated claims were true and well-supported; the judge was wrong, not the narrator. This is exactly D4's own named risk — "using a model to judge a model's faithfulness has its own faithfulness problem" — now demonstrated concretely, and in the less-discussed direction (the judge wrongly *rejecting* a true claim, not wrongly accepting a false one).
 
 Practical reading of `0.725`: it's a **lower bound** on real narrator faithfulness for this run, not a precise measurement — some fraction of the "unsupported" claims are judge error, not narrator fabrication, and this pass didn't attempt to separate the two (that would need spot-checking judge verdicts by hand at scale, recorded as open question 5). Not fixed here by further prompt-tuning the judge — a single hand-checked example isn't enough signal to responsibly re-tune against without risking overfitting to one case, and the ADR's own "report honestly either way" principle means recording the limitation is the right move, not silently patching it away same-day.
+
+---
+
+**2026-08-04 — the judge measured against a human annotator.**
+
+Open question 5 asked whether a documented caveat about the judge's errors was
+enough, or whether its reliability needed quantifying. It needed quantifying,
+and now is.
+
+**Method.** Every atomic claim the judge produced across the ten ground-truth
+targets — 90 in total, the whole population for this run rather than a sample,
+so there is no sampling error — was labelled independently by the project's
+annotator using `glean judge-audit`, then scored with `glean judge-score`. The
+annotator saw each claim and the same evidence the judge was given; the judge's
+own verdict is shown in the packet only so the record stays auditable
+afterwards.
+
+| | |
+|---|---|
+| claims labelled | 90 |
+| raw agreement | 0.744 |
+| **flag precision** | **0.250** |
+| flag recall | 0.778 |
+| Cohen's kappa | 0.268 |
+
+**What it says.** The judge flagged 28 claims as unsupported; the annotator
+found 9. Of those 28 flags only 7 were right, so **roughly three quarters of
+what drags `stage2_faith` down is judge error rather than narrator
+fabrication**. It does catch most real problems (recall 0.778 — 7 of 9). Raw
+agreement of 0.744 looks respectable and is not: with 90% of claims genuinely
+supported, a judge that never flagged anything would score 0.90, which is
+exactly why kappa is reported beside it and reads only 0.268.
+
+The consequence for the published number: **`stage2_faith` is a floor, and a
+loose one.** The 0.455 recorded in ADR-0009's validation implies true
+faithfulness materially higher than that. It stays conservative in the right
+direction — it never overstates faithfulness — but it is not an estimate of it.
+
+**Why the judge over-flags, diagnosed rather than guessed.** Annotation
+surfaced a real defect in `_judge_finding_facts`: it builds the judge's
+evidence from a single entity in isolation — that entity's own `attributes`,
+`signals` and `seen_by`. But a finding's prose legitimately refers to *linked*
+entities. A subdomain's text says "resolves to a live IP with an exposed HTTPS
+service"; the host entity records `dns_resolved: true` and a
+`resolves_to_live_ip` signal, while the protocol (`service: https`, port 443)
+lives on the separate `service:` entity the judge is never shown. The claim is
+true, and unverifiable from the evidence provided.
+
+So a share of the judge's `unsupported` verdicts mean *"I cannot see it"*
+rather than *"it is false"*, and `stage2_faith` counts those identically.
+**13 of the 21 false flags (62%) fit this pattern.** That makes stage 2 partly
+a measure of the completeness of the judge's evidence rather than of the
+narrator's faithfulness.
+
+**The fix, and its predicted effect.** Include the facts of linked entities in
+`_judge_finding_facts` — the graph already has the edges (ADR-0003, persisted
+since 2026-07-28). If every scoped case resolves, precision moves
+**0.25 → 0.47** on this same set. Recorded as a number rather than a hope
+precisely so re-running the audit after the change can confirm or refute it.
+Filed as follow-up rather than done here, so the measurement above describes
+the judge as it actually shipped.
+
+**A second defect, in the instrument rather than the judge.** The first
+annotation pass mislabelled nine claims because the packet presented
+`attributes`, `signals` and `seen_by` as one undifferentiated block while the
+instructions said only "read the facts". The annotator reasonably read
+`attributes` as the data and `signals` as commentary — but a signal is a
+*derived fact*, and `resolves to a live IP with an exposed service` fires only
+when a service was genuinely found. The packet header now states which fields
+count as evidence and why. Recorded because it is a reproducibility hazard:
+anyone repeating this method with the old packet would make the same nine
+errors.
+
+**Limits of this result, stated plainly.** One annotator, so there is no
+inter-rater agreement here either (ADR-0007 Q4 remains open). One judge model
+(`llama3.1:8b`) and one narration model. 90 claims is the whole population for
+this eval run but a small absolute number, so the precision figure carries wide
+uncertainty — the direction and rough magnitude of the bias are the finding,
+not the third decimal place.
+
+The labelled packet itself is `_private/judge-audit.yaml` — private, like the
+rest of the eval set, because the claims quote briefs about real infrastructure
+(`docs/ETHICS.md`). It is regenerable from the private scans with
+`glean judge-audit --sample 0`; the labels are not, which is why the file is
+kept rather than treated as scratch.
