@@ -10,6 +10,7 @@ import urllib.error
 from dataclasses import replace
 from datetime import datetime, timezone
 
+from glean_osint import synthesis
 from glean_osint.brief import Brief, build_brief
 from glean_osint.evaluation import (
     GroundTruth,
@@ -20,7 +21,7 @@ from glean_osint.evaluation import (
     prioritisation_quality,
     provenance_retention,
 )
-from glean_osint.schema.entities import Entity, Priority, ProvenanceEntry, ScanMeta
+from glean_osint.schema.entities import Edge, Entity, Priority, ProvenanceEntry, ScanMeta
 from glean_osint.scoring import score_graph
 
 AS_OF = datetime(2026, 7, 26, tzinfo=timezone.utc)
@@ -290,3 +291,228 @@ def test_faithfulness_stage2_skips_when_no_top_priorities() -> None:
     result = faithfulness_stage2(brief, urlopen=fail_if_called)
     assert result.total_claims == 0
     assert result.unjudged_findings == 0
+
+
+# --- What the judge is shown (ADR-0006 Validation, 2026-08-04) ------------
+
+
+def _all_findings(brief: Brief) -> tuple[object, ...]:
+    """Both tiers. These fixtures are single low-scoring entities, which
+    land in `also_found`; the prompt builder is tier-agnostic and it is the
+    fact rendering under test here, not the ranking."""
+    return brief.top_priorities + brief.also_found
+
+
+def test_boolean_attributes_are_spelled_out_for_the_judge() -> None:
+    """The defect the judge audit found: `dns_resolved: true` carries its
+    meaning in the key name, and the judge false-flagged claims like
+    "resolves to a live IP" whose only evidence was that pair."""
+    entities = [
+        _entity(
+            "subdomain:live.example.com",
+            "subdomain",
+            "live.example.com",
+            attributes={"dns_resolved": True},
+        )
+    ]
+    scored = score_graph(entities, [], AS_OF)
+    brief = build_brief(scored, [], SCAN)
+
+    prompt = build_judge_prompt(_all_findings(brief))
+
+    assert "It resolves in DNS: it is a live host." in prompt
+    # The structured form stays -- the sentence is an addition, not a
+    # replacement, so nothing that read `attributes` before loses it.
+    assert '"dns_resolved": true' in prompt
+
+
+def test_a_dead_host_is_not_described_as_live() -> None:
+    entities = [
+        _entity(
+            "subdomain:dead.example.com",
+            "subdomain",
+            "dead.example.com",
+            attributes={"dns_resolved": False},
+        )
+    ]
+    scored = score_graph(entities, [], AS_OF)
+    brief = build_brief(scored, [], SCAN)
+
+    prompt = build_judge_prompt(_all_findings(brief))
+
+    assert "It does not resolve in DNS: it is a confirmed dead host." in prompt
+    assert "it is a live host" not in prompt
+
+
+def test_list_attributes_render_as_values_not_as_python_syntax() -> None:
+    """A certificate's `san` is a list. It also cannot be part of a dict
+    key, which is why the sentence table is consulted for booleans only."""
+    entities = [
+        _entity(
+            "certificate:serial|issuer",
+            "certificate",
+            "serial|issuer",
+            attributes={"san": ["a.example.com", "b.example.com"]},
+        )
+    ]
+    scored = score_graph(entities, [], AS_OF)
+    brief = build_brief(scored, [], SCAN)
+
+    prompt = build_judge_prompt(_all_findings(brief))
+
+    assert "Its san is a.example.com, b.example.com." in prompt
+
+
+def test_the_judge_is_shown_no_fact_the_narrator_was_not() -> None:
+    """Load-bearing equivalence: a judge given facts the narrator never had
+    would start ratifying invention instead of checking it. The plain
+    sentences must be a restatement of the narrator's own view, so every
+    value in them has to appear in the narration prompt too."""
+    entities = [
+        _entity(
+            "subdomain:live.example.com",
+            "subdomain",
+            "live.example.com",
+            attributes={"dns_resolved": True, "wildcard": False},
+        ),
+        _entity(
+            "service:1.2.3.4:443",
+            "service",
+            "1.2.3.4:443",
+            attributes={"port": 443, "protocol": "tcp", "service": "https"},
+        ),
+    ]
+    scored = score_graph(entities, [], AS_OF)
+    brief = build_brief(scored, [], SCAN)
+
+    narrator_prompt = synthesis.build_prompt(_all_findings(brief))
+    judge_facts = json.loads(build_judge_prompt(_all_findings(brief)).split("Findings:\n", 1)[1])
+
+    for finding in judge_facts:
+        for sentence in finding["real_facts"]["plain_facts"]:
+            for value in ("live.example.com", "443", "https", "tcp"):
+                if value in sentence:
+                    assert value in narrator_prompt
+
+
+def test_linked_facts_reach_a_service_through_an_unnarrated_hop() -> None:
+    """The 2026-08-06 disagreements in one test. A subdomain's prose says it
+    resolves to a live IP with an exposed HTTPS service; the protocol lives
+    on the `service:` entity two hops away, and the `ip_address` in between
+    is often not narrated at all. The walk must pass through it."""
+    entities = [
+        _entity(
+            "subdomain:beta.example.com",
+            "subdomain",
+            "beta.example.com",
+            attributes={"dns_resolved": True},
+        ),
+        _entity("ip_address:1.2.3.4", "ip_address", "1.2.3.4"),
+        _entity(
+            "service:1.2.3.4:443",
+            "service",
+            "1.2.3.4:443",
+            attributes={"port": 443, "protocol": "tcp", "service": "https"},
+        ),
+    ]
+    edges = [
+        Edge(
+            source_id="subdomain:beta.example.com",
+            target_id="ip_address:1.2.3.4",
+            relation="resolves_to",
+        ),
+        Edge(
+            source_id="ip_address:1.2.3.4",
+            target_id="service:1.2.3.4:443",
+            relation="exposes_service",
+        ),
+    ]
+    scored = score_graph(entities, edges, AS_OF)
+    brief = build_brief(scored, edges, SCAN)
+    # The intermediate IP is deliberately excluded from what gets narrated.
+    findings = tuple(f for f in _all_findings(brief) if f.entity.id != "ip_address:1.2.3.4")
+
+    prompt = build_judge_prompt(findings, edges)
+
+    assert "service https" in prompt
+    assert "via resolves to then exposes" in prompt
+
+
+def test_traversal_discloses_nothing_about_an_entity_outside_the_brief() -> None:
+    """Passing through a node must not describe it. The narrator only sees
+    narrated findings, so describing an un-narrated entity would let the
+    judge ratify a claim the narrator had no basis to make."""
+    entities = [
+        _entity(
+            "subdomain:beta.example.com",
+            "subdomain",
+            "beta.example.com",
+            attributes={"dns_resolved": True},
+        ),
+        _entity(
+            "ip_address:1.2.3.4", "ip_address", "1.2.3.4", attributes={"asn": "AS-SECRET-13335"}
+        ),
+    ]
+    edges = [
+        Edge(
+            source_id="subdomain:beta.example.com",
+            target_id="ip_address:1.2.3.4",
+            relation="resolves_to",
+        ),
+    ]
+    scored = score_graph(entities, edges, AS_OF)
+    brief = build_brief(scored, edges, SCAN)
+    findings = tuple(f for f in _all_findings(brief) if f.entity.id != "ip_address:1.2.3.4")
+
+    prompt = build_judge_prompt(findings, edges)
+
+    assert "AS-SECRET-13335" not in prompt
+
+
+def test_no_edges_means_no_linked_facts_rather_than_an_error() -> None:
+    """`edges` is optional: a caller without a graph still gets a check."""
+    entities = [_entity("subdomain:a.example.com", "subdomain", "a.example.com")]
+    scored = score_graph(entities, [], AS_OF)
+    brief = build_brief(scored, [], SCAN)
+
+    # Checked against the payload, not the whole prompt: the preamble
+    # explains connected facts, so a substring test would always match.
+    facts = json.loads(build_judge_prompt(_all_findings(brief)).split("Findings:\n", 1)[1])
+
+    assert all(not any("is connected" in s for s in f["real_facts"]["plain_facts"]) for f in facts)
+
+
+def test_a_parents_resolution_is_not_attributed_to_a_wildcard_child() -> None:
+    """A wildcard entry resolves to nothing, but its parent domain does.
+    Walking through `subdomain_of` presented the parent's IP as something
+    the wildcard reached, and the judge accepted "resolves to a live IP"
+    on that basis -- ratifying a real fabrication. Properties do not
+    inherit down a containment edge."""
+    entities = [
+        _entity(
+            "subdomain:*.example.com", "subdomain", "*.example.com", attributes={"wildcard": True}
+        ),
+        _entity("domain:example.com", "domain", "example.com", attributes={"dns_resolved": True}),
+        _entity("ip_address:9.9.9.9", "ip_address", "9.9.9.9"),
+    ]
+    edges = [
+        Edge(
+            source_id="subdomain:*.example.com",
+            target_id="domain:example.com",
+            relation="subdomain_of",
+        ),
+        Edge(
+            source_id="domain:example.com", target_id="ip_address:9.9.9.9", relation="resolves_to"
+        ),
+    ]
+    scored = score_graph(entities, edges, AS_OF)
+    brief = build_brief(scored, edges, SCAN)
+
+    facts = json.loads(build_judge_prompt(_all_findings(brief), edges).split("Findings:\n", 1)[1])
+    wildcard = next(f for f in facts if f["entity_id"] == "subdomain:*.example.com")
+    evidence = wildcard["real_facts"]["plain_facts"]
+
+    # The parent itself may be named -- that much is true.
+    assert any("is a subdomain of" in fact for fact in evidence)
+    # What it resolves to must not be, since the wildcard reaches no IP.
+    assert not any("9.9.9.9" in fact for fact in evidence)

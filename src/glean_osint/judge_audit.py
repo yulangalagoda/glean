@@ -8,11 +8,21 @@ is. A number qualified by "this is sometimes wrong, we don't know how
 often" is close to unusable as evidence, which is what open question 5
 had been asking about since it was raised.
 
-Run once for real (ADR-0006 Validation, 2026-08-04): 90 claims, flag
+Run for real (ADR-0006 Validation, 2026-08-04): 90 claims, flag
 precision 0.250, recall 0.778, kappa 0.268. The judge over-flags roughly
 three to one, which is why the headline below is precision on the flagged
-class. Those numbers are a baseline -- change the judge prompt or the
-evidence it is shown and this is what tells you whether it got better.
+class.
+
+That run also earned its keep by refuting a diagnosis. The explanation
+first published for the over-flagging -- that the judge could not see
+facts belonging to linked entities -- was checked against the labels on
+2026-08-06 and retracted: every false flag's evidence was already in
+front of the judge. Reading the labelled claims is what showed that, and
+is the argument for keeping every verdict rather than only the score.
+
+`carry_over_labels` exists so this stays repeatable. Changing the judge
+re-derives the claim list, so without it each change costs a full
+re-labelling pass and the reliability figure quietly goes stale.
 
 The missing ingredient is a second opinion. This module builds an
 **annotation packet** -- each atomic claim the judge ruled on, its verdict,
@@ -47,7 +57,7 @@ worthless at the only job that matters.
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 # The two labels a human may assign. Deliberately the same vocabulary the
@@ -182,6 +192,75 @@ def build_packet(
         )
         for i, (target, verdict) in enumerate(chosen, start=1)
     ]
+
+
+@dataclass(frozen=True, slots=True)
+class CarryOver:
+    """What happened when labels were moved onto a freshly-judged packet."""
+
+    carried: int
+    still_unlabelled: int
+    dropped: int  # labelled claims in the old packet that no longer exist
+
+    @property
+    def summary(self) -> str:
+        return (
+            f"{self.carried} label(s) carried over, {self.still_unlabelled} new claim(s) "
+            f"to label, {self.dropped} old label(s) no longer applicable"
+        )
+
+
+def _claim_key(target: str, entity_id: str, claim: str) -> tuple[str, str, str]:
+    """Identity of a claim across judge runs.
+
+    Not the packet `index`, which is a position in one sampled draw and
+    means nothing in the next one. Claim text is normalised for case,
+    whitespace and trailing punctuation only -- anything looser would
+    silently transfer a human label onto a claim the human never read,
+    which would corrupt the reference data the whole audit rests on.
+    """
+    normalised = " ".join(claim.lower().split()).strip(" .,;:")
+    return (target, entity_id, normalised)
+
+
+def carry_over_labels(
+    entries: list[AuditEntry], previous: list[AuditEntry]
+) -> tuple[list[AuditEntry], CarryOver]:
+    """Move human labels from an earlier packet onto a new one.
+
+    Decomposition and entailment are one judge call (ADR-0006 Q2), so
+    changing the prompt or the evidence re-derives the claim list: the
+    claims are not stable across runs and `index` certainly is not.
+    Without this, every change to the judge would cost a full re-labelling
+    pass, which in practice means the judge stops being re-measured at all
+    and its reliability figure quietly goes stale.
+
+    Only exact claim matches carry. A claim whose text changed is treated
+    as new and comes back unlabelled -- re-reading it is cheap, whereas a
+    label attached to a claim nobody ruled on is unrecoverable.
+    """
+    labelled = {
+        _claim_key(e.target, e.entity_id, e.claim): e
+        for e in previous
+        if e.human_verdict is not None
+    }
+    used: set[tuple[str, str, str]] = set()
+    merged: list[AuditEntry] = []
+    carried = 0
+    for entry in entries:
+        key = _claim_key(entry.target, entry.entity_id, entry.claim)
+        match = labelled.get(key)
+        if match is None or entry.human_verdict is not None:
+            merged.append(entry)
+            continue
+        used.add(key)
+        carried += 1
+        merged.append(replace(entry, human_verdict=match.human_verdict, note=match.note))
+    return merged, CarryOver(
+        carried=carried,
+        still_unlabelled=sum(1 for e in merged if e.human_verdict is None),
+        dropped=len(labelled) - len(used),
+    )
 
 
 def score_packet(entries: list[AuditEntry]) -> JudgeReliability:

@@ -709,7 +709,7 @@ def _evaluate_target(
         # Stage 2 only means something once there's real narration to judge
         # (also_found is always template text, trivially faithful, D2) --
         # skip the extra judge call entirely on a template-only brief.
-        stage2 = faithfulness_stage2(brief, judge_model=judge_model)
+        stage2 = faithfulness_stage2(brief, edges=merged.edges, judge_model=judge_model)
 
     entity_ids = {e.id for e in scored}
     glean_ranked_ids = [e.id for e in scored]
@@ -866,10 +866,10 @@ def _faithfulness_caveat(*, measured_content: bool) -> str:
     ]
     if measured_content:
         lines += [
-            "stage2_faith judges the prose itself, but the judge over-flags: measured against",
-            "90 human-labelled claims it flagged 28 where a person found 9, so roughly three",
-            "quarters of what drags this number down is judge error, not fabrication. Read it",
-            "as a loose lower bound, not an estimate (ADR-0006 Validation, 2026-08-04).",
+            "stage2_faith judges the prose itself, but the judge errs in ways measured three",
+            "times against human labels: flag precision has read 0.250, 1.000 and 0.444 as the",
+            "evidence it is shown changed. It never overstates faithfulness, so read this as a",
+            "lower bound rather than an estimate, and see ADR-0006 Validation for how loose.",
         ]
     else:
         lines += [
@@ -893,6 +893,15 @@ def judge_audit(
     seed: Annotated[
         int, typer.Option(help="Sampling seed, so a packet can be regenerated exactly.")
     ] = 0,
+    carry_over: Annotated[
+        Path | None,
+        typer.Option(
+            exists=True,
+            readable=True,
+            help="An earlier labelled packet. Labels for claims that still exist verbatim "
+            "are reused, so only genuinely-new claims need labelling.",
+        ),
+    ] = None,
     model: Annotated[str, typer.Option(help="Narration model.")] = synthesis.DEFAULT_MODEL,
     judge_model: Annotated[str, typer.Option(help="Judge model.")] = DEFAULT_JUDGE_MODEL,
     top_n: Annotated[int, typer.Option(help="Findings narrated per brief.")] = DEFAULT_TOP_N,
@@ -904,10 +913,13 @@ def judge_audit(
     it was shown, so a person can rule on the same claims independently. Score
     the labelled result with `glean judge-score`.
 
-    Run once already: 90 claims, flag precision 0.250, recall 0.778, kappa
-    0.268 (ADR-0006 Validation, 2026-08-04). Re-run it after any change to
-    the judge prompt or evidence -- that is what the numbers are a baseline
-    for.
+    Run three times so far: flag precision 0.250 as first shipped, 1.000
+    once evidence was stated as plain sentences, 0.444 when connected-entity
+    facts arrived in a separate field the judge read as second-class
+    (ADR-0006 Validation). Every swing traced to evidence presentation
+    rather than the judge's reasoning, which is the argument for re-running
+    this after any change to the prompt or the facts -- and for using
+    --carry-over so it costs a handful of labels rather than all of them.
 
     Nothing here writes a `human_verdict` -- those labels are research data
     and have to come from a person.
@@ -944,12 +956,26 @@ def judge_audit(
         raise typer.Exit(code=1)
 
     entries = judge_audit_mod.build_packet(collected, sample_size=sample, seed=seed)
+    carried: judge_audit_mod.CarryOver | None = None
+    if carry_over is not None:
+        entries, carried = judge_audit_mod.carry_over_labels(
+            entries, _load_audit_packet(carry_over)
+        )
     out.write_text(_render_audit_packet(entries, judge_model=judge_model, seed=seed), "utf-8")
     typer.echo(SECTION_BREAK)
     typer.echo(f"{len(entries)} claim(s) sampled from {len(collected)} judged, written to {out}")
+    if carried is not None:
+        typer.echo(f"{carried.summary} (from {carry_over})")
+        if carried.dropped:
+            typer.secho(
+                f"{carried.dropped} previously-labelled claim(s) no longer exist — the judge "
+                "re-decomposed the prose, so those rulings do not transfer.",
+                fg=typer.colors.YELLOW,
+            )
+    remaining = carried.still_unlabelled if carried is not None else len(entries)
     typer.secho(
-        "Fill in each `human_verdict` (supported | unsupported), then run "
-        f"`glean judge-score {out}`.",
+        f"Fill in the {remaining} blank `human_verdict` field(s) (supported | unsupported), "
+        f"then run `glean judge-score {out}`.",
         fg=typer.colors.CYAN,
     )
 
@@ -959,20 +985,7 @@ def judge_score(
     packet: Annotated[Path, typer.Argument(exists=True, readable=True)],
 ) -> None:
     """Score the judge against a labelled packet (ADR-0006 Q5)."""
-    data = yaml.safe_load(packet.read_text(encoding="utf-8")) or {}
-    entries = [
-        judge_audit_mod.AuditEntry(
-            index=e.get("index", i),
-            target=e.get("target", ""),
-            entity_id=e.get("entity_id", ""),
-            claim=e.get("claim", ""),
-            judge_verdict=e.get("judge_verdict", ""),
-            entity_facts=e.get("entity_facts", ""),
-            human_verdict=judge_audit_mod.parse_verdict(e.get("human_verdict"))[0],
-            note=judge_audit_mod.parse_verdict(e.get("human_verdict"))[1],
-        )
-        for i, e in enumerate(data.get("entries") or [], start=1)
-    ]
+    entries = _load_audit_packet(packet)
     if not entries:
         typer.secho("No entries in that packet.", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
@@ -993,6 +1006,24 @@ def judge_score(
     typer.echo(f"flag recall         {pct(result.flag_recall)}   (real problems it caught)")
     typer.echo(f"Cohen's kappa       {pct(result.kappa)}")
     typer.secho("\n" + judge_audit_mod.interpret(result), fg=typer.colors.CYAN)
+
+
+def _load_audit_packet(packet: Path) -> list[judge_audit_mod.AuditEntry]:
+    """Read a packet back, splitting each `human_verdict` into label and note."""
+    data = yaml.safe_load(packet.read_text(encoding="utf-8")) or {}
+    return [
+        judge_audit_mod.AuditEntry(
+            index=e.get("index", i),
+            target=e.get("target", ""),
+            entity_id=e.get("entity_id", ""),
+            claim=e.get("claim", ""),
+            judge_verdict=e.get("judge_verdict", ""),
+            entity_facts=e.get("entity_facts", ""),
+            human_verdict=judge_audit_mod.parse_verdict(e.get("human_verdict"))[0],
+            note=judge_audit_mod.parse_verdict(e.get("human_verdict"))[1],
+        )
+        for i, e in enumerate(data.get("entries") or [], start=1)
+    ]
 
 
 def _render_audit_packet(

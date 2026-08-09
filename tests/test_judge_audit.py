@@ -10,6 +10,7 @@ from glean_osint.judge_audit import (
     UNSUPPORTED,
     AuditEntry,
     build_packet,
+    carry_over_labels,
     interpret,
     score_packet,
 )
@@ -158,3 +159,97 @@ def test_the_packet_carries_the_evidence_the_judge_was_shown() -> None:
     assert entry.judge_verdict == UNSUPPORTED
     assert "dns_resolved" in entry.entity_facts
     assert entry.human_verdict is None  # never pre-filled
+
+
+# --- Carrying labels across judge runs -----------------------------------
+
+
+def _labelled(target: str, entity_id: str, claim: str, human: str, note: str = "") -> AuditEntry:
+    return AuditEntry(
+        index=1,
+        target=target,
+        entity_id=entity_id,
+        claim=claim,
+        judge_verdict=SUPPORTED,
+        entity_facts="{}",
+        human_verdict=human,
+        note=note,
+    )
+
+
+def _fresh(index: int, target: str, entity_id: str, claim: str) -> AuditEntry:
+    return AuditEntry(
+        index=index,
+        target=target,
+        entity_id=entity_id,
+        claim=claim,
+        judge_verdict=UNSUPPORTED,
+        entity_facts="{}",
+    )
+
+
+def test_labels_carry_onto_a_rejudged_packet_with_the_note() -> None:
+    """The point of the whole mechanism: re-running the judge must not cost
+    a second full labelling pass, or the reliability figure goes stale."""
+    previous = [_labelled("a.com", "subdomain:x.a.com", "It resolves", UNSUPPORTED, "no A record")]
+    fresh = [_fresh(1, "a.com", "subdomain:x.a.com", "It resolves")]
+
+    merged, report = carry_over_labels(fresh, previous)
+
+    assert merged[0].human_verdict == UNSUPPORTED
+    assert merged[0].note == "no A record"
+    # The new judge verdict is kept -- that is the thing being re-measured.
+    assert merged[0].judge_verdict == UNSUPPORTED
+    assert (report.carried, report.still_unlabelled, report.dropped) == (1, 0, 0)
+
+
+def test_a_claim_matches_across_case_whitespace_and_trailing_punctuation() -> None:
+    previous = [_labelled("a.com", "subdomain:x.a.com", "It resolves to a live IP", SUPPORTED)]
+    fresh = [_fresh(1, "a.com", "subdomain:x.a.com", "it  resolves to a  live ip.")]
+
+    merged, report = carry_over_labels(fresh, previous)
+
+    assert merged[0].human_verdict == SUPPORTED
+    assert report.carried == 1
+
+
+def test_a_reworded_claim_is_not_labelled_from_a_different_one() -> None:
+    """The failure that would matter: silently transferring a human's
+    ruling onto a claim they never read corrupts the reference data."""
+    previous = [_labelled("a.com", "subdomain:x.a.com", "It resolves to a live IP", SUPPORTED)]
+    fresh = [_fresh(1, "a.com", "subdomain:x.a.com", "It exposes an HTTPS service")]
+
+    merged, report = carry_over_labels(fresh, previous)
+
+    assert merged[0].human_verdict is None
+    assert (report.carried, report.still_unlabelled, report.dropped) == (0, 1, 1)
+
+
+def test_the_same_claim_text_on_a_different_entity_does_not_carry() -> None:
+    previous = [_labelled("a.com", "subdomain:x.a.com", "It resolves", SUPPORTED)]
+    fresh = [_fresh(1, "a.com", "subdomain:y.a.com", "It resolves")]
+
+    merged, report = carry_over_labels(fresh, previous)
+
+    assert merged[0].human_verdict is None
+    assert report.dropped == 1
+
+
+def test_unlabelled_previous_entries_are_not_carried_as_labels() -> None:
+    previous = [
+        AuditEntry(
+            index=1,
+            target="a.com",
+            entity_id="subdomain:x.a.com",
+            claim="It resolves",
+            judge_verdict=SUPPORTED,
+            entity_facts="{}",
+            human_verdict=None,
+        )
+    ]
+    fresh = [_fresh(1, "a.com", "subdomain:x.a.com", "It resolves")]
+
+    merged, report = carry_over_labels(fresh, previous)
+
+    assert merged[0].human_verdict is None
+    assert (report.carried, report.dropped) == (0, 0)

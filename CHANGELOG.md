@@ -9,7 +9,154 @@ point was a real release, just pre-dev groundwork. That bar was reached on
 
 ## [Unreleased]
 
+### Fixed
+- **Linked evidence no longer reads as second-class, which was costing the
+  judge more than it gained.** The linked-evidence packet labelled in full
+  scored **flag precision 0.444, recall 0.500, agreement 0.916, kappa
+  0.425** over 107 claims — precision *down* from 1.000. Four of the five
+  false flags were claims whose evidence sat in `linked_facts` and was
+  ignored; in the clearest, the claim text was **verbatim identical** to
+  the linked fact it was being checked against.
+
+  The cause was the prompt, and self-inflicted: it called `plain_facts`
+  "everything known about the entity" and then, a bullet later, described
+  `linked_facts` as evidence too. The earlier absolute claim won.
+
+  This is the same defect for the third time. `attributes` split from
+  `signals` taught a human annotator that signals were commentary;
+  `linked_facts` split from `plain_facts` taught the judge they were a
+  footnote. **Splitting evidence into labelled compartments teaches the
+  reader — human or model — that some compartments count less, whatever
+  the surrounding prose says.** Linked facts now append to the one list,
+  and since each reads "It is connected, via … to …", provenance stays
+  legible without a field implying rank.
+
+  On claims carrying existing labels: **flag precision 0.444 → 1.000, and
+  zero claims flagged despite a connected fact naming a service (was
+  four).** 84 claims of that configuration are still unlabelled, so it has
+  no published figure.
+
+- **A recurring trade-off, now recorded rather than rediscovered.** Across
+  six prompt variants: permissive wording gives high precision and
+  occasionally accepts a fabrication; strict wording collapses precision.
+  Two "strict but targeted" attempts scored 0.111 and 0.167, and a third
+  dropped precision 1.000 → 0.600 while making the judge manufacture
+  claims out of the fact list and then flag them. The permissive wording is
+  kept deliberately, with its cost stated: a wildcard entry with no
+  resolution fact, narrated as resolving, currently passes.
+
+  That failure is **deterministic and structural** — an entity with no
+  `resolves_to` edge and no `dns_resolved` attribute cannot resolve, and no
+  LLM is needed to know it. Extending stage 1's structural checking to a
+  small set of contradiction checks would catch the class outright, free
+  and exactly, rather than depending on a prompt phrasing holding.
+  Recorded as the direction; it changes what D1 means and needs its own
+  decision.
+
 ### Added
+- **The judge can see facts about entities a finding is linked to.** With
+  over-flagging fixed, the packet was labelled in full — 78 claims, **flag
+  precision 1.000, recall 0.667, agreement 0.962, kappa 0.780** — and every
+  remaining disagreement turned out to be one thing. Three claims judged
+  supported and labelled unsupported, none of them a fabrication: each is
+  *true* in the graph and unverifiable from a single entity.
+  `beta.tessno.com` resolves to `104.21.9.204`, which exposes `:443` with
+  `service: https`; the subdomain's own record carries only
+  `dns_resolved: true` and a signal saying "an exposed service", never the
+  protocol.
+
+  Worse, the same claim shape was labelled both ways — eight claims, five
+  supported, three unsupported, with `www.tessno.com` and `beta.tessno.com`
+  carrying the identical sentence on sibling subdomains and getting
+  opposite rulings. Not carelessness: an undecidable call left unresolved.
+  Applied consistently, the same 78 labels give recall anywhere from
+  **0.429 to 1.000** while precision stays 1.000 throughout. A number that
+  unstable measures the convention, not the judge.
+
+  So `_linked_facts` supplies the evidence instead of adjudicating the
+  convention. Two hops — the distance the real cases sat at, subdomain → IP
+  → service. **Only entities that are themselves narrated get described**,
+  since the narrator sees every top-priority finding in one batch;
+  describing anything else would let the judge ratify invention that
+  happens to be true. The walk passes *through* un-narrated nodes, because
+  the connecting IP routinely does not make the top five, and traversing a
+  node discloses nothing about it.
+
+  This partly reinstates the mechanism retracted below, and the distinction
+  is the point: that retraction stands — linked-entity scoping was *not*
+  why the judge over-flagged. The mechanism was real but attached to the
+  wrong symptom, and the effect it does explain only became visible once
+  the over-flagging noise was gone.
+
+- **`subdomain_of` is excluded from that traversal**, which is not a detail.
+  The first version walked it and produced "It is connected, via is a
+  subdomain of then resolves to, to ip address 104.21.88.220" for
+  `*.hazelmoor.org` — a wildcard that resolves to nothing. The judge read it
+  as evidence the wildcard resolves and accepted a genuine fabrication. A
+  parent's properties are not the child's. It is still described as a
+  first-hop fact ("it is a subdomain of X" is true and says nothing about
+  resolution), and a test pins the distinction. Caught before shipping.
+
+### Fixed
+- **Retracted the published diagnosis of why the judge over-flags, and
+  replaced it with one the data supports.** The previous entry claimed 13
+  of the 21 false flags were caused by the judge being unable to see facts
+  on *linked* entities, and predicted flag precision would move 0.25 →
+  0.47. Checked claim by claim against the labelled packet, that is wrong:
+  **all 21 false flags had their evidence present in what the judge was
+  shown**, and the specific mechanism cited was refuted too — the HTTPS
+  sub-claims the story was built on were *accepted* by the judge, never
+  flagged. Recorded as a retraction rather than an edit, because the
+  prediction was published as falsifiable.
+
+  The pattern that does hold is the *shape* of the evidence. A `service`
+  entity carries `port: 443`, `service: https` — values that match a
+  claim's own words — and was false-flagged 1 time in 25. A `subdomain`
+  carries `dns_resolved: true`, a boolean whose meaning lives in the key
+  name while the prose describes the consequence ("resolves to a live
+  IP"); those were false-flagged 11 times in 26. 20 of the 21 sit on
+  entities whose attributes are boolean-only or empty. It is the same
+  defect that caused the annotation errors on the first labelling pass:
+  evidence presented in a form that does not read as evidence.
+
+- **The judge is shown its evidence as sentences, not just as key/value
+  pairs.** `_plain_facts` states each fact in prose — `dns_resolved: true`
+  becomes "It resolves in DNS: it is a live host" — alongside the
+  unchanged structured fields, and the prompt now says a claim restating a
+  fact in different words is supported. This gives the judge nothing the
+  narrator did not have: the sentences are `synthesis._finding_facts`
+  reworded, and a test asserts no value reaches the judge that was absent
+  from the narration prompt. A judge holding facts the narrator lacked
+  would ratify invention instead of checking it.
+
+  On claims carrying the same human labels, flag precision moves
+  **0.250 → 1.000** and the flag rate falls from 31% of claims to 5–8%,
+  with narration verified byte-identical across runs so the judge is the
+  only variable. **This is not a new headline figure and should not be
+  quoted as one:** the scored subset is selected (claims whose wording
+  survived a prompt change), and the prompt was chosen by comparing four
+  variants against these same 90 labels — two that sounded stricter scored
+  *worse*, at 0.111 and 0.167. A clean number needs the new claims
+  labelled, which is a human's job by design.
+
+### Added
+- **`glean judge-audit --carry-over`**, which is what makes re-measuring
+  the judge affordable. Decomposition and judging share one call, so
+  changing the prompt re-derives the claim list — 43 of the 90 original
+  labels no longer applied to any claim. Carry-over matches claims across
+  runs on `(target, entity_id, normalised claim text)` and reuses the
+  labels that still apply. Exact matches only: a reworded claim comes back
+  blank rather than inheriting a ruling nobody made, since a label
+  attached to a claim no human read is unrecoverable. Without this, every
+  judge change costs a full re-labelling pass, which in practice means the
+  judge stops being re-measured at all.
+
+- **The judge is not reproducible, and that is now recorded.** Two runs of
+  an identical prompt at `temperature: 0` produced 76 and 78 claims with
+  slightly different decompositions. Small, but it means `stage2_faith`
+  carries run-to-run noise independent of what it measures, and any future
+  comparison of judge configurations has to be larger than that noise.
+
 - **The judge is now measured, not just caveated** (ROADMAP theme 5,
   ADR-0006 Q5 resolved). `stage2_faith` has always shipped with a warning
   that the judge makes mistakes and no measure of how many. All 90 claims
@@ -27,17 +174,11 @@ point was a real release, just pre-dev groundwork. That bar was reached on
   eval`, the README and the ADR all say instead of the vaguer "the judge
   makes mistakes".
 
-  Annotation also produced a diagnosis rather than a shrug.
-  `_judge_finding_facts` builds the judge's evidence from **one entity in
-  isolation**, while a finding's prose legitimately refers to entities it
-  is linked to: "resolves to a live IP with an exposed HTTPS service" is
-  true, but `service: https` lives on a separate `service:` entity the
-  judge is never shown, so it answers "I cannot see it" and the metric
-  counts that as fabrication. **13 of the 21 false flags fit that
-  pattern**; including linked entities' facts predicts precision 0.25 →
-  0.47 on this same set. Filed as follow-up rather than fixed here, so the
-  measurement describes the judge as it actually shipped, and recorded as a
-  number so re-running the audit can confirm or refute it.
+  Annotation also produced a diagnosis. **It was wrong — see the
+  retraction above, which is what re-running the audit against the
+  labels produced.** The original text claimed the judge could not see
+  facts on linked entities, that 13 of 21 false flags fit that pattern,
+  and that fixing it predicted precision 0.25 → 0.47.
 
   A defect in the *instrument* is recorded too: the packet presented
   `attributes`, `signals` and `seen_by` as one undifferentiated block, and

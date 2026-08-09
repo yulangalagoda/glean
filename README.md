@@ -134,15 +134,30 @@ local model judges whether the narrated *prose* actually states only
 facts supported by that entity's real data (ADR-0006 D1 stage 2,
 ADR-0006 D4 requires the judge to differ from the narration model —
 `--judge-model` defaults to a different, larger model than `--model`).
-Treat the judge's own output with real skepticism, and with a number
-attached: scored against 90 human-labelled claims it flagged 28 as
-unsupported where a person found 9, so **it over-flags roughly three to
-one** and about three quarters of what pulls `stage2_faith` down is judge
-error rather than narrator fabrication (flag precision 0.250, recall
-0.778, Cohen's kappa 0.268 — ADR-0006 Validation, 2026-08-04). It errs in
-the safe direction, never overstating faithfulness, but that makes
-`stage2_faith` a *loose lower bound* rather than an estimate: true
-narrator faithfulness is materially higher than the figure printed.
+Treat the judge's own output with real skepticism, and with numbers
+attached. It has been audited against human labels three times, and the
+figures moved a long way:
+
+| audit | claims | flag precision | recall | kappa |
+|---|---|---|---|---|
+| 2026-08-04, as first shipped | 90 | 0.250 | 0.778 | 0.268 |
+| after evidence stated as sentences | 78 | 1.000 | 0.667 | 0.780 |
+| after linked-entity evidence added | 107 | 0.444 | 0.500 | 0.425 |
+
+The first audit found the judge flagging 28 claims where a person found 9
+— **over-flagging roughly three to one**, so most of what pulled
+`stage2_faith` down was judge error rather than narrator fabrication.
+Both later rounds trace to how the evidence is *presented* rather than to
+the judge's reasoning; the third round's drop was a separate
+`linked_facts` field being read as second-class evidence, since fixed.
+
+Two things hold across all of it. `stage2_faith` errs in the safe
+direction — it never overstates faithfulness — so it is a **lower bound,
+not an estimate**. And the bound's tightness has swung with each change,
+so quote it as a floor and cite the audit you mean. The current
+configuration is not yet fully labelled and has no published figure; see
+ADR-0006's Validation section for all three rounds, a retraction, and the
+limits that no amount of prompt work fixes.
 
 ### Working with a scan in the browser
 
@@ -193,7 +208,15 @@ the judge. That is measurable, and has been measured:
 glean judge-audit --sample 50 --out judge-audit.yaml   # sample its verdicts
 #   ... label each `human_verdict` yourself ...
 glean judge-score judge-audit.yaml                     # score the judge
+
+# After changing the judge prompt, reuse the labels that still apply:
+glean judge-audit --sample 0 --out new.yaml --carry-over judge-audit.yaml
 ```
+
+Carry-over matters more than it looks. Decomposition and judging are one
+call, so changing the prompt re-derives the claim list and roughly half the
+old labels stop applying to any claim. Matching is on exact claim text, so a
+reworded claim comes back blank rather than inheriting a ruling nobody made.
 
 The labels have to be yours — the tool builds the packet and scores it, but
 never writes a verdict, and refuses to score a partially-labelled one.
@@ -205,13 +228,38 @@ agreement looks respectable and is not — with 90% of claims genuinely
 supported, flagging nothing at all would score 0.90, which is why kappa is
 reported beside it.
 
-Annotation also found *why*: the judge is shown one entity's facts in
-isolation, while a finding's prose legitimately refers to entities it is
-linked to. "Resolves to a live IP with an exposed HTTPS service" is true, but
-the protocol lives on a separate `service:` entity the judge never sees, so it
-answers "I can't see it" and `stage2_faith` counts that as fabrication. 13 of
-the 21 false flags fit that pattern. Written up in ADR-0006's Validation
-section, along with the predicted effect of the fix.
+Annotation also found *why*, on the second attempt. The first explanation —
+that the judge could not see facts on linked entities — was checked against
+the labelled claims and **retracted**: all 21 false flags had their evidence
+present in what the judge was shown. The pattern that does hold is about the
+*shape* of that evidence. A `service` entity carries `port: 443`,
+`service: https` — values matching a claim's own words — and was false-
+flagged once in 25. A subdomain carries `dns_resolved: true`: a boolean whose
+meaning lives in the key name, while the prose says "resolves to a live IP".
+Those were false-flagged 11 times in 26.
+
+The fix states every fact as a sentence for the judge ("It resolves in DNS:
+it is a live host") without giving it anything the narrator did not have.
+Re-labelled in full, that packet scored **flag precision 1.000, recall 0.667,
+agreement 0.962, kappa 0.780** over 78 claims: the judge no longer invents
+problems.
+
+That in turn exposed the next one. Every remaining disagreement was a claim
+that was *true* but spanned two entities — a subdomain resolving to an IP
+that exposes an HTTPS service, where the protocol lives on the `service:`
+entity. The same claim shape had been labelled both ways, which left recall
+anywhere from 0.429 to 1.000 depending only on which convention was applied,
+while precision stayed 1.000 throughout. The judge is now given the linked
+entities' facts, bounded to entities the narrator itself saw, so the question
+is settled by evidence rather than by convention. Labelling that
+configuration then caught a further problem: a separate `linked_facts` field
+made the judge treat connected evidence as second-class, and it false-flagged
+claims whose supporting fact was sitting in it — one of them word-for-word
+identical to the fact it was checked against. Evidence is now a single list
+rather than labelled compartments, which is the third time that same fix has
+been needed. The current configuration is not yet fully labelled and has **no
+published figure**. The retraction, the
+numbers and the caveats are all in ADR-0006's Validation section.
 
 ## Scope & ethics
 
