@@ -1,8 +1,11 @@
 """The evaluation harness: the charter's three headline numbers (ADR-0006).
 
-Faithfulness is two-stage (D1). Stage 1 is the deterministic structural
-pre-check (does each finding resolve to a real graph entity) — free,
-exact, "structurally guaranteed never to have false negatives." Stage 2
+Faithfulness is two-stage (D1). Stage 1 is the deterministic half, free
+and exact: **1a** checks that each finding resolves to a real graph entity,
+and **1b** (added 2026-08-06, `glean_osint.contradictions`) fails prose
+asserting what the graph decides on its own — a wildcard narrated as
+resolving when nothing records it resolving. 1a cannot fail for a generated
+brief; 1b is what lets this number read below 1.000. Stage 2
 (added 2026-07-27, once ADR-0009's real LLM narration existed to judge)
 is the atomic-claim entailment check: decompose a finding's prose into
 individual factual claims and check each against that entity's real
@@ -31,6 +34,7 @@ from typing import Any
 import yaml
 
 from glean_osint.brief import SIGNAL_PHRASES, Brief, Finding
+from glean_osint.contradictions import Contradiction, check_brief_findings
 from glean_osint.schema.entities import Edge, Entity
 from glean_osint.synthesis import (
     DEFAULT_TIMEOUT_SECONDS,
@@ -91,27 +95,57 @@ def load_ground_truth(path: Path) -> GroundTruth:
 
 @dataclass(frozen=True, slots=True)
 class FaithfulnessResult:
-    """ADR-0006 D1 stage 1 only: does each finding's entity exist in the
-    graph at all. `score` is the charter's target-1.0 metric. Content-level
-    fabrication (a real entity, but a false claim in its prose) is not
-    caught here by design — see `Stage2FaithfulnessResult` below, and
-    ADR-0009's Validation section for why stage 1 alone reads 1.000
-    regardless of narration source."""
+    """ADR-0006 D1 stage 1: the deterministic checks, no LLM judge.
+
+    Two of them since 2026-08-06. **1a** is the original: does each
+    finding's entity exist in the graph. **1b** (`contradictions`) checks
+    the prose for assertions the graph decides on its own -- a wildcard
+    entry narrated as resolving when nothing records it resolving.
+
+    1a cannot fail for a code-generated brief, which is why this number
+    read 1.000 regardless of narration source and could not be quoted as
+    evidence the prose was accurate. 1b gives it teeth for the decidable
+    subset. Numbers from before that date are not comparable with numbers
+    after it."""
 
     total_claims: int
     supported_claims: int
+    contradictions: tuple[Contradiction, ...] = ()
 
     @property
     def score(self) -> float:
         return self.supported_claims / self.total_claims if self.total_claims else 1.0
 
 
-def faithfulness_stage1(brief: Brief, entity_ids: set[str]) -> FaithfulnessResult:
-    """A finding is 'supported' (stage 1) iff its entity id exists in the
-    graph. Free, deterministic, no LLM judge invoked."""
+def faithfulness_stage1(
+    brief: Brief,
+    entity_ids: set[str],
+    *,
+    edges: Sequence[Edge] = (),
+    entity_types: dict[str, str] | None = None,
+) -> FaithfulnessResult:
+    """A finding is supported iff its entity exists AND its prose asserts
+    nothing the graph contradicts. Free, deterministic, no judge invoked.
+
+    `edges`/`entity_types` are optional so a caller without a graph still
+    gets check 1a, but a caller that has them should pass them: without
+    them only the check that cannot fail is running.
+    """
     all_findings = brief.top_priorities + brief.also_found
-    supported = sum(1 for f in all_findings if f.entity.id in entity_ids)
-    return FaithfulnessResult(total_claims=len(all_findings), supported_claims=supported)
+    contradictions = tuple(
+        check_brief_findings(all_findings, edges, entity_types or {})
+        if edges or entity_types
+        else ()
+    )
+    contradicted = {c.entity_id for c in contradictions}
+    supported = sum(
+        1 for f in all_findings if f.entity.id in entity_ids and f.entity.id not in contradicted
+    )
+    return FaithfulnessResult(
+        total_claims=len(all_findings),
+        supported_claims=supported,
+        contradictions=contradictions,
+    )
 
 
 _JUDGE_PREAMBLE = """You are a fact-checking judge for a security \

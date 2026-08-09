@@ -125,15 +125,13 @@ the above.
   way). **Re-read carried labels after a change of evidence, not just the
   blanks** — carry-over preserves a ruling by design, so a stale one
   survives until someone revisits it.
-- **Catch structural contradictions in stage 1 rather than asking the judge
-  to.** The one fabrication the current prompt accepts is `*.yulan.me`
-  narrated as resolving when it has no `resolves_to` edge and no
-  `dns_resolved` attribute. That is decidable without an LLM. Six prompt
-  variants show the trade-off is real — permissive wording keeps precision
-  and lets this through; strict wording collapses precision (0.111, 0.167,
-  0.600) — so the answer is not more prompt tuning. Extending D1's
-  structural check to a few contradiction rules would be free, exact and
-  reproducible. Needs an ADR: it changes what stage 1 claims to measure.
+- ~~**Catch structural contradictions in stage 1 rather than asking the
+  judge to.**~~ ✅ *done* — ADR-0006 D1 amended with check 1b. Precision
+  **1.000** against the human labels and zero false positives on 278
+  template-brief findings before adoption; first real run gives mean
+  `stage1_faith` **0.990** (`hazelmoor.org` 0.909), catching both wildcard
+  fabrications the judge accepts. `stage1_faith` can fail now, and values
+  before this change are not comparable with values after it.
 - **The judge is decomposition-unstable, and no evidence fixes that.** On
   `*.yulan.me` it has flagged the full sentence and accepted the bare
   fragment "Resolves to a live IP" in the same run; under one variant it

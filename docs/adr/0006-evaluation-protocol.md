@@ -37,7 +37,17 @@ where `S` is the set of atomic claims extracted from a brief's findings (both "T
 1. **Deterministic pre-check (no LLM judge needed).** ADR-0005 D1/D4 already constrain the brief so tightly that each finding names exactly one entity and may not merge findings. So the first, free check is structural: parse each finding block, extract the entity `id` it claims to describe, and confirm that `id` exists in the graph. Any finding naming an entity absent from the graph fails immediately — this catches the cheap, obvious fabrication case (an invented host, IP, or email) without invoking a model at all.
 2. **Atomic-claim check (LLM judge, RAGAS/FActScore-style) for the surviving findings.** A finding block can still fabricate *content* about a real entity — e.g. "port 443 is running an outdated Apache" when the entity graph only records "port 443 open," nothing about software or version. For each finding that passes stage 1, decompose its prose (the "so what" and "why ranked here" lines) into atomic statements, then check each statement against that specific entity's full record (`attributes`, `provenance`, connected `edges`) for entailment. `S` and `V` above are counted over this decomposed set, pooled across the whole brief.
 
-**Why two-stage:** stage 1 is free, deterministic, and structurally guaranteed never to have false negatives (an absent entity id is unambiguous). Stage 2 is where the real judgment work — and the real risk of an LLM-judging-an-LLM problem — lives, so it's worth confining that expensive/riskier step to only the findings that already passed the cheap gate.
+**Why two-stage:** stage 1 is free, deterministic, and structurally guaranteed never to have false negatives (an absent entity id is unambiguous).
+
+**Amendment, 2026-08-06 — stage 1 gains a second check (1b).** Stage 1 as written above is check **1a**: entity existence. It cannot fail for a code-generated brief, so it read 1.000 regardless of what the prose said, and a reader shown it alone would wrongly conclude the prose was accurate. Check **1b** closes part of that gap: *structural assertions the graph decides on its own*. A wildcard entry narrated as "resolves to a live IP" when no attribute, edge or signal records it resolving is wrong, and no model is needed to know so. Implemented in `glean_osint.contradictions`; a finding fails stage 1 if 1a *or* 1b fails.
+
+**Why this is not the judge's job.** It was the judge's job, and the judge could not hold it. Six prompt variants trade the same way (see Validation, 2026-08-06): permissive wording keeps flag precision and lets this class through, strict wording catches it and collapses precision to 0.111–0.600. A property that is decidable by lookup should not be delegated to a model whose answer moves with its prompt wording.
+
+**Why this is not absence-as-evidence.** The project's discipline forbids treating absence as proof of a fact *about the target* — not finding a service does not mean none exists. Faithfulness asks a different question: does the brief state only what its own evidence supports? There, an assertion with no supporting record *is* the failure being measured. 1b concludes nothing about the target, only about the prose. Every check is stated as a positive structural test (a named attribute, edge or signal), so adding evidence can only silence a flag, never create one.
+
+**Scope, deliberately narrow.** Two assertion classes (DNS resolution, exposed service/port). Measured against the human-labelled claims before being adopted: **precision 1.000, zero false positives** across 45 labelled findings, and **zero false positives across 278 findings of template (non-LLM) briefs** — the path most users run. Recall is 0.286 of human-marked fabrications, and that is the correct trade: the remaining ones need judgement rather than lookup ("Cloudflare is a content delivery network"), which is exactly what stage 2 is for. A missed fabrication here costs nothing, since stage 2 still runs; a false flag would put a wrong number in front of a reader.
+
+**Comparability.** `stage1_faith` values from before this date are not comparable with values after it. The first real run under 1b: mean 0.990 across the ten targets, with `hazelmoor.org` 0.909 and `yulan.me` 0.994 — the first time this number has read below 1.000 for any reason other than a bug. Stage 2 is where the real judgment work — and the real risk of an LLM-judging-an-LLM problem — lives, so it's worth confining that expensive/riskier step to only the findings that already passed the cheap gate.
 
 **Explicit non-goal (carried over from FActScore's own stated assumptions):** faithfulness as defined here is a **precision-only** metric — it does not penalise a brief for *omitting* an important finding. That's deliberate and mirrors FActScore's own design assumption. Coverage/recall of what mattered is a separate concern, captured by D2 below. The charter's three numbers are reported separately, not blended into one score, precisely so precision failures and recall failures stay distinguishable.
 
@@ -400,3 +410,53 @@ carry labels and **84 are unlabelled**. There is no published figure for it.
 The last fully-labelled configuration is the one measured at the top of this
 entry: **107 claims, precision 0.444, recall 0.500** — superseded by a fix
 whose effect is measured only on the carried subset.
+
+---
+
+**2026-08-06 (stage 1b) — the first stage-1 failure that was not a bug.**
+
+`glean eval --llm` across all ten targets with the structural check live:
+
+| | mean | worst |
+|---|---|---|
+| `stage1_faith` | **0.990** | `hazelmoor.org` 0.909 |
+| `stage2_faith` | 0.923 | `yulan.me` 0.706 |
+| provenance | 1.000 | — |
+
+**Four structurally unsupported assertions**, on the two wildcard entries
+(`*.hazelmoor.org`, `*.yulan.me`), each narrated as resolving to a live IP
+with an exposed service when nothing in either scan records them resolving or
+reaching a service. Both are real fabrications. Both are ones the stage-2
+judge accepts under the prompt that scores best on every other axis.
+
+This is the first time `stage1_faith` has read below 1.000 for any reason
+other than a bug, which was the point: the number had been structurally
+incapable of failing and was still being printed as if it meant something.
+
+**Validated before adoption, not after.** The check was measured against the
+existing human labels while it was still a script:
+
+- **Precision 1.000** — zero false positives across 45 labelled findings.
+- **Zero false positives across 278 findings of template briefs**, the
+  non-LLM path most users run. Worth stating because a false flag there would
+  be a metric failing correct output, and template prose is generated from
+  the same attributes the check reads.
+- **Recall 0.286** of human-marked fabrications — deliberately low. The five
+  it misses need judgement rather than lookup ("Cloudflare is a content
+  delivery network"), or are claims the graph does support and the annotator
+  read more strictly. A missed fabrication costs nothing here because stage 2
+  still runs; a false flag would put a wrong number in front of a reader.
+
+Adopting it on measured precision rather than on the idea sounding right is a
+direct consequence of the retraction recorded above, where the reverse
+happened.
+
+**One thing worth stating for anyone extending this.** Each check needed a
+positive structural test — a named attribute, edge or signal — so that adding
+evidence can only silence a flag, never create one. Assertion classes that
+could not be phrased that way were left out rather than approximated. The
+prose patterns are also narrow on purpose: `\bresolv\w*\b` does not match
+"resolution", which is what the template writes in "No resolution data
+available", and that near-miss is the kind of thing that makes a
+regex-over-prose check quietly wrong. It is pinned by the template-brief
+figure above rather than by inspection.

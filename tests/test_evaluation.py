@@ -516,3 +516,186 @@ def test_a_parents_resolution_is_not_attributed_to_a_wildcard_child() -> None:
     assert any("is a subdomain of" in fact for fact in evidence)
     # What it resolves to must not be, since the wildcard reaches no IP.
     assert not any("9.9.9.9" in fact for fact in evidence)
+
+
+# --- Stage 1b: structural contradictions (ADR-0006 D1, 2026-08-06) --------
+
+
+def test_a_wildcard_narrated_as_resolving_fails_stage_1() -> None:
+    """The fabrication six judge-prompt variants could not catch reliably.
+    Nothing records `*.example.com` resolving, so prose saying it does is
+    decidable without a model."""
+    entities = [
+        _entity(
+            "subdomain:*.example.com", "subdomain", "*.example.com", attributes={"wildcard": True}
+        ),
+    ]
+    scored = score_graph(entities, [], AS_OF)
+    brief = build_brief(scored, [], SCAN)
+    narrated = replace(
+        brief,
+        also_found=(
+            replace(
+                brief.also_found[0],
+                body="Wildcard subdomain *.example.com resolves to a live IP.",
+            ),
+        ),
+    )
+
+    result = faithfulness_stage1(
+        narrated, {e.id for e in scored}, edges=[], entity_types={e.id: e.type for e in scored}
+    )
+
+    assert result.score == 0.0
+    assert [c.kind for c in result.contradictions] == ["resolution"]
+
+
+def test_a_host_that_really_resolves_is_not_flagged() -> None:
+    entities = [
+        _entity(
+            "subdomain:live.example.com",
+            "subdomain",
+            "live.example.com",
+            attributes={"dns_resolved": True},
+        ),
+    ]
+    scored = score_graph(entities, [], AS_OF)
+    brief = build_brief(scored, [], SCAN)
+    narrated = replace(
+        brief,
+        also_found=(replace(brief.also_found[0], body="It resolves to a live IP."),),
+    )
+
+    result = faithfulness_stage1(
+        narrated, {e.id for e in scored}, edges=[], entity_types={e.id: e.type for e in scored}
+    )
+
+    assert result.score == 1.0
+    assert result.contradictions == ()
+
+
+def test_a_service_claim_is_supported_through_a_resolves_to_edge() -> None:
+    """Reachability, not just the entity's own record -- otherwise every
+    subdomain describing its host's service would be flagged."""
+    entities = [
+        _entity(
+            "subdomain:a.example.com",
+            "subdomain",
+            "a.example.com",
+            attributes={"dns_resolved": True},
+        ),
+        _entity("ip_address:1.2.3.4", "ip_address", "1.2.3.4"),
+        _entity(
+            "service:1.2.3.4:443",
+            "service",
+            "1.2.3.4:443",
+            attributes={"port": 443, "protocol": "tcp", "service": "https"},
+        ),
+    ]
+    edges = [
+        Edge(
+            source_id="subdomain:a.example.com",
+            target_id="ip_address:1.2.3.4",
+            relation="resolves_to",
+        ),
+        Edge(
+            source_id="ip_address:1.2.3.4",
+            target_id="service:1.2.3.4:443",
+            relation="exposes_service",
+        ),
+    ]
+    scored = score_graph(entities, edges, AS_OF)
+    brief = build_brief(scored, edges, SCAN)
+    sub = next(
+        f
+        for f in brief.top_priorities + brief.also_found
+        if f.entity.id == "subdomain:a.example.com"
+    )
+    rest = tuple(
+        f
+        for f in brief.top_priorities + brief.also_found
+        if f.entity.id != "subdomain:a.example.com"
+    )
+    narrated = replace(
+        brief,
+        top_priorities=(),
+        also_found=(replace(sub, body="Resolves to a live IP with an exposed service."), *rest),
+    )
+
+    result = faithfulness_stage1(
+        narrated,
+        {e.id for e in scored},
+        edges=edges,
+        entity_types={e.id: e.type for e in scored},
+    )
+
+    assert result.contradictions == ()
+
+
+def test_a_parents_resolution_does_not_excuse_a_wildcards_claim() -> None:
+    """Same containment rule as the judge's evidence walk: `subdomain_of`
+    is not a path along which resolution reaches the child."""
+    entities = [
+        _entity(
+            "subdomain:*.example.com", "subdomain", "*.example.com", attributes={"wildcard": True}
+        ),
+        _entity("domain:example.com", "domain", "example.com", attributes={"dns_resolved": True}),
+        _entity("ip_address:9.9.9.9", "ip_address", "9.9.9.9"),
+    ]
+    edges = [
+        Edge(
+            source_id="subdomain:*.example.com",
+            target_id="domain:example.com",
+            relation="subdomain_of",
+        ),
+        Edge(
+            source_id="domain:example.com", target_id="ip_address:9.9.9.9", relation="resolves_to"
+        ),
+    ]
+    scored = score_graph(entities, edges, AS_OF)
+    brief = build_brief(scored, edges, SCAN)
+    wildcard = next(
+        f
+        for f in brief.top_priorities + brief.also_found
+        if f.entity.id == "subdomain:*.example.com"
+    )
+    rest = tuple(
+        f
+        for f in brief.top_priorities + brief.also_found
+        if f.entity.id != "subdomain:*.example.com"
+    )
+    narrated = replace(
+        brief,
+        top_priorities=(),
+        also_found=(replace(wildcard, body="It resolves to a live IP."), *rest),
+    )
+
+    result = faithfulness_stage1(
+        narrated,
+        {e.id for e in scored},
+        edges=edges,
+        entity_types={e.id: e.type for e in scored},
+    )
+
+    assert [c.entity_id for c in result.contradictions] == ["subdomain:*.example.com"]
+
+
+def test_without_a_graph_only_the_entity_existence_check_runs() -> None:
+    """Back-compatible by design: a caller with no edges still gets 1a
+    rather than an error or a silently wrong flag."""
+    entities = [
+        _entity(
+            "subdomain:*.example.com", "subdomain", "*.example.com", attributes={"wildcard": True}
+        ),
+    ]
+    scored = score_graph(entities, [], AS_OF)
+    brief = build_brief(scored, [], SCAN)
+    narrated = replace(
+        brief,
+        also_found=(replace(brief.also_found[0], body="Resolves to a live IP."),),
+    )
+
+    result = faithfulness_stage1(narrated, {e.id for e in scored})
+
+    assert result.score == 1.0
+    assert result.contradictions == ()

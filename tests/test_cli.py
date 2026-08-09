@@ -787,7 +787,12 @@ def test_the_caveat_changes_once_content_faithfulness_is_measured() -> None:
     assert "is NOT" in unmeasured and "--llm" in unmeasured
     assert "lower bound" in measured
     assert "is NOT" not in measured
-    # Stage 1's own limitation is stated either way -- it does not stop
-    # being structurally incapable of failing just because stage 2 ran.
+    # Stage 1's own limitation is stated either way. Since 2026-08-06 that
+    # limitation is narrower but still real: the structural check CAN fail
+    # a brief (ADR-0006 D1 stage 1b), so the old "cannot read below 1.000"
+    # would now be a false reassurance -- what has to survive is that stage
+    # 1 still says nothing about claims needing judgement rather than
+    # lookup.
     for text in (unmeasured, measured):
-        assert "cannot read below 1.000" in text
+        assert "cannot fail" in text  # entity existence, the 1a half
+        assert "stage 2" in text

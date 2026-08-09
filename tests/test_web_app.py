@@ -1692,12 +1692,17 @@ def test_the_guides_scoring_table_is_generated_from_the_rubric(tmp_path: Path) -
         assert f"{weight:+d}" in page
 
 
-def test_the_guide_states_that_stage_one_faithfulness_cannot_fail(tmp_path: Path) -> None:
+def test_the_guide_states_what_stage_one_faithfulness_can_and_cannot_catch(
+    tmp_path: Path,
+) -> None:
     """The number most likely to be misread, so the page says so plainly
-    rather than leaving it to the ADRs."""
+    rather than leaving it to the ADRs. Since ADR-0006 D1's 2026-08-06
+    amendment the honest statement is narrower than "cannot fail": the
+    entity-existence half still cannot, the structural half can."""
     page = _client(tmp_path).get("/guide").text
 
-    assert "cannot fail" in page
+    assert "can&#39;t" in page or "can't" in page  # the half that cannot fail
+    assert "structural check" in page  # the half that can
     assert "1.000" in page and "0.455" in page
 
 

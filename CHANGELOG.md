@@ -9,6 +9,49 @@ point was a real release, just pre-dev groundwork. That bar was reached on
 
 ## [Unreleased]
 
+### Added
+- **`stage1_faith` can now fail** (ADR-0006 D1, amended). Stage 1 asked one
+  question — does this finding's entity exist — which a generated brief
+  cannot fail, so the number read 1.000 regardless of what the prose said
+  while still being printed as if it meant something. A second check
+  (`glean_osint.contradictions`) fails prose asserting what the graph
+  decides on its own: a wildcard entry narrated as "resolves to a live IP"
+  when no attribute, edge or signal records it resolving.
+
+  First real run: **mean `stage1_faith` 0.990**, `hazelmoor.org` 0.909,
+  `yulan.me` 0.994 — the first time this number has read below 1.000 for
+  any reason other than a bug. Four unsupported assertions, all on wildcard
+  entries, all real fabrications, and **all of them ones the stage-2 judge
+  accepts** under the prompt that scores best on every other axis. `glean
+  eval` lists each one with its reason, so a sub-1.000 score is auditable
+  without re-running anything.
+
+  **Why take it off the judge.** Six prompt variants trade the same way:
+  permissive wording keeps flag precision and lets this class through,
+  strict wording catches it and collapses precision to 0.111–0.600. A
+  property decidable by lookup should not depend on a model whose answer
+  moves with its prompt wording.
+
+  **Why it is not absence-as-evidence.** The discipline forbids treating
+  absence as proof about the *target* — not finding a service does not mean
+  none exists. Faithfulness asks whether the brief states only what its own
+  evidence supports, and there an assertion with no supporting record *is*
+  the failure being measured. The check concludes nothing about the target,
+  only about the prose, and every rule is a positive structural test, so
+  adding evidence can only silence a flag, never create one.
+
+  **Measured before adoption, not after** — the direct lesson of the
+  retraction below. Precision **1.000** (zero false positives) across 45
+  labelled findings, and **zero false positives across 278 findings of
+  template briefs**, the non-LLM path most users run. Recall is 0.286 and
+  deliberately so: the rest need judgement rather than lookup ("Cloudflare
+  is a content delivery network"), which is stage 2's job. A missed
+  fabrication costs nothing since stage 2 still runs; a false flag would
+  put a wrong number in front of a reader.
+
+  **`stage1_faith` values from before this change are not comparable with
+  values after it.**
+
 ### Fixed
 - **Linked evidence no longer reads as second-class, which was costing the
   judge more than it gained.** The linked-evidence packet labelled in full

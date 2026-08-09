@@ -177,10 +177,12 @@
     quality. Two of those need reading carefully.
   </p>
   <div class="callout callout-caution">
-    <strong>stage-1 faithfulness cannot fail.</strong> It checks that every finding resolves
-    to a real entity in the graph, and invented entities are filtered out before a brief is
-    ever built — so it reads 1.000 by construction. It confirms the plumbing, not that the
-    prose is true.
+    <strong>stage-1 faithfulness only half-fails.</strong> Its entity-existence check can't:
+    invented entities are filtered out before a brief is ever built, so that half reads 1.000
+    by construction. A second, structural check <em>can</em> fail — prose asserting what the
+    graph settles on its own, like a wildcard entry narrated as resolving when nothing records
+    it resolving. On the ten-target evaluation set that catches two real fabrications the
+    stage-2 judge accepts.
   </div>
   <p>
     Content-level fabrication — a real entity described with a false claim — is measured only

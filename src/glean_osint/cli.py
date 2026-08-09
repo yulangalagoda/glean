@@ -715,7 +715,12 @@ def _evaluate_target(
     glean_ranked_ids = [e.id for e in scored]
     return _TargetEvalResult(
         target=ground_truth.target,
-        faithfulness=faithfulness_stage1(brief, entity_ids),
+        faithfulness=faithfulness_stage1(
+            brief,
+            entity_ids,
+            edges=merged.edges,
+            entity_types={e.id: e.type for e in scored},
+        ),
         provenance_retention=provenance_retention(brief),
         prioritisation=prioritisation_quality(glean_ranked_ids, ground_truth, n=top_n),
         stage2=stage2,
@@ -824,6 +829,21 @@ def run_eval(
             line += f" {r.stage2.score:>13.3f}"
         typer.echo(line)
 
+    # Listed rather than only counted: a stage-1 score below 1.000 is new
+    # (ADR-0006 D1 stage 1b, 2026-08-06) and a reader's first question is
+    # which finding caused it. Each line is a deterministic, checkable
+    # statement, so showing it costs nothing and makes the number auditable
+    # without re-running anything.
+    flagged = [(r.target, c) for r in results for c in r.faithfulness.contradictions]
+    if flagged:
+        typer.echo("")
+        typer.secho(
+            f"{len(flagged)} structurally unsupported assertion(s) — these fail stage 1:",
+            fg=typer.colors.YELLOW,
+        )
+        for target, contradiction in flagged:
+            typer.echo(f"  {target}: {contradiction}")
+
     n = len(results)
     mean_faithfulness = sum(r.faithfulness.score for r in results) / n
     mean_provenance = sum(r.provenance_retention for r in results) / n
@@ -860,9 +880,11 @@ def _faithfulness_caveat(*, measured_content: bool) -> str:
     identical text (ADR-0009 Validation, 2026-08-04).
     """
     lines = [
-        "stage1_faith checks only that each finding resolves to a real entity; invented ids",
-        "are already filtered out before the brief exists, so it cannot read below 1.000 and",
-        "is not a statement that the prose is accurate (ADR-0006 D1).",
+        "stage1_faith is deterministic and now has two parts (ADR-0006 D1). Entity existence",
+        "cannot fail for a generated brief. The structural check CAN: it fails prose that",
+        "asserts what the graph decides on its own, e.g. a wildcard narrated as resolving",
+        "when nothing records it resolving. It still says nothing about claims that need",
+        "judgement rather than lookup — that is stage 2's job.",
     ]
     if measured_content:
         lines += [
