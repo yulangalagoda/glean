@@ -17,7 +17,14 @@ from glean_osint.brief import (
     render_markdown,
 )
 from glean_osint.dedup import merge_graph
-from glean_osint.schema.entities import Entity, Priority, ProvenanceEntry, ScanMeta, ToolRun
+from glean_osint.schema.entities import (
+    Edge,
+    Entity,
+    Priority,
+    ProvenanceEntry,
+    ScanMeta,
+    ToolRun,
+)
 from glean_osint.scoring import score_graph
 
 AS_OF = datetime(2026, 7, 26, tzinfo=timezone.utc)
@@ -452,3 +459,48 @@ def test_render_html_seen_by_wraps_each_source_in_a_data_tool_span() -> None:
     markdown = render_markdown(brief)
     assert "<span" not in markdown
     assert "crt.sh (passive), dnsx (passive)" in markdown
+
+
+def test_a_breached_address_does_not_describe_itself_as_low_risk() -> None:
+    """Integrating HIBP surfaced this at once: `breach_hit` ranked a
+    breached address into the top three while its own body still called it
+    low risk, so the prose argued with the ranking printed beside it."""
+    entities = [
+        _entity("email_address:admin@example.com", "email_address", "admin@example.com"),
+        _entity(
+            "breach_exposure:exampleforum",
+            "breach_exposure",
+            "exampleforum",
+            attributes={"breach_name": "ExampleForum"},
+        ),
+    ]
+    edges = [
+        Edge(
+            source_id="email_address:admin@example.com",
+            target_id="breach_exposure:exampleforum",
+            relation="exposed_in_breach",
+        )
+    ]
+    scored = score_graph(entities, edges, AS_OF)
+    brief = build_brief(scored, edges, SCAN)
+
+    body = next(
+        f.body
+        for f in brief.top_priorities + brief.also_found
+        if f.entity.id == "email_address:admin@example.com"
+    )
+
+    assert "ExampleForum" in body
+    assert "low risk" not in body
+
+
+def test_an_unbreached_address_keeps_the_low_risk_wording() -> None:
+    entities = [_entity("email_address:info@example.com", "email_address", "info@example.com")]
+    scored = score_graph(entities, [], AS_OF)
+    brief = build_brief(scored, [], SCAN)
+
+    body = next(
+        f.body for f in brief.top_priorities + brief.also_found if f.entity.type == "email_address"
+    )
+
+    assert "low risk" in body

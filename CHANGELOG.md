@@ -10,6 +10,53 @@ point was a real release, just pre-dev groundwork. That bar was reached on
 ## [Unreleased]
 
 ### Added
+- **A breach source, and with it the first test of the highest-weighted
+  scoring rule.** `breach_exposure` had been a declared entity type with no
+  producer since ADR-0001 was written, which meant `breach_hit` — **joint-
+  highest weight in the whole priority rubric** — had never once fired
+  against real data. The rule most able to dominate a ranking was the least
+  tested. That, rather than extra subdomain coverage, is why a breach
+  source went in ahead of Amass and BBOT.
+
+  The Have I Been Pwned adapter answers two questions that Glean keeps
+  apart. *Was this domain itself breached?* — free, keyless, on by default,
+  and names an organisation. *Do addresses found here appear in breaches?*
+  — a claim about individuals, so it is opt-in behind a paid API key.
+  Both produce `breach_exposure` entities; what differs is what the
+  `exposed_in_breach` edge hangs off, the domain or the address. Keeping
+  them distinguishable by edge source is what lets a scan run the first
+  without the second.
+
+  Three constraints on the account half, all in `docs/ETHICS.md` rather
+  than left to judgement: only addresses **another tool actually found**
+  are looked up, so Glean never generates one to send to a third party;
+  the key must be supplied deliberately, so nobody gets account results by
+  accident; and without one the scan proceeds, the domain half still runs
+  and the brief records what was missed. It is opt-in because sending
+  someone's address to a third party is a disclosure, not because of the
+  cost.
+
+  HIBP's `404` means "this address is clean" — an answer, not a failure —
+  and is parsed as such. Reading it as an error would turn a real negative
+  into a degraded tool, which is absence-as-evidence in the direction that
+  actually misleads.
+
+  **The adapter contract held.** No new entity type, no new relation, no
+  scoring change, no brief-template change, and the tool appears in the web
+  UI from a single registry entry. The one thing that did need fixing was
+  found by running it (see below). ADR-0001 open question 3, open since the
+  schema was written, is resolved: `breach_exposure` stays.
+
+### Fixed
+- **A breached address no longer calls itself low risk.** Integrating HIBP
+  surfaced this immediately: `breach_hit` ranked `admin@example.com` into
+  the top three while its own body still read "Published contact address.
+  Useful for disclosure, low risk" — the prose arguing with the ranking
+  printed directly beside it. The graph already knew the difference, so the
+  template now names the breaches instead. A good argument for integrating
+  a source end-to-end rather than unit-testing the adapter and calling it
+  done.
+
 - **`stage1_faith` can now fail** (ADR-0006 D1, amended). Stage 1 asked one
   question — does this finding's entity exist — which a generated brief
   cannot fail, so the number read 1.000 regardless of what the prose said

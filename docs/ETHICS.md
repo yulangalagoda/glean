@@ -52,6 +52,36 @@ ethics review before a line of code is written for it — the infra-only
 scoping in this version is intentional risk containment, not a
 placeholder.
 
+### Where breach lookup sits on that line
+
+Breach data is the one v1 source that touches individuals, so the boundary
+is drawn inside the tool rather than left to judgement.
+
+**Domain-level lookup** ("was this site breached?") asks about an
+organisation. It runs by default, needs no key, and names no person.
+
+**Account-level lookup** ("does this address appear in breaches?") is a
+claim about a person, even when that person is `admin@` a company. It is
+therefore constrained three ways:
+
+- It only ever queries addresses **another tool actually found** on the
+  target. Glean never generates or guesses an address to submit to a third
+  party — `runner.extract_emails` reads the graph, and there is no path
+  that fabricates input.
+- It requires a paid API key that must be supplied deliberately. Without
+  one the scan proceeds, the domain half still runs, and the brief records
+  what was not collected. Nobody gets account-level results by accident.
+- The address is sent to Have I Been Pwned to answer the query. That is a
+  disclosure to a third party about someone who did not consent to being
+  researched, and it is the reason this half is opt-in rather than
+  default — not because of the cost.
+
+The charter's exclusion of people-focused OSINT still holds: this
+establishes that an address already tied to the target appears in a public
+breach corpus. It does not build a profile, correlate identities across
+services, or enrich a person from other sources. If that changes, the
+paragraph above applies and it needs its own review first.
+
 ## Threat model: plausible misuse, and what mitigates it
 
 This section names the ways Glean's own design could be turned toward

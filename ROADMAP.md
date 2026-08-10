@@ -64,7 +64,7 @@ hand-rolled SVG or a single vendored library. That constraint is real and
 was chosen for good reasons — it should be honoured or explicitly revised,
 not quietly bypassed.
 
-## 3. Wider tool coverage
+## 3. Wider tool coverage  — *breach source done*
 
 The adapter contract (ADR-0002) has now been exercised by five tools, and the
 registry means a new one appears in the UI with no template changes — that
@@ -77,6 +77,18 @@ the beginning.
 Each new tool is cheap individually. The value is coverage: more of the
 attack surface seen, and more corroboration between sources, which the
 scoring rubric already rewards.
+
+**A breach source landed first (2026-08-10), out of the listed order and
+for a reason.** `breach_exposure` was a declared entity type with no
+producer, so `breach_hit` — joint-highest weight in the rubric — had never
+fired against real data: the rule most able to dominate a ranking was the
+least tested. Amass by contrast is a fourth subdomain source that exercises
+nothing new. Have I Been Pwned is now wired, ADR-0001 Q3 is resolved, and
+the adapter contract held without a schema, scoring or template change.
+
+Still open: **Amass** (corroboration, cheap) and **BBOT** (which forces
+ADR-0002 Q3's streaming-parse question — a real architectural decision, not
+just another adapter).
 
 ## 4. Identity and feedback  ✅ *done*
 
@@ -117,14 +129,26 @@ the above.
   less; merging it into the one fact list restored precision to 1.000 on
   the claims carrying labels. Third instance of the same defect, and the
   same fix each time: one list, one status.
-- **Label the merged-evidence packet.** 136 claims,
-  `_private/judge-audit-v8.yaml`, **84 unlabelled** — no published figure
-  for this configuration yet. Two carried labels are stale (indices 39 and
-  118: `beta`/`api.tessno.com`, labelled before linked evidence existed,
-  and the identical sentence on `www.tessno.com` is labelled the other
-  way). **Re-read carried labels after a change of evidence, not just the
-  blanks** — carry-over preserves a ruling by design, so a stale one
-  survives until someone revisits it.
+- ~~**Label the merged-evidence packet.**~~ ✅ *done* — 136 claims:
+  **precision 0.267, recall 0.571, agreement 0.897, kappa 0.316.** Far
+  worse than the 1.000 the carried subset had suggested, which is exactly
+  the selection bias that subset was flagged for: claims whose wording
+  survives a prompt change are the easy ones. Labelling the whole packet
+  was the only way to see it.
+- **Drop the judge's fact-list echoes before scoring them.** The v8 labels
+  show why precision fell: **50 of 136 claims are verbatim copies of a
+  `plain_facts` line that never appears in `stated_text`**, and **10 of the
+  11 over-flags are those echoes**. The judge is manufacturing claims out
+  of the evidence and then flagging them, which its own preamble forbids
+  twice. Deterministic and cheap to detect — a claim absent from
+  `stated_text` was not decomposed from it. Dropping them takes flags from
+  15 to 5 and **precision 0.267 → 0.800** on the existing labels, with no
+  prompt change. Same shape of fix as stage 1b: stop asking the model to
+  be reliable about something checkable.
+- **Re-read carried labels after a change of evidence, not just the
+  blanks.** Carry-over preserves a ruling by design, so a label made before
+  the evidence changed survives until someone revisits it. Two such stale
+  labels persisted across three packets before being noticed.
 - ~~**Catch structural contradictions in stage 1 rather than asking the
   judge to.**~~ ✅ *done* — ADR-0006 D1 amended with check 1b. Precision
   **1.000** against the human labels and zero false positives on 278

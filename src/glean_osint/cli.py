@@ -29,6 +29,7 @@ from glean_osint import judge_audit as judge_audit_mod
 from glean_osint.adapters.base import ParseResult, ScanContext
 from glean_osint.adapters.crtsh import CrtshAdapter
 from glean_osint.adapters.dnsx import DnsxAdapter
+from glean_osint.adapters.hibp import HibpAdapter
 from glean_osint.adapters.httpx import HttpxAdapter
 from glean_osint.adapters.subfinder import SubfinderAdapter
 from glean_osint.adapters.theharvester import TheHarvesterAdapter
@@ -150,6 +151,23 @@ def scan(
             help="Path to httpx -json (JSON-lines) output for this target. "
             "This is an ACTIVE-recon tool: only use it against targets you're "
             "authorised to probe directly.",
+        ),
+    ] = None,
+    hibp: Annotated[
+        Path | None,
+        typer.Option(
+            exists=True,
+            readable=True,
+            help="Path to a Have I Been Pwned envelope for this target "
+            "({domain_breaches, account_breaches}), or a bare breach array.",
+        ),
+    ] = None,
+    hibp_api_key: Annotated[
+        str | None,
+        typer.Option(
+            envvar=runner.HIBP_API_KEY_ENV,
+            help="HIBP API key. Only needed to check discovered EMAIL ADDRESSES against "
+            "breaches (a paid endpoint); domain-level breach lookup is free and needs none.",
         ),
     ] = None,
     live: Annotated[
@@ -297,11 +315,12 @@ def scan(
         and subfinder is None
         and dnsx is None
         and httpx is None
+        and hibp is None
     )
     if no_input_files and offline:
         typer.secho(
-            "--offline needs at least one of --crtsh, --theharvester, --subfinder, --dnsx "
-            "or --httpx to ingest.",
+            "--offline needs at least one of --crtsh, --theharvester, --subfinder, --dnsx, "
+            "--httpx or --hibp to ingest.",
             fg=typer.colors.RED,
             err=True,
         )
@@ -324,7 +343,7 @@ def scan(
         live = True
         typer.secho(
             "No input files given — fetching with passive tools (crt.sh, theHarvester, "
-            "subfinder, dnsx). Pass --offline with input files to ingest instead.",
+            "subfinder, dnsx, HIBP). Pass --offline with input files to ingest instead.",
             fg=typer.colors.CYAN,
             err=True,
         )
@@ -532,6 +551,37 @@ def scan(
         tools_run.append(ToolRun(source_tool="httpx", method="active", raw_output_ref=httpx_ref))
         _warn_skipped("httpx", result.skipped, scan_warnings)
 
+    # --- Stage 4: HIBP, fed the addresses the other tools actually found ---
+    #
+    # Last because the account half needs those addresses. Passive: HIBP is
+    # asked about the target, never touching it.
+
+    if hibp is not None:
+        hibp_raw: bytes | None = hibp.read_bytes()
+        hibp_ref: str | None = str(hibp)
+    elif live:
+        emails = runner.extract_emails(results)
+        label = "Checking breach exposure (HIBP)..."
+        with _maybe_spin(True, label):
+            hibp_raw, hibp_warning = _invoke_live(
+                "hibp",
+                lambda: runner.fetch_hibp(domain, emails=emails, api_key=hibp_api_key),
+            )
+        if hibp_warning:
+            warn(hibp_warning)
+        hibp_ref = None
+    else:
+        hibp_raw, hibp_ref = None, None
+
+    if hibp_raw is not None:
+        if hibp is None:
+            hibp_ref = runner.archive_raw(output_dir, f"hibp-{domain}.json", hibp_raw)
+        ctx = ScanContext(target=domain, collected_at=collected_at, raw_output_ref=hibp_ref)
+        result = HibpAdapter().parse(hibp_raw, ctx)
+        results.append(result)
+        tools_run.append(ToolRun(source_tool="hibp", method="passive", raw_output_ref=hibp_ref))
+        _warn_skipped("hibp", result.skipped, scan_warnings)
+
     merged = merge_graph(results)
     scored = score_graph(merged.entities, merged.edges, datetime.now(timezone.utc))
 
@@ -649,6 +699,7 @@ _RAW_ADAPTERS = (
     (TheHarvesterAdapter, "theharvester-{slug}.json"),
     (SubfinderAdapter, "subfinder-{slug}.jsonl"),
     (DnsxAdapter, "dnsx-{slug}.json"),
+    (HibpAdapter, "hibp-{slug}.json"),
 )
 
 

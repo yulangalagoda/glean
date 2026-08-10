@@ -1,6 +1,6 @@
 # ADR-0001 — Normalised Entity Schema (v1, infra/domain scope)
 
-- **Status:** Accepted (v0.1.0 frozen 2026-07-22, validated against a real pilot target, see `docs/PILOT_findings.md`; wildcard entity representation resolved 2026-07-23, see D3/D4)
+- **Status:** Accepted (v0.1.0 frozen 2026-07-22, validated against a real pilot target, see `docs/PILOT_findings.md`; wildcard entity representation resolved 2026-07-23, see D3/D4; `breach_exposure` exercised and confirmed 2026-08-10, see open question 3)
 - **Date:** 2026-07-22
 - **Scope:** Glean v1, infrastructure / domain reconnaissance only
 - **Machine-checkable schema:** [`docs/schema/entity-graph.schema.json`](../schema/entity-graph.schema.json)
@@ -97,7 +97,7 @@ The `scan` block records the target, an `authorisation` note (the basis on which
 
 1. Entity-type enum completeness — ~~confirmed sufficient for crt.sh and theHarvester output; Amass/BBOT/dnsx not yet pilot-tested.~~ **Partly answered 2026-08-04:** dnsx, httpx and subfinder have all since been wired as real adapters against real captures, and none needed a new entity type — `dns_record`/`ip_address` covered dnsx, `service`/`web_tech` covered httpx, `subdomain` covered subfinder. Five tools have now exercised the enum without extending it. Amass and BBOT remain untested, so the question stays open for those two only.
 2. ~~Confirm `certificate` identity on fingerprint is available from crt.sh output in practice.~~ **Resolved: no, it is not available. Serial+issuer is the primary identity path for crt.sh, not a fallback.** See D3.
-3. Decide whether `breach_exposure` stays in v1 — still open, not exercised by this pilot (no breach source was queried).
+3. ~~Decide whether `breach_exposure` stays in v1~~ — **Resolved 2026-08-10: it stays, and is now exercised.** Open since the schema was written because nothing produced the type. A Have I Been Pwned adapter now does, and the type needed no change: `breach_exposure` held HIBP's breach objects as-is, and the existing `exposed_in_breach` relation carried both shapes of result without extension — *this domain's own users leaked* (edge from the `domain`) and *an address found here appears in someone else's leak* (edge from the `email_address`). Keeping those distinguishable by edge source rather than by entity type is what lets a scan run the first without the second, which matters because the second is a claim about individuals (`docs/ETHICS.md`). Note the cost of having left it unexercised: `breach_hit` carries the joint-highest weight in ADR-0004's rubric and had never once fired against real data, so the rule most able to dominate a ranking was the least tested. A declared type with no producer is not a neutral placeholder.
 4. ~~How is `*.example.com` represented — its own entity, or just a SAN annotation on the certificate?~~ **Resolved 2026-07-23:** its own `subdomain` entity, `wildcard` attribute set true, `id`/`value` keep the literal `*.` prefix rather than collapsing into the apex. See D3/D4.
 
 ## Validation

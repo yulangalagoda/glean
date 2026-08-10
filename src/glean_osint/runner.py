@@ -25,9 +25,10 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 from glean_osint.adapters.base import ParseResult
 from glean_osint.normalise import canon_host
@@ -587,3 +588,112 @@ def archive_raw(raw_dir: Path, filename: str, raw: bytes) -> str:
     path = raw_dir / filename
     path.write_bytes(raw)
     return str(path)
+
+
+# --- Have I Been Pwned (ADR-0008, ADR-0001 Q3) ----------------------------
+
+HIBP_API_KEY_ENV = "HIBP_API_KEY"
+HIBP_TIMEOUT_SECONDS = 30.0
+# HIBP documents a hard rate limit on the authenticated endpoint and returns
+# 429 with a Retry-After when exceeded. Kept well clear of it rather than
+# racing: a breach lookup is not the slow part of a scan.
+HIBP_ACCOUNT_DELAY_SECONDS = 1.6
+# Required by HIBP's own terms -- an unidentified client is rejected.
+HIBP_USER_AGENT = "glean-osint"
+
+
+class MissingApiKey(ToolUnavailable):
+    """The account endpoint needs a paid key and none was supplied.
+
+    A subclass of `ToolUnavailable` so it degrades exactly like a missing
+    binary (ADR-0002 D5): the rest of the scan proceeds and the brief says
+    what it did not get, rather than the scan failing over a paid feature
+    nobody promised.
+    """
+
+
+def _hibp_get(
+    url: str,
+    *,
+    api_key: str | None,
+    urlopen: Callable[..., object],
+    timeout: float,
+) -> bytes:
+    headers = {"User-Agent": HIBP_USER_AGENT}
+    if api_key:
+        headers["hibp-api-key"] = api_key
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        with urlopen(request, timeout=timeout) as response:  # type: ignore[attr-defined]
+            return response.read()  # type: ignore[no-any-return]
+    except urllib.error.HTTPError as error:
+        # 404 is HIBP's "no breaches for this account" -- an answer, not a
+        # failure, and the single most important status to get right here.
+        # Treating it as an error would turn "this address is clean" into a
+        # degraded tool, which is absence-as-evidence in the direction that
+        # actually misleads.
+        if error.code == 404:
+            return b"[]"
+        raise
+
+
+def fetch_hibp(
+    target: str,
+    *,
+    emails: Sequence[str] = (),
+    api_key: str | None = None,
+    urlopen: Callable[..., object] = urllib.request.urlopen,
+    sleep: Callable[[float], None] = time.sleep,
+    timeout: float = HIBP_TIMEOUT_SECONDS,
+) -> bytes:
+    """Fetch breach data for `target`, and for `emails` if a key is given.
+
+    Returns the envelope shape `adapters.hibp` ingests, so a live run and a
+    file-ingest run go down an identical parsing path.
+
+    The domain half needs no key and no payment. The account half does, so
+    it is skipped -- with the reason recorded -- rather than failing the
+    scan, and is only attempted for addresses another tool actually found.
+    Glean never invents an address to look up.
+    """
+    envelope: dict[str, Any] = {}
+
+    domain_url = f"https://haveibeenpwned.com/api/v3/breaches?Domain={urllib.parse.quote(target)}"
+    envelope["domain_breaches"] = json.loads(
+        _hibp_get(domain_url, api_key=api_key, urlopen=urlopen, timeout=timeout) or b"[]"
+    )
+
+    if emails and not api_key:
+        raise MissingApiKey(
+            f"hibp: {len(emails)} address(es) found, but checking them needs a paid API key "
+            f"(set ${HIBP_API_KEY_ENV}). Domain-level breaches were still collected."
+        )
+
+    account: dict[str, Any] = {}
+    for index, email in enumerate(emails):
+        if index:
+            sleep(HIBP_ACCOUNT_DELAY_SECONDS)
+        quoted = urllib.parse.quote(email, safe="")
+        url = f"https://haveibeenpwned.com/api/v3/breachedaccount/{quoted}?truncateResponse=false"
+        account[email] = json.loads(
+            _hibp_get(url, api_key=api_key, urlopen=urlopen, timeout=timeout) or b"[]"
+        )
+    if account:
+        envelope["account_breaches"] = account
+
+    return json.dumps(envelope, indent=2, sort_keys=True).encode("utf-8")
+
+
+def extract_emails(results: list[ParseResult]) -> list[str]:
+    """Addresses other adapters found, deduplicated and ordered.
+
+    The input to the account half. Sorted so a live run is reproducible and
+    the rate-limit pacing above is spent in a predictable order.
+    """
+    emails = {
+        entity.value.strip().lower()
+        for result in results
+        for entity in result.entities
+        if entity.type == "email_address" and entity.value.strip()
+    }
+    return sorted(emails)

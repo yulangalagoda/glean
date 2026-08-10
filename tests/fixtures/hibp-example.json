@@ -1,0 +1,40 @@
+{
+  "domain_breaches": [
+    {
+      "Name": "ExampleForum",
+      "Title": "Example Forum",
+      "Domain": "example.com",
+      "BreachDate": "2019-03-14",
+      "AddedDate": "2019-08-01T09:12:00Z",
+      "PwnCount": 812345,
+      "DataClasses": ["Email addresses", "Passwords", "Usernames"],
+      "IsVerified": true,
+      "IsSensitive": false
+    }
+  ],
+  "account_breaches": {
+    "Admin@Example.com": [
+      {
+        "Name": "ExampleForum",
+        "Title": "Example Forum",
+        "Domain": "example.com",
+        "BreachDate": "2019-03-14",
+        "PwnCount": 812345,
+        "DataClasses": ["Email addresses", "Passwords"],
+        "IsVerified": true,
+        "IsSensitive": false
+      },
+      {
+        "Name": "Collection1",
+        "Title": "Collection #1",
+        "Domain": "",
+        "BreachDate": "2019-01-07",
+        "PwnCount": 772904991,
+        "DataClasses": ["Email addresses", "Passwords"],
+        "IsVerified": false,
+        "IsSensitive": false
+      }
+    ],
+    "": [{"Name": "Ignored"}]
+  }
+}

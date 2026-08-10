@@ -19,7 +19,7 @@ import pytest
 
 from glean_osint import runner
 from glean_osint.adapters.base import ParseResult
-from glean_osint.schema.entities import Entity
+from glean_osint.schema.entities import Entity, ProvenanceEntry
 
 
 class _FakeResponse:
@@ -639,3 +639,126 @@ def test_an_untokened_call_is_unchanged() -> None:
 
     assert calls == [["x"]]
     assert completed.stdout == b"out"
+
+
+# --- HIBP (ADR-0008, ADR-0001 Q3) -----------------------------------------
+
+
+class _FakeHibpResponse:
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
+    def __enter__(self) -> _FakeHibpResponse:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._payload
+
+
+def test_a_404_means_no_breaches_not_a_failed_tool() -> None:
+    """HIBP answers 'this address is clean' with 404. Treating that as an
+    error would turn a real negative result into a degraded tool, which is
+    absence-as-evidence in the direction that actually misleads."""
+
+    def urlopen(request: object, timeout: float = 0) -> object:
+        raise urllib.error.HTTPError(
+            url="https://haveibeenpwned.com", code=404, msg="Not Found", hdrs=None, fp=None
+        )
+
+    raw = runner.fetch_hibp(
+        "example.com", emails=["a@example.com"], api_key="k", urlopen=urlopen, sleep=lambda _: None
+    )
+
+    assert json.loads(raw) == {"domain_breaches": [], "account_breaches": {"a@example.com": []}}
+
+
+def test_the_domain_half_needs_no_api_key() -> None:
+    """The free endpoint is the default path, so a scan with no key still
+    reports whether the target itself was breached."""
+    seen: list[str] = []
+
+    def urlopen(request: object, timeout: float = 0) -> object:
+        seen.append(request.full_url)  # type: ignore[attr-defined]
+        assert "hibp-api-key" not in {k.lower() for k in request.headers}  # type: ignore[attr-defined]
+        return _FakeHibpResponse(b'[{"Name": "Adobe"}]')
+
+    raw = runner.fetch_hibp("example.com", urlopen=urlopen, sleep=lambda _: None)
+
+    assert json.loads(raw)["domain_breaches"] == [{"Name": "Adobe"}]
+    assert seen == ["https://haveibeenpwned.com/api/v3/breaches?Domain=example.com"]
+
+
+def test_addresses_without_a_key_degrade_rather_than_failing_the_scan() -> None:
+    """A paid feature nobody promised must not take the scan down with it
+    (ADR-0002 D5) -- and the domain half is free, so the error has to say
+    what was still collected."""
+
+    def urlopen(request: object, timeout: float = 0) -> object:
+        return _FakeHibpResponse(b"[]")
+
+    with pytest.raises(runner.ToolUnavailable) as caught:
+        runner.fetch_hibp(
+            "example.com", emails=["a@example.com"], urlopen=urlopen, sleep=lambda _: None
+        )
+
+    assert "API key" in str(caught.value)
+    assert "still collected" in str(caught.value)
+
+
+def test_account_lookups_are_paced_between_calls() -> None:
+    """HIBP rate-limits the authenticated endpoint. A breach lookup is not
+    the slow part of a scan, so it waits rather than racing the limit."""
+    delays: list[float] = []
+
+    def urlopen(request: object, timeout: float = 0) -> object:
+        return _FakeHibpResponse(b"[]")
+
+    runner.fetch_hibp(
+        "example.com",
+        emails=["a@example.com", "b@example.com", "c@example.com"],
+        api_key="k",
+        urlopen=urlopen,
+        sleep=delays.append,
+    )
+
+    # Between calls, not before the first.
+    assert delays == [runner.HIBP_ACCOUNT_DELAY_SECONDS] * 2
+
+
+def test_only_addresses_other_tools_found_are_looked_up() -> None:
+    """Glean never invents an address to send to a third party."""
+    results = [
+        ParseResult(
+            entities=[
+                Entity(
+                    id="email_address:b@example.com",
+                    type="email_address",
+                    value="B@Example.com",
+                    provenance=(
+                        ProvenanceEntry(
+                            source_tool="theharvester",
+                            method="passive",
+                            collected_at="2026-08-06T00:00:00Z",
+                        ),
+                    ),
+                ),
+                Entity(
+                    id="subdomain:www.example.com",
+                    type="subdomain",
+                    value="www.example.com",
+                    provenance=(
+                        ProvenanceEntry(
+                            source_tool="crtsh",
+                            method="passive",
+                            collected_at="2026-08-06T00:00:00Z",
+                        ),
+                    ),
+                ),
+            ]
+        )
+    ]
+
+    assert runner.extract_emails(results) == ["b@example.com"]

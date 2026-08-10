@@ -460,3 +460,43 @@ prose patterns are also narrow on purpose: `\bresolv\w*\b` does not match
 available", and that near-miss is the kind of thing that makes a
 regex-over-prose check quietly wrong. It is pinned by the template-brief
 figure above rather than by inspection.
+
+---
+
+**2026-08-10 — the merged-evidence packet labelled, and why precision fell.**
+
+136 claims, fully labelled: **flag precision 0.267, recall 0.571, agreement
+0.897, kappa 0.316.**
+
+The previous entry reported precision 1.000 for this configuration *on the
+claims carrying existing labels* and said in those words that it was not a
+headline figure, because the scored subset was selected — claims whose
+wording survives a prompt change are the stable, easy ones. **That caveat was
+correct and the size of the gap is worth recording: 1.000 on 57 selected
+claims, 0.267 on all 136.** Selection bias of that magnitude is the argument
+for labelling whole packets rather than the convenient part of them.
+
+**The cause is mechanical, not judgement.** The annotator noticed it directly
+from the packet: the judge was flagging exposed-service claims whose evidence
+was in front of it. Counting confirms something narrower and worse — **50 of
+the 136 claims are verbatim copies of a `plain_facts` line that appears
+nowhere in `stated_text`**, and **10 of the 11 false flags are those copies**.
+
+The judge is decomposing claims out of its own evidence and then ruling on
+them. The preamble forbids exactly that, twice ("Decompose only stated_text.
+Never turn a line of real_facts into a claim"), which makes this the fourth
+instance of the same lesson: an instruction the model can ignore is not a
+control. It was visible once before, in a rejected prompt variant, and was
+recorded then as a curiosity rather than counted.
+
+**The fix is deterministic and is not a prompt change.** A claim that does not
+appear in `stated_text` was not decomposed from it, and can be dropped before
+scoring. On these labels that takes flags from 15 to 5 and **precision 0.267 →
+0.800**. Filed rather than applied here so the figure above describes the
+judge as it actually ran — the same discipline the 2026-08-06 entry used, and
+the reason its prediction could be checked at all.
+
+Note what this implies for `stage2_faith` generally: roughly a third of what
+it scores are not claims from the brief at all. The number has been computed
+over a claim set partly manufactured by the judge, in every run recorded in
+this ADR.

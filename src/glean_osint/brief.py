@@ -244,6 +244,21 @@ def _body(
             bits.append(f"expires {not_after}")
         return ("Certificate " + ", ".join(bits) + ".") if bits else "Certificate."
     if entity.type == "email_address":
+        # "low risk" is the right default for an address a tool merely
+        # found published, and exactly wrong for one that turns up in a
+        # breach. Integrating HIBP surfaced this immediately: a breached
+        # address ranked top-3 on `breach_hit` while its own body still
+        # called it low risk, so the prose argued with the ranking beside
+        # it. The graph already knows the difference.
+        breaches = [
+            entities_by_id[e.target_id].attributes.get("breach_name")
+            or entities_by_id[e.target_id].value
+            for e in edges_by_source.get(entity.id, [])
+            if e.relation == "exposed_in_breach" and e.target_id in entities_by_id
+        ]
+        if breaches:
+            named = ", ".join(str(b) for b in sorted(breaches))
+            return f"Published contact address, exposed in {len(breaches)} breach(es): {named}."
         return "Published contact address. Useful for disclosure, low risk."
     if entity.type == "ip_address":
         asn = entity.attributes.get("asn")

@@ -33,14 +33,16 @@ TOOL_REGISTRY: dict[str, ToolInfo] = {
     "subfinder": ToolInfo("subfinder", "subfinder", "passive"),
     "dnsx": ToolInfo("dnsx", "dnsx", "passive"),
     "httpx": ToolInfo("httpx", "httpx", "active", requires=("dnsx",)),
+    "hibp": ToolInfo("hibp", "Have I Been Pwned", "passive"),
 }
 
 # Named shortcuts (ADR-0011 D4) -- just pre-set tool selections, not
 # separate pipeline logic. Adding one is a config entry here, nothing else.
 PRESETS: dict[str, tuple[str, ...]] = {
-    "Passive only": ("crtsh", "theharvester", "subfinder", "dnsx"),
-    "Full scan": ("crtsh", "theharvester", "subfinder", "dnsx", "httpx"),
+    "Passive only": ("crtsh", "theharvester", "subfinder", "dnsx", "hibp"),
+    "Full scan": ("crtsh", "theharvester", "subfinder", "dnsx", "httpx", "hibp"),
     "Certificate check": ("crtsh",),
+    "Breach exposure": ("theharvester", "hibp"),
 }
 
 

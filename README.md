@@ -9,7 +9,7 @@ Existing OSINT automation excels at *collection* but fails at *judgment*: result
 ## Pipeline
 
 1. **Collect** — run a curated set of maintained FOSS OSINT tools against a target
-   (crt.sh, theHarvester, subfinder, dnsx, httpx).
+   (crt.sh, theHarvester, subfinder, dnsx, httpx, Have I Been Pwned).
 2. **Normalise** — merge findings into one provenance-tracked entity schema.
 3. **Correlate** — deterministic dedup and entity-linking (in code, not the LLM).
 4. **Synthesise** — a prioritised intelligence brief. Template-based by
@@ -77,11 +77,12 @@ glean scan example.com \
   --theharvester path/to/theharvester-output.json \
   --subfinder path/to/subfinder-output.jsonl \
   --dnsx path/to/dnsx-envelope.json \
-  --httpx path/to/httpx-output.jsonl
+  --httpx path/to/httpx-output.jsonl \
+  --hibp path/to/hibp-envelope.json
 ```
 
 A per-tool file option overrides live invocation for that specific tool,
-even with `--live` (mixed mode). `crt.sh`/`theHarvester`/`subfinder`/`dnsx`
+even with `--live` (mixed mode). `crt.sh`/`theHarvester`/`subfinder`/`dnsx`/`HIBP`
 are passive; `httpx` is **active** — it sends real HTTP requests at the
 target, so it's never invoked without an explicit `--active` flag, and
 you should only use it against hosts you're authorised to probe directly
@@ -103,6 +104,31 @@ Scans run with `--live` (and every scan run from the web interface) are
 archived under `~/.local/share/glean/scans/<scan_id>/`: the raw tool output,
 the rendered brief, and structured `entities.json` / `edges.json` snapshots
 that power export, diffing and the relationships view.
+
+### Breach exposure
+
+Have I Been Pwned answers two different questions, and Glean keeps them
+apart because they carry different obligations.
+
+**Was this domain itself breached?** Free, keyless, on by default — it names
+an organisation, not a person.
+
+**Do addresses found on this target appear in breaches?** A claim about
+individuals, so it is opt-in and needs a paid API key:
+
+```bash
+glean scan example.com --live --hibp-api-key "$HIBP_API_KEY"
+#   or: export HIBP_API_KEY=... and just `glean scan example.com`
+```
+
+Only addresses another tool actually found are ever looked up — Glean never
+generates one to send to a third party. Without a key the scan still runs,
+the domain half still reports, and the brief records what was not collected.
+The reasoning is in [`docs/ETHICS.md`](docs/ETHICS.md); it is opt-in because
+of the disclosure, not because of the cost.
+
+Breach findings carry `breach_hit`, joint-highest weight in the scoring
+rubric, so a breached address outranks an unbreached one on the same page.
 
 ## Evaluation
 
