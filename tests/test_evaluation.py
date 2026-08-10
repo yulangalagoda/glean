@@ -699,3 +699,114 @@ def test_without_a_graph_only_the_entity_existence_check_runs() -> None:
 
     assert result.score == 1.0
     assert result.contradictions == ()
+
+
+# --- Fact-list echoes (ADR-0006 Validation, 2026-08-10) -------------------
+
+
+def _judged_brief(claims: list[dict[str, object]]) -> tuple[Brief, object]:
+    """A one-finding brief plus a judge that returns exactly `claims`."""
+    entities = [
+        _entity(
+            "subdomain:live.example.com",
+            "subdomain",
+            "live.example.com",
+            attributes={"dns_resolved": True},
+        )
+    ]
+    scored = score_graph(entities, [], AS_OF)
+    brief = build_brief(scored, [], SCAN)
+    finding = (brief.top_priorities + brief.also_found)[0]
+    narrated = replace(
+        brief,
+        top_priorities=(replace(finding, body="It resolves to a live IP.", why_ranked="live"),),
+        also_found=(),
+    )
+
+    def urlopen(request: object, timeout: float = 0) -> object:
+        return _FakeResponse(
+            _ollama_envelope(
+                json.dumps(
+                    {"findings": [{"entity_id": "subdomain:live.example.com", "claims": claims}]}
+                )
+            )
+        )
+
+    return narrated, urlopen
+
+
+def test_a_claim_lifted_from_the_evidence_is_dropped_before_scoring() -> None:
+    """The judge is told twice to decompose stated_text only, and does it
+    anyway: 50 of 136 claims in the 2026-08-10 audit were verbatim copies of
+    a fact line, carrying 10 of the 11 false flags. An instruction a model
+    can ignore is not a control."""
+    brief, urlopen = _judged_brief(
+        [
+            {"claim": "It resolves to a live IP", "supported": True},
+            # Straight out of `plain_facts`, and absent from the prose.
+            {"claim": "It resolves in DNS: it is a live host.", "supported": False},
+        ]
+    )
+
+    result = faithfulness_stage2(brief, urlopen=urlopen)
+
+    assert result.total_claims == 1
+    assert result.echoed_claims == 1
+    assert result.score == 1.0
+    assert [c.claim for c in result.claims] == ["It resolves to a live IP"]
+
+
+def test_prose_that_happens_to_restate_a_fact_is_kept() -> None:
+    """The safety condition. A narrator may restate a fact almost word for
+    word; such a claim appears in stated_text and must survive, or the
+    filter would silently delete real judgements."""
+    brief, _ = _judged_brief([])
+    # The prose itself echoes the fact line verbatim, which a narrator may
+    # legitimately do.
+    finding = brief.top_priorities[0]
+    brief = replace(
+        brief,
+        top_priorities=(replace(finding, body="It resolves in DNS: it is a live host."),),
+    )
+
+    def echo_urlopen(request: object, timeout: float = 0) -> object:
+        return _FakeResponse(
+            _ollama_envelope(
+                json.dumps(
+                    {
+                        "findings": [
+                            {
+                                "entity_id": "subdomain:live.example.com",
+                                "claims": [
+                                    {
+                                        "claim": "It resolves in DNS: it is a live host.",
+                                        "supported": False,
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                )
+            )
+        )
+
+    result = faithfulness_stage2(brief, urlopen=echo_urlopen)
+
+    assert result.echoed_claims == 0
+    assert result.total_claims == 1
+    assert result.score == 0.0
+
+
+def test_a_finding_of_nothing_but_echoes_counts_as_unjudged() -> None:
+    """If every 'claim' came from the evidence, the judge said nothing about
+    the prose. Scoring that as a vacuous 1.000 would inflate the metric with
+    the judge's own failure."""
+    brief, urlopen = _judged_brief(
+        [{"claim": "It resolves in DNS: it is a live host.", "supported": False}]
+    )
+
+    result = faithfulness_stage2(brief, urlopen=urlopen)
+
+    assert result.total_claims == 0
+    assert result.echoed_claims == 1
+    assert result.unjudged_findings == 1

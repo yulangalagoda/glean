@@ -179,21 +179,31 @@ figures moved a long way:
 | 2026-08-04, as first shipped | 90 | 0.250 | 0.778 | 0.268 |
 | after evidence stated as sentences | 78 | 1.000 | 0.667 | 0.780 |
 | after linked-entity evidence added | 107 | 0.444 | 0.500 | 0.425 |
+| all of the above, fully labelled | 136 | 0.267 | 0.571 | 0.316 |
+| **after dropping the judge's invented claims** | 86 | **0.800** | 0.571 | 0.642 |
 
 The first audit found the judge flagging 28 claims where a person found 9
 — **over-flagging roughly three to one**, so most of what pulled
 `stage2_faith` down was judge error rather than narrator fabrication.
-Both later rounds trace to how the evidence is *presented* rather than to
-the judge's reasoning; the third round's drop was a separate
-`linked_facts` field being read as second-class evidence, since fixed.
+Every later round traces to how the evidence is *presented* or what gets
+*scored*, never to the judge's reasoning. The last is the clearest: the judge
+was manufacturing "claims" by copying lines out of its own evidence and then
+ruling on them — 50 of 136, carrying 10 of the 11 false flags. Those are now
+detected and dropped before scoring (`glean eval` reports how many), which
+took precision to 0.800 with recall unchanged.
+
+Worth knowing if you extend this: every material improvement came from
+changing what the judge is **shown or scored on**, never from asking it more
+firmly. Six attempts at better prompt wording produced 0.111, 0.167, 0.444,
+0.600 and two regressions.
 
 Two things hold across all of it. `stage2_faith` errs in the safe
 direction — it never overstates faithfulness — so it is a **lower bound,
 not an estimate**. And the bound's tightness has swung with each change,
-so quote it as a floor and cite the audit you mean. The current
-configuration is not yet fully labelled and has no published figure; see
-ADR-0006's Validation section for all three rounds, a retraction, and the
-limits that no amount of prompt work fixes.
+so quote it as a floor and cite the audit you mean. See ADR-0006's
+Validation section for every round, a retraction, and the limits no prompt
+work fixes — chiefly recall, still 0.571, meaning the judge misses two real
+problems in seven.
 
 ### Working with a scan in the browser
 

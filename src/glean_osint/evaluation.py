@@ -464,10 +464,49 @@ class Stage2FaithfulnessResult:
     # all (open question 5). Defaulted, so nothing that only wants the
     # score is affected.
     claims: tuple[ClaimVerdict, ...] = ()
+    # Claims the judge lifted verbatim out of the evidence instead of
+    # decomposing from the prose, dropped before scoring (see
+    # `_is_fact_echo`). Counted rather than silently discarded: dropping a
+    # third of a metric's input without saying so would be exactly the kind
+    # of invisible adjustment this harness exists to rule out.
+    echoed_claims: int = 0
 
     @property
     def score(self) -> float:
         return self.supported_claims / self.total_claims if self.total_claims else 1.0
+
+
+def _normalise_claim(text: str) -> str:
+    """Claim text reduced to what a comparison should care about."""
+    return " ".join(text.lower().split()).strip(" .,;:")
+
+
+def _is_fact_echo(claim: str, facts: dict[str, object], stated: str) -> bool:
+    """Did the judge lift this "claim" straight out of the evidence?
+
+    The judge is told twice to decompose `stated_text` only and never to
+    turn a line of `real_facts` into a claim. It does it anyway: in the
+    2026-08-10 audit **50 of 136 claims were verbatim copies of a
+    `plain_facts` line absent from the narrated prose**, and **10 of the 11
+    false flags were those copies**. An instruction a model can ignore is
+    not a control, so this checks rather than asks.
+
+    Both conditions are required, and the second is what makes it safe. A
+    narrator legitimately restates a fact almost word for word, and such a
+    claim *does* appear in `stated_text`, so it is kept. Only text that
+    matches the evidence and appears nowhere in the prose can be dropped --
+    that text cannot have been decomposed from the prose, whatever it says.
+    """
+    normalised = _normalise_claim(claim)
+    if not normalised or normalised in _normalise_claim(stated):
+        return False
+    real_facts = facts.get("real_facts")
+    if not isinstance(real_facts, dict):
+        return False
+    plain = real_facts.get("plain_facts")
+    if not isinstance(plain, list):
+        return False
+    return any(_normalise_claim(str(fact)) == normalised for fact in plain)
 
 
 def faithfulness_stage2(
@@ -518,6 +557,7 @@ def faithfulness_stage2(
     total = 0
     supported = 0
     unjudged = 0
+    echoed = 0
     verdicts: list[ClaimVerdict] = []
     edges_by_source, in_brief = _judge_context(brief.top_priorities, edges)
     facts_by_id = {
@@ -529,16 +569,27 @@ def faithfulness_stage2(
         if claims is None:
             unjudged += 1
             continue
-        total += len(claims)
-        supported += sum(1 for _, ok in claims if ok)
+        facts = facts_by_id[finding.entity.id]
+        stated = f"{finding.body} {finding.why_ranked}"
+        kept = [(c, ok) for c, ok in claims if not _is_fact_echo(c, facts, stated)]
+        echoed += len(claims) - len(kept)
+        if not kept:
+            # Every "claim" was lifted from the evidence, so the judge
+            # returned no opinion on the prose at all. That is the same
+            # situation as an unparseable response and is recorded the same
+            # way, rather than scoring the finding a vacuous 1.000.
+            unjudged += 1
+            continue
+        total += len(kept)
+        supported += sum(1 for _, ok in kept if ok)
         verdicts.extend(
             ClaimVerdict(
                 entity_id=finding.entity.id,
                 claim=claim,
                 supported=ok,
-                entity_facts=json.dumps(facts_by_id[finding.entity.id], sort_keys=True),
+                entity_facts=json.dumps(facts, sort_keys=True),
             )
-            for claim, ok in claims
+            for claim, ok in kept
         )
 
     return Stage2FaithfulnessResult(
@@ -546,6 +597,7 @@ def faithfulness_stage2(
         supported_claims=supported,
         judge_model=judge_model,
         unjudged_findings=unjudged,
+        echoed_claims=echoed,
         claims=tuple(verdicts),
     )
 

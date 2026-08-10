@@ -910,7 +910,15 @@ def run_eval(
     if stage2_results:
         mean_stage2 = sum(s.score for s in stage2_results) / len(stage2_results)
         total_unjudged = sum(s.unjudged_findings for s in stage2_results)
-        summary += f" mean stage2_faithfulness={mean_stage2:.3f} (unjudged={total_unjudged})"
+        total_echoed = sum(s.echoed_claims for s in stage2_results)
+        summary += f" mean stage2_faithfulness={mean_stage2:.3f} (unjudged={total_unjudged}"
+        # Surfaced, not buried: this is input the judge produced and the
+        # harness threw away, and a metric that discards a third of what it
+        # was given without saying so is not auditable (ADR-0006
+        # Validation, 2026-08-10).
+        if total_echoed:
+            summary += f", echoed_claims_dropped={total_echoed}"
+        summary += ")"
 
     typer.secho(summary, fg=typer.colors.CYAN)
     typer.echo(_faithfulness_caveat(measured_content=bool(stage2_results)))
@@ -939,10 +947,11 @@ def _faithfulness_caveat(*, measured_content: bool) -> str:
     ]
     if measured_content:
         lines += [
-            "stage2_faith judges the prose itself, but the judge errs in ways measured three",
-            "times against human labels: flag precision has read 0.250, 1.000 and 0.444 as the",
-            "evidence it is shown changed. It never overstates faithfulness, so read this as a",
-            "lower bound rather than an estimate, and see ADR-0006 Validation for how loose.",
+            "stage2_faith judges the prose itself, via a judge audited four times against human",
+            "labels (flag precision 0.250 / 1.000 / 0.444 / 0.267 as its evidence changed). Any",
+            "echoed_claims_dropped above are text it lifted from the evidence rather than from",
+            "the brief, discarded before scoring. It never overstates faithfulness, so read it",
+            "as a lower bound, not an estimate — ADR-0006 Validation says how loose.",
         ]
     else:
         lines += [

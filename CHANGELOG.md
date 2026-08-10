@@ -9,6 +9,50 @@ point was a real release, just pre-dev groundwork. That bar was reached on
 
 ## [Unreleased]
 
+### Fixed
+- **The judge's invented claims are dropped before they are scored** —
+  **flag precision 0.267 → 0.800**, exactly the figure predicted before the
+  change.
+
+  The judge is told twice to decompose the narrated prose only and never to
+  turn a line of the evidence into a claim. It does it anyway: 50 of 136
+  claims in the last audit were verbatim copies of a fact line that appears
+  nowhere in the prose, and **10 of the 11 false flags were those copies**.
+  A claim absent from `stated_text` was not decomposed from it, so it can be
+  detected and discarded without asking the model anything.
+
+  | | before | after |
+  |---|---|---|
+  | claims scored | 136 | 86 |
+  | raw agreement | 0.897 | **0.953** |
+  | flag precision | 0.267 | **0.800** |
+  | flag recall | 0.571 | **0.571** |
+  | Cohen's kappa | 0.316 | **0.642** |
+
+  **Recall is unchanged**, which is the check that matters for a filter:
+  dropping a third of the input removed no real judgement at all. And the
+  result carries no methodological asterisk — re-running the judge produced
+  **0 claims needing a new label**, so all 86 survivors were scored against
+  labels written before the change existed. Nothing fitted, nothing
+  selected.
+
+  Two conditions are required to drop a claim, and the second is what makes
+  it safe: it must match a fact line *and* appear nowhere in the prose. A
+  narrator may legitimately restate a fact word for word, and such a claim
+  survives (pinned by a test). A finding whose claims are *all* echoes is
+  recorded as **unjudged** rather than scored a vacuous 1.000 — counting it
+  perfect would inflate the metric with the judge's own failure.
+
+  Dropped claims are reported, not silently removed: `glean eval` prints
+  `echoed_claims_dropped=50` beside the score. A metric that discards a
+  third of its input without saying so is not auditable.
+
+  Worth stating as a pattern, since it is now four audits deep: every
+  material improvement to `stage2_faith` has come from changing **what the
+  judge is shown or scored on**, never from asking it more firmly. Six
+  attempts at better prompt wording produced 0.111, 0.167, 0.444, 0.600 and
+  two regressions. An instruction a model can ignore is not a control.
+
 ### Added
 - **A breach source, and with it the first test of the highest-weighted
   scoring rule.** `breach_exposure` had been a declared entity type with no

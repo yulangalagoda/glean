@@ -1,6 +1,6 @@
 # ADR-0006 — Evaluation Protocol: the Three Numbers (v1)
 
-- **Status:** Accepted — extended 2026-08-04 with a measured judge-reliability figure (flag precision 0.250 over 90 human-labelled claims), resolving open question 5; the accompanying diagnosis was retracted and corrected 2026-08-06, the packet re-labelled (precision 1.000, recall 0.667), and linked-entity evidence added to remove an ambiguity that left recall unreportable; see Validation (v0.1.0 — hand-validated 2026-07-23 against a real target under ADR-0007's protocol; see Validation). **`glean eval` (roadmap E4) built 2026-07-27** — the formulas are no longer hand-computed one target at a time; a single command now runs the full pipeline and reports all three numbers across every target with a ground-truth file.
+- **Status:** Accepted — extended 2026-08-04 with a measured judge-reliability figure (flag precision 0.250 over 90 human-labelled claims, since improved to 0.800), resolving open question 5; the accompanying diagnosis was retracted and corrected 2026-08-06, the packet re-labelled (precision 1.000, recall 0.667), and linked-entity evidence added to remove an ambiguity that left recall unreportable; see Validation (v0.1.0 — hand-validated 2026-07-23 against a real target under ADR-0007's protocol; see Validation). **`glean eval` (roadmap E4) built 2026-07-27** — the formulas are no longer hand-computed one target at a time; a single command now runs the full pipeline and reports all three numbers across every target with a ground-truth file.
 - **Date:** 2026-07-22
 - **Scope:** Glean v1 — the exact, computable definitions of faithfulness, prioritisation quality, and provenance retention
 - **Depends on:** ADR-0001 (entity schema — the reference set faithfulness checks against), ADR-0004 (prioritisation rubric — the ranking prioritisation quality is measured against), ADR-0005 (brief contract — the artifact all three metrics are computed over)
@@ -500,3 +500,70 @@ Note what this implies for `stage2_faith` generally: roughly a third of what
 it scores are not claims from the brief at all. The number has been computed
 over a claim set partly manufactured by the judge, in every run recorded in
 this ADR.
+
+---
+
+**2026-08-10 (later) — the echo filter, and a prediction confirmed on
+untouched labels.**
+
+The entry above predicted that dropping claims the judge lifted from its own
+evidence would take flag precision **0.267 → 0.800**. Implemented as
+`_is_fact_echo` and re-run:
+
+| | before | after |
+|---|---|---|
+| claims scored | 136 | 86 |
+| raw agreement | 0.897 | **0.953** |
+| **flag precision** | 0.267 | **0.800** |
+| flag recall | 0.571 | **0.571** |
+| Cohen's kappa | 0.316 | **0.642** |
+
+**0.800, to the figure predicted.** More importantly, this is the first
+result in this ADR with no methodological asterisk on it. The judge was
+re-run, `--carry-over` matched claims, and **0 claims came back needing a
+label** — the 50 that disappeared were exactly the echoes, and all 86
+survivors already carried labels written before the change existed. Nothing
+was fitted to this result, nothing was selected: the reference data predates
+the intervention entirely.
+
+**Recall is unchanged at 0.571**, which is the check that matters for a
+filter. Dropping a third of the input would be alarming if it had also
+removed real judgements; it did not remove a single one.
+
+**The rule, and why it is safe.** A claim is dropped only when it matches a
+`plain_facts` line *and* appears nowhere in `stated_text`. Both conditions
+are required. A narrator may legitimately restate a fact almost word for
+word, and such a claim does appear in the prose, so it survives — a test
+pins that case. Only text that matches the evidence and appears nowhere in
+the prose is discarded, and that text cannot have been decomposed from the
+prose whatever it asserts.
+
+A finding whose claims are *all* echoes is recorded as **unjudged** rather
+than scored 1.000. The judge expressed no opinion on that prose, and
+counting it as perfect would inflate the metric with the judge's own
+failure — the same absence-as-evidence trap `glean eval` already raises on
+for an empty graph.
+
+**Dropped claims are reported, not silently removed.** `glean eval` prints
+`echoed_claims_dropped=50` beside the score. A metric that discards a third
+of its input without saying so is not auditable, and this ADR would be
+arguing against itself.
+
+**The pattern across four audits, stated once.** Every material improvement
+to `stage2_faith` has come from changing *what the judge is shown or scored
+on*, never from asking it more firmly:
+
+1. evidence as sentences rather than key/value pairs — 0.250 → 1.000
+2. connected facts in the same list rather than a separate one — 0.444 → 1.000
+3. claims the judge invented, dropped before scoring — 0.267 → 0.800
+
+Against that, six attempts at better prompt wording produced 0.111, 0.167,
+0.444, 0.600 and two regressions. The consistent lesson: **an instruction
+the model can ignore is not a control.** Where a rule is checkable, check
+it — in the prompt it is a request.
+
+**What is still not fixed.** Recall 0.571 means the judge misses two of
+seven real problems, and prompt wording trades precision against exactly
+that. The decomposition instability behind these echoes is the same defect
+in another form, and splitting decomposition from entailment into two calls
+(ADR-0006 Q2 chose one, for cost) remains the open structural answer.

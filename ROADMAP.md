@@ -135,16 +135,13 @@ the above.
   the selection bias that subset was flagged for: claims whose wording
   survives a prompt change are the easy ones. Labelling the whole packet
   was the only way to see it.
-- **Drop the judge's fact-list echoes before scoring them.** The v8 labels
-  show why precision fell: **50 of 136 claims are verbatim copies of a
-  `plain_facts` line that never appears in `stated_text`**, and **10 of the
-  11 over-flags are those echoes**. The judge is manufacturing claims out
-  of the evidence and then flagging them, which its own preamble forbids
-  twice. Deterministic and cheap to detect — a claim absent from
-  `stated_text` was not decomposed from it. Dropping them takes flags from
-  15 to 5 and **precision 0.267 → 0.800** on the existing labels, with no
-  prompt change. Same shape of fix as stage 1b: stop asking the model to
-  be reliable about something checkable.
+- ~~**Drop the judge's fact-list echoes before scoring them.**~~ ✅ *done*
+  — **flag precision 0.267 → 0.800**, the predicted figure, with recall
+  unchanged at 0.571 and kappa 0.316 → 0.642. Re-running produced **0
+  claims needing a new label**, so every surviving claim was scored against
+  labels written before the change: no fitting, no selection. Fourth audit,
+  and the third improvement in a row that came from changing what the judge
+  is shown or scored on rather than from better prompt wording.
 - **Re-read carried labels after a change of evidence, not just the
   blanks.** Carry-over preserves a ruling by design, so a label made before
   the evidence changed survives until someone revisits it. Two such stale
