@@ -1,6 +1,6 @@
 # Roadmap
 
-Forward-looking plan after `v0.1.1`. The only previous planning document
+Forward-looking plan, current as of `v0.2.0`. The only previous planning document
 (`_private/planning/ROADMAP_Pre-Development.md`) was the gate for *starting*
 to build, and closed long ago.
 
@@ -9,6 +9,12 @@ tools are unified, dedup is deterministic and measured, and the evaluation
 harness reports three numbers over ten ground-truth targets. What follows is
 about making that output *usable* and its evidence *checkable* — not about
 adding capability for its own sake.
+
+`v0.2.0` (2026-08-10) closed themes 1, 2, 4 and 5, added a sixth tool, and
+made both faithfulness numbers mean something they did not before: stage 1
+can now fail, and the stage-2 judge's flag precision went 0.250 → 0.800
+across four audits. Two things it shipped as known limitations are the top of
+the list below.
 
 Ordered by what unblocks what, not by size.
 
@@ -167,6 +173,24 @@ the above.
   annotator, so its numbers have no inter-rater check either.
 
 ---
+
+## Shipped as known limitations in v0.2.0
+
+Recorded here because they are live in a released version, not hypothetical.
+
+1. **A breach finding cannot reach the top of a brief** (ADR-0004 Q8).
+   `breach_hit` is joint-highest-weighted but applies only to entities that
+   can hold no other signal, so it is always exactly 3.0 against a flagged
+   subdomain's 4.0 — `adobe.com`'s 152-million-account breach ranked 1079 of
+   31062. Letting the breached *domain* carry the signal is a one-line
+   change that alters every target's ranking, so it needs re-measuring
+   against the ground-truth set before it lands, the same way `cert_orphaned`
+   was.
+2. **The stage-2 judge misses two real problems in seven** (recall 0.571).
+   Four audits moved precision 0.250 → 0.800 without moving recall, and
+   prompt wording trades one against the other. Splitting decomposition from
+   entailment into two calls (ADR-0006 Q2 chose one, for cost) is the open
+   structural answer and the highest-value research item left.
 
 ## Open decisions
 

@@ -1,6 +1,6 @@
 # ADR-0004 — Deterministic Prioritisation Rubric (v1)
 
-- **Status:** Accepted (v0.1.0 frozen 2026-07-22, corrected and re-validated same day; three further corrections added and re-validated 2026-07-23, see D2)
+- **Status:** Accepted (v0.1.0 frozen 2026-07-22, corrected and re-validated same day; three further corrections added and re-validated 2026-07-23, see D2; a real ranking limitation in `breach_hit` recorded 2026-08-10 as open question 8, not yet fixed)
 - **Date:** 2026-07-22
 - **Scope:** Glean v1 — how each entity gets `priority.score`, `priority.rank`, `priority.signals`
 - **Depends on:** ADR-0001 (entity schema)
@@ -126,6 +126,11 @@ Keeping the rubric simple is deliberate: a complex rubric that happens to match 
 5. ~~Exact weight/sign for the new liveness signal — zero out entirely, or just penalise?~~ **Resolved:** penalised (`stale_no_dns`, −3), not a hard zero — sized to offset `sensitive_hostname_pattern` exactly, so a dead-but-named entity nets to 0 rather than being force-excluded by a special case. A stale finding with other independent signals (e.g. a `breach_hit`) can still surface.
 6. ~~Should a plain positive "this resolves" signal exist for subdomains, to counter stale historical noise outranking live infrastructure?~~ **Resolved: no.** Considered and rejected in favour of `cert_superseded` — the actual defect was `cert_expired` misfiring on routine, superseded certificate history, not an absence of a liveness reward. A blanket liveness signal would have traded one noise-as-signal failure for its mirror image (every ordinary live host reading as a priority). See D2's 2026-07-23 correction.
 7. ~~`cert_superseded`'s "same hostname" check needs a precise definition once implemented: exact SAN-set match, or "at least one SAN in common"?~~ **Resolved 2026-08-04:** "at least one SAN in common", as leaned — implemented in `scoring.py`, whose own docstring already cited this question as settled.
+8. **New, raised by the first real breach source (2026-08-10): `breach_hit` carries the joint-highest weight in the table and is structurally incapable of reaching the top of a brief.** `SIGNAL_APPLIES_TO` restricts it to `email_address` and `breach_exposure`, and a `breach_exposure` entity can carry *no other signal* — so its score is always exactly 3.0, while any subdomain with a sensitive-sounding name seen by two tools scores 3 + 1 = 4.0. On a real target the effect is stark: `adobe.com`'s confirmed 152-million-account breach scored 3.0 and ranked **1079 of 31062**, below a thousand routine subdomains and invisible in the brief. A weight that is nominally joint-highest but can never accumulate is not actually joint-highest; it is a ceiling.
+
+   The obvious fix is to let the *subject* of the breach carry the signal — `_breach_hit` already returns true for a `domain` with an `exposed_in_breach` edge, and only `SIGNAL_APPLIES_TO` stops it firing there — so a breached domain would accumulate `breach_hit` alongside its other signals and rank accordingly. That is a one-line change and is deliberately **not** being made as one: it alters the ranking of every target, and therefore `prioritisation_quality`, a published number measured against blind human rankings (ADR-0006 D2, ADR-0007). It has to be re-measured against the ground-truth set to show whether it improves `overlap@5` or merely moves it, exactly as `cert_orphaned` was in this ADR's own validation history. Shipped as a known limitation in v0.2.0 rather than patched on the way out.
+
+   Worth noting *why* this went unseen: the synthetic fixture has five entities, where 3.0 ranks third and looks correct. Only a real target at scale — 31,062 entities — makes a per-entity ceiling visible. The same lesson as ADR-0006's judge work: measure the thing on real data or do not claim it works.
 
 ## Validation
 

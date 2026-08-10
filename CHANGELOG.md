@@ -9,6 +9,44 @@ point was a real release, just pre-dev groundwork. That bar was reached on
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-08-10
+
+The evaluation harness stopped flattering itself, and a sixth tool went in.
+
+Two headline numbers changed meaning in this release, so **figures from
+`v0.1.1` are not comparable with figures from `v0.2.0`**:
+
+- **`stage1_faith` can now fail.** It previously asked only whether a
+  finding's entity existed — unfailable for a generated brief — so it read
+  1.000 whatever the prose said. A structural check now runs alongside it
+  and catches prose asserting what the graph settles on its own. First real
+  run: mean **0.990**, catching two genuine fabrications.
+- **`stage2_faith` is judged more reliably.** Four audits against
+  human-labelled claims took the judge's flag precision from **0.250 to
+  0.800** — none of it by rewriting the prompt.
+
+The other reason to read the entries below: one of them is a **retraction**
+of a diagnosis published in this same cycle. It was wrong, it was checked
+against the data, and it is recorded as refuted rather than edited away.
+
+### Known limitations shipped deliberately
+
+- **A breach finding cannot reach the top of a brief.** `breach_hit`
+  carries the joint-highest weight in the rubric but applies only to
+  entities that can hold no other signal, so it is always exactly 3.0 while
+  an ordinary flagged subdomain reaches 4.0. On `adobe.com` the confirmed
+  152-million-account breach ranked **1079 of 31062**. The fix is one line,
+  and is deliberately not being made as one: it changes the ranking of every
+  target and therefore `prioritisation_quality`, which is measured against
+  blind human rankings and has to be re-measured, not assumed. ADR-0004
+  open question 8.
+- **The stage-2 judge still misses two real problems in seven** (recall
+  0.571). Prompt wording trades precision against exactly that; splitting
+  decomposition from entailment is the open structural answer (ADR-0006 Q2).
+- **The judge is not reproducible.** An identical prompt at `temperature: 0`
+  yields different claim counts between runs, so `stage2_faith` carries
+  run-to-run noise independent of what it measures.
+
 ### Fixed
 - **The judge's invented claims are dropped before they are scored** —
   **flag precision 0.267 → 0.800**, exactly the figure predicted before the
