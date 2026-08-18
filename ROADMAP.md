@@ -192,14 +192,15 @@ the above.
 
 Recorded here because they are live in a released version, not hypothetical.
 
-1. **A breach finding cannot reach the top of a brief** (ADR-0004 Q8).
-   `breach_hit` is joint-highest-weighted but applies only to entities that
-   can hold no other signal, so it is always exactly 3.0 against a flagged
-   subdomain's 4.0 — `adobe.com`'s 152-million-account breach ranked 1079 of
-   31062. Letting the breached *domain* carry the signal is a one-line
-   change that alters every target's ranking, so it needs re-measuring
-   against the ground-truth set before it lands, the same way `cert_orphaned`
-   was.
+1. ~~**A breach finding cannot reach the top of a brief** (ADR-0004 Q8).~~
+   ✅ **Fixed 2026-08-18.** Two defects: the signal was computed for a
+   domain then suppressed by `SIGNAL_APPLIES_TO`, and fixing that alone
+   still left it tied with 1079 name-pattern subdomains, so the weight went
+   3 → 4. On real archived data `domain:adobe.com` moves **score 3.0 → 5.0,
+   rank 1079 → 1**. Provably inert on the ground-truth set (eval output
+   byte-identical; the signal fires zero times there), which is also the
+   limit: the set cannot confirm the new weight is *calibrated*, only that
+   it changes nothing there.
 2. ~~**The stage-2 judge misses two real problems in seven** (recall
    0.571).~~ ✅ **Fixed 2026-08-10 — recall 0.571 → 0.833.** Diagnosis found
    two of the three misses were stale labels and the third is caught by

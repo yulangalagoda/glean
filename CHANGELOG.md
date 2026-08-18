@@ -9,6 +9,49 @@ point was a real release, just pre-dev groundwork. That bar was reached on
 
 ## [Unreleased]
 
+### Fixed
+- **A confirmed breach could never reach the top of a brief** (ADR-0004 Q8,
+  resolved). On `adobe.com` a verified 152-million-account breach scored
+  3.0 and ranked **1079 of 31062** — counted in the surface line, invisible
+  in the report. Two defects, not one.
+
+  **The signal was computed, then suppressed.** `_breach_hit` already
+  returned true for a domain carrying an `exposed_in_breach` edge, but
+  `SIGNAL_APPLIES_TO` restricted the signal to `email_address` and
+  `breach_exposure` — excluding the one entity type that can accumulate
+  *other* signals. A `breach_exposure` entity carries nothing else, so its
+  score was pinned at exactly 3.0 forever.
+
+  **Fixing that was necessary and not sufficient.** With the signal
+  applied, a breached domain reached 4.0 and tied with **1079 name-pattern
+  subdomains on the same target**, losing the lexicographic tie-break and
+  landing at rank 1079 anyway. So `breach_hit`'s weight goes **3 → 4**,
+  putting a corroborated breached domain at 5.0, clear of that tier.
+
+  Raising a weight the rest of the table had frozen is narrow and
+  deliberate: `breach_hit` was assigned its weight **before any breach
+  source existed and had never once fired against real data**, so the
+  ten-target validation that froze the table never covered it. It is the
+  one weight in the rubric with no empirical basis.
+
+  | | before | after |
+  |---|---|---|
+  | `domain:adobe.com` score | 3.0 | **5.0** |
+  | `domain:adobe.com` rank | 1079 / 31062 | **1** |
+  | `glean eval` on 10 targets | — | **byte-identical** |
+
+  Measured both ways. Against the ground-truth set the change is provably
+  inert — eval output is byte-identical before and after, because no target
+  there has breach data and the signal fires zero times. Validated instead
+  by re-scoring an already-archived `adobe.com` scan, with no new
+  third-party collection.
+
+  **What this does not establish:** that 4 is *correctly calibrated* rather
+  than merely sufficient. No target in the eval set has breach data, and
+  none plausibly could — they are operator-registered domains too new to
+  appear in any corpus, plus a public test host. Recorded in ADR-0004 as a
+  real limit on the resolution rather than papered over.
+
 ### Added
 - **BBOT, the seventh tool — and the one ADR-0002 Q3 was waiting for.**
   A firehose: one NDJSON event per line, every type from every module that

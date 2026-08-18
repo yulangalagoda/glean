@@ -129,8 +129,10 @@ the domain half still reports, and the brief records what was not collected.
 The reasoning is in [`docs/ETHICS.md`](docs/ETHICS.md); it is opt-in because
 of the disclosure, not because of the cost.
 
-Breach findings carry `breach_hit`, joint-highest weight in the scoring
-rubric, so a breached address outranks an unbreached one on the same page.
+Breach findings carry `breach_hit`, the **highest weight in the scoring
+rubric** — a confirmed breach of the target outranks everything else in the
+brief, including the sensitive-hostname findings that otherwise dominate a
+large target's top priorities.
 
 ## Evaluation
 

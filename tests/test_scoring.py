@@ -399,3 +399,97 @@ def test_pilot_regression_web_tech_entity_does_not_crash_scoring() -> None:
 
     ranked = score_graph([tech, sub], [], AS_OF)
     assert [e.type for e in ranked] == ["subdomain", "web_tech"]
+
+
+# --- breach_hit reaching the top of a brief (ADR-0004 Q8) -----------------
+
+
+def _breached_graph() -> tuple[list[Entity], list[Edge]]:
+    """A breached apex alongside the noise it has to outrank: a
+    sensitive-sounding subdomain corroborated by two tools, which is the
+    highest an ordinary finding gets."""
+    entities = [
+        _entity(
+            "domain:example.com",
+            "domain",
+            "example.com",
+            provenance=(_prov(source_tool="crtsh"), _prov(source_tool="hibp")),
+        ),
+        _entity(
+            "breach_exposure:acme",
+            "breach_exposure",
+            "acme",
+            attributes={"breach_name": "Acme"},
+            provenance=(_prov(source_tool="hibp"),),
+        ),
+        _entity(
+            "subdomain:staging.example.com",
+            "subdomain",
+            "staging.example.com",
+            provenance=(_prov(source_tool="crtsh"), _prov(source_tool="subfinder")),
+        ),
+    ]
+    edges = [
+        Edge(
+            source_id="domain:example.com",
+            target_id="breach_exposure:acme",
+            relation="exposed_in_breach",
+        )
+    ]
+    return entities, edges
+
+
+def test_a_breached_domain_outranks_sensitive_hostname_noise() -> None:
+    """ADR-0004 Q8. Two defects had to be fixed for this to hold: the
+    signal was computed for a domain and then suppressed by
+    SIGNAL_APPLIES_TO, and at weight 3 it merely tied with name-pattern
+    findings — 1079 of them on one real target — losing the lexicographic
+    tie-break and staying invisible in the brief."""
+    entities, edges = _breached_graph()
+
+    scored = score_graph(entities, edges, AS_OF)
+    by_id = {e.id: e for e in scored}
+
+    breached = by_id["domain:example.com"]
+    noise = by_id["subdomain:staging.example.com"]
+
+    assert "breach_hit" in breached.priority.signals
+    assert breached.priority.score > noise.priority.score
+    assert breached.priority.rank == 1
+
+
+def test_the_breach_entity_itself_still_carries_the_signal() -> None:
+    """Widening the signal to the breached subject must not take it away
+    from the breach record, which is the thing a reader clicks through to."""
+    entities, edges = _breached_graph()
+
+    scored = score_graph(entities, edges, AS_OF)
+    breach = next(e for e in scored if e.type == "breach_exposure")
+
+    assert "breach_hit" in breach.priority.signals
+
+
+def test_an_unbreached_domain_gains_nothing() -> None:
+    """The signal is edge-driven, so widening which types may carry it must
+    not hand every domain a free three points."""
+    entities = [
+        _entity(
+            "domain:clean.example",
+            "domain",
+            "clean.example",
+            provenance=(_prov(source_tool="crtsh"),),
+        )
+    ]
+
+    scored = score_graph(entities, [], AS_OF)
+
+    assert "breach_hit" not in scored[0].priority.signals
+
+
+def test_a_subdomain_is_not_given_the_signal_speculatively() -> None:
+    """`subdomain` was deliberately left out of SIGNAL_APPLIES_TO: nothing
+    currently produces an `exposed_in_breach` edge from one, and adding a
+    type on spec would widen the signal past what any source asserts."""
+    from glean_osint.scoring import SIGNAL_APPLIES_TO
+
+    assert "subdomain" not in SIGNAL_APPLIES_TO["breach_hit"]

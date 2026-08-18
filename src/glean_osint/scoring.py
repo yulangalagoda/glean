@@ -24,7 +24,15 @@ ALL_ENTITY_TYPES: frozenset[EntityType] = frozenset(get_args(EntityType))
 # ADR-0004 D2's weight table. Negative weights are deprioritisers.
 WEIGHTS: dict[str, int] = {
     "sensitive_hostname_pattern": 3,
-    "breach_hit": 3,
+    # Raised 3 -> 4 on 2026-08-18 (ADR-0004 Q8). At 3 a breached domain
+    # reached 4.0 with corroboration and tied with every name-pattern
+    # subdomain -- 1079 of them on one real target -- losing the
+    # lexicographic tie-break and staying invisible. At 4 it clears that
+    # tier outright. This is the only weight in the table with no
+    # empirical basis at the time it was set: it was chosen before any
+    # breach source existed and had never once fired against real data,
+    # so the validation that froze the rest of the table never covered it.
+    "breach_hit": 4,
     "sensitive_port": 2,
     "exposed_service": 2,
     "cert_expired": 2,
@@ -41,7 +49,18 @@ WEIGHTS: dict[str, int] = {
 
 SIGNAL_APPLIES_TO: dict[str, frozenset[EntityType]] = {
     "sensitive_hostname_pattern": frozenset({"subdomain"}),
-    "breach_hit": frozenset({"email_address", "breach_exposure"}),
+    # `domain` added 2026-08-18 (ADR-0004 Q8). Without it this signal --
+    # joint-highest in the table -- could never reach the top of a brief:
+    # a `breach_exposure` entity carries no other signal, so its score was
+    # permanently exactly 3.0, while any flagged subdomain reaches 4.0. On
+    # a real target that put a confirmed 152-million-account breach at
+    # rank 1079 of 31062. `_breach_hit` already returned True for a domain
+    # with an `exposed_in_breach` edge; only this table suppressed it.
+    #
+    # `subdomain` is deliberately NOT here: nothing currently produces an
+    # `exposed_in_breach` edge from one, and adding a type speculatively
+    # would widen the signal past what any source actually asserts.
+    "breach_hit": frozenset({"email_address", "breach_exposure", "domain"}),
     "sensitive_port": frozenset({"service"}),
     "exposed_service": frozenset({"service"}),
     "cert_expired": frozenset({"certificate"}),
