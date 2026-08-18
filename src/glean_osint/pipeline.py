@@ -28,8 +28,10 @@ from pathlib import Path
 
 from glean_osint import __version__, runner, synthesis
 from glean_osint.adapters.base import ParseResult, ScanContext
+from glean_osint.adapters.bbot import BbotAdapter
 from glean_osint.adapters.crtsh import CrtshAdapter
 from glean_osint.adapters.dnsx import DnsxAdapter
+from glean_osint.adapters.hibp import HibpAdapter
 from glean_osint.adapters.httpx import HttpxAdapter
 from glean_osint.adapters.subfinder import SubfinderAdapter
 from glean_osint.adapters.theharvester import TheHarvesterAdapter
@@ -78,6 +80,11 @@ class ScanRequest:
     # one silently.
     llm: bool = False
     model: str = synthesis.DEFAULT_MODEL
+    # HIBP's account-level lookup only. Defaulted to None so the web
+    # interface collects domain-level breaches (free, keyless) without ever
+    # sending a discovered address to a third party unless a key was
+    # deliberately supplied -- see docs/ETHICS.md.
+    hibp_api_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,6 +289,55 @@ def run_scan(
             results.append(result)
             tools_run.append(ToolRun(source_tool="httpx", method="active", raw_output_ref=ref))
             _warn_skipped(add_warning, "httpx", result.skipped)
+
+    check_cancelled()
+
+    # --- Stage 4: BBOT, a passive firehose over its own sources ---
+    #
+    # Independent of stages 1-3: it discovers from third-party sources
+    # rather than from what earlier stages found, so it needs no input
+    # from them. `-rf passive` restricts it to BBOT's own passive-flagged
+    # modules (ADR-0002, BbotAdapter.build_command).
+
+    if "bbot" in tools:
+        status("Sweeping passive sources (BBOT)...")
+        try:
+            raw = runner.run_bbot(
+                request.target, binary=_tool_binary("GLEAN_BBOT_BIN", "bbot"), cancel=cancel
+            )
+        except _LIVE_INVOCATION_ERRORS as error:
+            add_warning(f"bbot: live invocation failed ({error}), skipping.")
+        else:
+            ref = runner.archive_raw(raw_dir, f"bbot-{request.target}.jsonl", raw)
+            ctx = ScanContext(target=request.target, collected_at=collected_at, raw_output_ref=ref)
+            result = BbotAdapter().parse(raw, ctx)
+            results.append(result)
+            tools_run.append(ToolRun(source_tool="bbot", method="passive", raw_output_ref=ref))
+            _warn_skipped(add_warning, "bbot", result.skipped)
+
+    check_cancelled()
+
+    # --- Stage 5: HIBP, fed the addresses the other stages found ---
+    #
+    # Last, because the account half needs those addresses. This stage was
+    # missing entirely from this module until 2026-08-18 while being
+    # present in the registry, so selecting HIBP in the web interface
+    # silently collected nothing (fixed; see CHANGELOG).
+
+    if "hibp" in tools:
+        emails = runner.extract_emails(results)
+        status("Checking breach exposure (HIBP)...")
+        try:
+            raw = runner.fetch_hibp(request.target, emails=emails, api_key=request.hibp_api_key)
+        except _LIVE_INVOCATION_ERRORS as error:
+            add_warning(f"hibp: live invocation failed ({error}), skipping.")
+        else:
+            ref = runner.archive_raw(raw_dir, f"hibp-{request.target}.json", raw)
+            ctx = ScanContext(target=request.target, collected_at=collected_at, raw_output_ref=ref)
+            result = HibpAdapter().parse(raw, ctx)
+            results.append(result)
+            tools_run.append(ToolRun(source_tool="hibp", method="passive", raw_output_ref=ref))
+            _warn_skipped(add_warning, "hibp", result.skipped)
 
     check_cancelled()
     status("Scoring and building the brief...")

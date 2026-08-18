@@ -40,7 +40,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from glean_osint.adapters.base import ParseResult, ScanContext
+from glean_osint.adapters.base import Adapter, ParseResult, ScanContext
 from glean_osint.normalise import canon_host
 from glean_osint.schema.entities import Edge, Entity, Method, ProvenanceEntry, entity_id
 
@@ -180,3 +180,7 @@ class HibpAdapter:
                     provenance=(provenance,),
                 )
             )
+
+
+# mypy proves HibpAdapter structurally satisfies the Adapter protocol.
+_conforms: Adapter = HibpAdapter()

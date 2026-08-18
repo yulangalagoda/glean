@@ -52,6 +52,7 @@ TOOL_DISPLAY_NAMES: dict[str, str] = {
     "theharvester": "theHarvester",
     "dnsx": "dnsx",
     "amass": "Amass",
+    "bbot": "BBOT",
 }
 
 _TYPE_LABELS: dict[str, tuple[str, str]] = {

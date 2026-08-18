@@ -9,7 +9,7 @@ Existing OSINT automation excels at *collection* but fails at *judgment*: result
 ## Pipeline
 
 1. **Collect** — run a curated set of maintained FOSS OSINT tools against a target
-   (crt.sh, theHarvester, subfinder, dnsx, httpx, Have I Been Pwned).
+   (crt.sh, theHarvester, subfinder, dnsx, httpx, Have I Been Pwned, BBOT).
 2. **Normalise** — merge findings into one provenance-tracked entity schema.
 3. **Correlate** — deterministic dedup and entity-linking (in code, not the LLM).
 4. **Synthesise** — a prioritised intelligence brief. Template-based by
@@ -78,12 +78,14 @@ glean scan example.com \
   --subfinder path/to/subfinder-output.jsonl \
   --dnsx path/to/dnsx-envelope.json \
   --httpx path/to/httpx-output.jsonl \
-  --hibp path/to/hibp-envelope.json
+  --hibp path/to/hibp-envelope.json \
+  --bbot path/to/bbot-output.json
 ```
 
 A per-tool file option overrides live invocation for that specific tool,
-even with `--live` (mixed mode). `crt.sh`/`theHarvester`/`subfinder`/`dnsx`/`HIBP`
-are passive; `httpx` is **active** — it sends real HTTP requests at the
+even with `--live` (mixed mode). `crt.sh`/`theHarvester`/`subfinder`/`dnsx`/`HIBP`/`BBOT`
+are passive — BBOT is restricted to its own passive-flagged modules with
+`-rf passive`, since it will otherwise port-scan and brute-force. `httpx` is **active** — it sends real HTTP requests at the
 target, so it's never invoked without an explicit `--active` flag, and
 you should only use it against hosts you're authorised to probe directly
 (see [`docs/ETHICS.md`](docs/ETHICS.md)).

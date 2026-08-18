@@ -30,6 +30,8 @@ def _stub_all_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runner, "run_subfinder", lambda target, **kwargs: b"")
     monkeypatch.setattr(runner, "run_dnsx", _empty_dnsx_envelope)
     monkeypatch.setattr(runner, "run_httpx", lambda hosts, **kwargs: b"")
+    monkeypatch.setattr(runner, "run_bbot", lambda target, **kwargs: b"")
+    monkeypatch.setattr(runner, "fetch_hibp", lambda target, **kwargs: b'{"domain_breaches": []}')
 
 
 def test_run_scan_only_invokes_selected_tools(
@@ -498,3 +500,115 @@ def test_run_scan_without_a_token_is_completely_unaffected(
     )
 
     assert outcome.brief.scan.target == "example.com"
+
+
+# --- Tools reachable from the web interface (ADR-0011 D3) -----------------
+
+
+def test_selecting_hibp_actually_collects_breach_data(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Regression, shipped broken in v0.2.0. `hibp` was in the registry --
+    so it appeared in the web form, in a preset, and as a ticked box --
+    while this module never dispatched it. A scan selecting it ran happily
+    and silently collected nothing, which is the worst shape of bug this
+    project can have: a no-op that looks like a result."""
+    _stub_all_tools(monkeypatch)
+    monkeypatch.setattr(
+        runner,
+        "fetch_hibp",
+        lambda target, **kwargs: b'{"domain_breaches": [{"Name": "Adobe"}]}',
+    )
+
+    outcome = pipeline.run_scan(
+        ScanRequest(target="example.com", tools=frozenset({"crtsh", "hibp"})), raw_dir=tmp_path
+    )
+
+    assert "hibp" in {t.source_tool for t in outcome.brief.scan.tools_run}
+    assert any(
+        f.entity.type == "breach_exposure"
+        for f in outcome.brief.top_priorities + outcome.brief.also_found
+    )
+
+
+def test_hibp_never_sends_an_address_without_a_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """docs/ETHICS.md: account-level lookup is a claim about individuals
+    and must not happen by default. The web form has no key field, so the
+    request carries None and only the free domain half runs."""
+    _stub_all_tools(monkeypatch)
+    seen: list[object] = []
+
+    def fake_hibp(target: str, **kwargs: object) -> bytes:
+        seen.append(kwargs.get("api_key"))
+        return b'{"domain_breaches": []}'
+
+    monkeypatch.setattr(runner, "fetch_hibp", fake_hibp)
+
+    pipeline.run_scan(
+        ScanRequest(target="example.com", tools=frozenset({"hibp"})), raw_dir=tmp_path
+    )
+
+    assert seen == [None]
+
+
+def test_selecting_bbot_collects_and_records_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _stub_all_tools(monkeypatch)
+    monkeypatch.setattr(
+        runner,
+        "run_bbot",
+        lambda target, **kwargs: (
+            b'{"type":"DNS_NAME","data":"api.example.com","module":"crt","tags":[]}\n'
+        ),
+    )
+
+    outcome = pipeline.run_scan(
+        ScanRequest(target="example.com", tools=frozenset({"bbot"})), raw_dir=tmp_path
+    )
+
+    assert "bbot" in {t.source_tool for t in outcome.brief.scan.tools_run}
+    assert any(
+        f.entity.value == "api.example.com"
+        for f in outcome.brief.top_priorities + outcome.brief.also_found
+    )
+
+
+def test_a_bbot_run_that_finds_nothing_is_not_a_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """BBOT writes no output file when a scan finds nothing. That is an
+    empty result, not a degraded tool -- the same distinction subfinder's
+    zero-result exit and HIBP's 404 already make."""
+    _stub_all_tools(monkeypatch)
+
+    outcome = pipeline.run_scan(
+        ScanRequest(target="example.com", tools=frozenset({"bbot"})), raw_dir=tmp_path
+    )
+
+    assert not [w for w in outcome.warnings if "bbot" in w]
+
+
+def test_every_registry_tool_is_dispatched_by_the_pipeline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The check that would have caught the HIBP gap at the time. Anything
+    the registry advertises is selectable in the web interface, so anything
+    the registry advertises must actually run -- otherwise the UI is making
+    a promise the pipeline does not keep."""
+    from glean_osint.registry import TOOL_REGISTRY
+
+    _stub_all_tools(monkeypatch)
+
+    for tool_id in TOOL_REGISTRY:
+        outcome = pipeline.run_scan(
+            ScanRequest(
+                target="example.com",
+                tools=frozenset({tool_id, "dnsx"} if tool_id == "httpx" else {tool_id}),
+            ),
+            raw_dir=tmp_path / tool_id,
+        )
+        ran = {t.source_tool for t in outcome.brief.scan.tools_run}
+        assert tool_id in ran, f"{tool_id} is in the registry but the pipeline never ran it"

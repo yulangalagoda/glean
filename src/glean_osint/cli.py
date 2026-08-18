@@ -27,6 +27,7 @@ import yaml
 from glean_osint import __version__, history, runner, synthesis
 from glean_osint import judge_audit as judge_audit_mod
 from glean_osint.adapters.base import ParseResult, ScanContext
+from glean_osint.adapters.bbot import BbotAdapter
 from glean_osint.adapters.crtsh import CrtshAdapter
 from glean_osint.adapters.dnsx import DnsxAdapter
 from glean_osint.adapters.hibp import HibpAdapter
@@ -153,6 +154,14 @@ def scan(
             "authorised to probe directly.",
         ),
     ] = None,
+    bbot: Annotated[
+        Path | None,
+        typer.Option(
+            exists=True,
+            readable=True,
+            help="Path to BBOT NDJSON output (output.json) for this target.",
+        ),
+    ] = None,
     hibp: Annotated[
         Path | None,
         typer.Option(
@@ -260,6 +269,15 @@ def scan(
             "$GLEAN_HTTPX_BIN once instead of passing this every time.",
         ),
     ] = "httpx",
+    bbot_bin: Annotated[
+        str,
+        typer.Option(
+            envvar="GLEAN_BBOT_BIN",
+            help="Executable name/path for BBOT. Note that BBOT installs system dependencies "
+            "on its first run and prompts for sudo to do so, which no flag bypasses — run it "
+            "by hand once before relying on it here.",
+        ),
+    ] = "bbot",
     authorisation: Annotated[
         str | None,
         typer.Option(help="Authorisation basis for this scan (recorded in the brief header)."),
@@ -316,11 +334,12 @@ def scan(
         and dnsx is None
         and httpx is None
         and hibp is None
+        and bbot is None
     )
     if no_input_files and offline:
         typer.secho(
             "--offline needs at least one of --crtsh, --theharvester, --subfinder, --dnsx, "
-            "--httpx or --hibp to ingest.",
+            "--httpx, --hibp or --bbot to ingest.",
             fg=typer.colors.RED,
             err=True,
         )
@@ -551,7 +570,36 @@ def scan(
         tools_run.append(ToolRun(source_tool="httpx", method="active", raw_output_ref=httpx_ref))
         _warn_skipped("httpx", result.skipped, scan_warnings)
 
-    # --- Stage 4: HIBP, fed the addresses the other tools actually found ---
+    # --- Stage 4: BBOT, a passive firehose over its own sources ---
+    #
+    # Independent of the earlier stages: it discovers from third-party
+    # sources rather than from what they found, so it needs no input from
+    # them (ADR-0002 Q3 -- its NDJSON is parsed line by line).
+
+    if bbot is not None:
+        bbot_raw: bytes | None = bbot.read_bytes()
+        bbot_ref: str | None = str(bbot)
+    elif live:
+        with _maybe_spin(True, "Sweeping passive sources (BBOT)..."):
+            bbot_raw, bbot_warning = _invoke_live(
+                "bbot", lambda: runner.run_bbot(domain, binary=bbot_bin)
+            )
+        if bbot_warning:
+            warn(bbot_warning)
+        bbot_ref = None
+    else:
+        bbot_raw, bbot_ref = None, None
+
+    if bbot_raw is not None:
+        if bbot is None:
+            bbot_ref = runner.archive_raw(output_dir, f"bbot-{domain}.jsonl", bbot_raw)
+        ctx = ScanContext(target=domain, collected_at=collected_at, raw_output_ref=bbot_ref)
+        result = BbotAdapter().parse(bbot_raw, ctx)
+        results.append(result)
+        tools_run.append(ToolRun(source_tool="bbot", method="passive", raw_output_ref=bbot_ref))
+        _warn_skipped("bbot", result.skipped, scan_warnings)
+
+    # --- Stage 5: HIBP, fed the addresses the other tools actually found ---
     #
     # Last because the account half needs those addresses. Passive: HIBP is
     # asked about the target, never touching it.
@@ -699,6 +747,7 @@ _RAW_ADAPTERS = (
     (TheHarvesterAdapter, "theharvester-{slug}.json"),
     (SubfinderAdapter, "subfinder-{slug}.jsonl"),
     (DnsxAdapter, "dnsx-{slug}.json"),
+    (BbotAdapter, "bbot-{slug}.jsonl"),
     (HibpAdapter, "hibp-{slug}.json"),
 )
 

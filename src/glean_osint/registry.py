@@ -34,6 +34,7 @@ TOOL_REGISTRY: dict[str, ToolInfo] = {
     "dnsx": ToolInfo("dnsx", "dnsx", "passive"),
     "httpx": ToolInfo("httpx", "httpx", "active", requires=("dnsx",)),
     "hibp": ToolInfo("hibp", "Have I Been Pwned", "passive"),
+    "bbot": ToolInfo("bbot", "BBOT", "passive"),
 }
 
 # Named shortcuts (ADR-0011 D4) -- just pre-set tool selections, not
@@ -41,6 +42,7 @@ TOOL_REGISTRY: dict[str, ToolInfo] = {
 PRESETS: dict[str, tuple[str, ...]] = {
     "Passive only": ("crtsh", "theharvester", "subfinder", "dnsx", "hibp"),
     "Full scan": ("crtsh", "theharvester", "subfinder", "dnsx", "httpx", "hibp"),
+    "Deep passive": ("crtsh", "theharvester", "subfinder", "dnsx", "hibp", "bbot"),
     "Certificate check": ("crtsh",),
     "Breach exposure": ("theharvester", "hibp"),
 }

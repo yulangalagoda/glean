@@ -697,3 +697,58 @@ def extract_emails(results: list[ParseResult]) -> list[str]:
         if entity.type == "email_address" and entity.value.strip()
     }
     return sorted(emails)
+
+
+# --- BBOT (ADR-0008, ADR-0002 Q3) -----------------------------------------
+
+# BBOT is a firehose over many passive sources and is legitimately slower
+# than the single-purpose tools; its own default scan timeout is generous
+# for the same reason.
+BBOT_TIMEOUT_SECONDS = 1800.0
+
+
+def run_bbot(
+    target: str,
+    *,
+    binary: str = "bbot",
+    timeout: float = BBOT_TIMEOUT_SECONDS,
+    run: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run,
+    cancel: CancellationToken | None = None,
+) -> bytes:
+    """Run BBOT passively and return its NDJSON output.
+
+    Unlike subfinder/dnsx/httpx, BBOT writes NDJSON to
+    `<output-dir>/<scan-name>/output.json` rather than to stdout, so this
+    runs it against a temporary directory and reads the file back. The
+    adapter then parses that buffer line by line (ADR-0002 Q3), so nothing
+    downstream holds more than one event at a time.
+
+    A run that completes having found nothing writes no output file at
+    all. That is an empty result, not a failure -- the same distinction
+    subfinder's `check=False` and HIBP's 404 handling already make, and
+    treating it as an error would turn "this target has no passive
+    footprint" into a degraded tool.
+
+    **Known operational caveat, found by running it:** BBOT 3.x installs
+    core system dependencies (`7z`, OpenSSL headers) on first run and
+    prompts for a sudo password to do so. `--no-deps`,
+    `--ignore-failed-deps` and `deps.behavior=disable` do *not* bypass it,
+    because `install_core_deps` calls `ensure_root()` before consulting
+    any of them. A first run therefore has to happen interactively, by
+    hand; afterwards this is a normal non-interactive subprocess. That is
+    a property of BBOT, not something Glean can paper over, so it degrades
+    like any other unavailable tool rather than hanging on a prompt.
+    """
+    if not tool_available(binary):
+        raise ToolUnavailable(binary)
+
+    from glean_osint.adapters.bbot import BbotAdapter
+
+    with tempfile.TemporaryDirectory(prefix="glean-bbot-") as tmp:
+        output_dir = Path(tmp) / "out"
+        argv = BbotAdapter().build_command(target)
+        assert argv is not None
+        argv = [binary, *argv[1:], "-o", str(output_dir), "-n", "glean"]
+        _invoke(run, argv, timeout=timeout, check=False, cancel=cancel)
+        produced = output_dir / "glean" / "output.json"
+        return produced.read_bytes() if produced.exists() else b""

@@ -71,7 +71,7 @@ hand-rolled SVG or a single vendored library. That constraint is real and
 was chosen for good reasons — it should be honoured or explicitly revised,
 not quietly bypassed.
 
-## 3. Wider tool coverage  — *breach source done*
+## 3. Wider tool coverage  ✅ *done*
 
 The adapter contract (ADR-0002) has now been exercised by five tools, and the
 registry means a new one appears in the UI with no template changes — that
@@ -89,13 +89,26 @@ scoring rubric already rewards.
 for a reason.** `breach_exposure` was a declared entity type with no
 producer, so `breach_hit` — joint-highest weight in the rubric — had never
 fired against real data: the rule most able to dominate a ranking was the
-least tested. Amass by contrast is a fourth subdomain source that exercises
-nothing new. Have I Been Pwned is now wired, ADR-0001 Q3 is resolved, and
+least tested. Have I Been Pwned is now wired, ADR-0001 Q3 is resolved, and
 the adapter contract held without a schema, scoring or template change.
 
-Still open: **Amass** (corroboration, cheap) and **BBOT** (which forces
-ADR-0002 Q3's streaming-parse question — a real architectural decision, not
-just another adapter).
+**BBOT landed second (2026-08-18) and closed ADR-0002 Q3.** The streaming
+question resolved as line-by-line *inside the adapter*, with the
+`parse(raw: bytes)` contract unchanged — the decision belongs to the one
+adapter with a firehose, not to the five without one. Wiring it also forced
+a question Q3 never anticipated: an unrecognised event type is *ignored*,
+not counted as `skipped`, because `skipped` means damaged and burying it
+under thousands of irrelevant events would make it useless.
+
+~~**Amass**~~ — **evaluated 2026-08-18 and deliberately not integrated.**
+"Corroboration, cheap" was wrong on both counts. v5.1.1 has no JSON output
+on any relevant subcommand, needs a background engine on `:4000`, and ships
+with all 46 data sources commented out behind API-key fields; three runs
+against owned domains returned only the seed domain. subfinder already does
+the same job with clean JSONL, no engine and no keys. Revisit only if Amass
+regains machine-readable output.
+
+Still open: nothing in this theme. Seven tools are wired.
 
 ## 4. Identity and feedback  ✅ *done*
 
