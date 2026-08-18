@@ -947,11 +947,11 @@ def _faithfulness_caveat(*, measured_content: bool) -> str:
     ]
     if measured_content:
         lines += [
-            "stage2_faith judges the prose itself, via a judge audited four times against human",
-            "labels (flag precision 0.250 / 1.000 / 0.444 / 0.267 as its evidence changed). Any",
-            "echoed_claims_dropped above are text it lifted from the evidence rather than from",
-            "the brief, discarded before scoring. It never overstates faithfulness, so read it",
-            "as a lower bound, not an estimate — ADR-0006 Validation says how loose.",
+            "stage2_faith judges the prose itself, via a judge audited six times against human",
+            "labels. Latest: flag precision 0.833, recall 0.833, kappa 0.818 over 71 claims,",
+            "after decomposition was split from judging. It never overstates faithfulness, so",
+            "read it as a lower bound rather than an estimate — one real fabrication still",
+            "passes it in the eval set, and stage 1's structural check is what catches that.",
         ]
     else:
         lines += [

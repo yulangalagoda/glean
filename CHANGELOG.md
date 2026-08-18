@@ -9,6 +9,74 @@ point was a real release, just pre-dev groundwork. That bar was reached on
 
 ## [Unreleased]
 
+### Changed
+- **Decomposition and entailment are two judge calls, not one** (ADR-0006 Q2,
+  reversed). The single-call design was chosen on cost, not on any belief
+  that combining the tasks helped — and measurement showed it hurt.
+
+  **The diagnosis changed the task, which is worth saying plainly.** Recall
+  stood at 0.571, three misses in seven. Read individually: two were the
+  *same sentence* on sibling subdomains of one target, labelled
+  `unsupported` while the identical sentence on a third was labelled
+  `supported` — stale labels carried through three packets. The third is a
+  real fabrication that **stage 1b already catches deterministically**. So
+  the headline number was largely a labelling artifact over a case already
+  covered.
+
+  What was real: **24 of 86 claims were the entire body sentence,
+  undecomposed**, and 16 findings produced a single claim. A compound
+  sentence scored as one unit hides partial fabrication — "resolves to a
+  live IP with an exposed HTTPS service" is two assertions, and a judge
+  ruling on it once answers for whichever half it read first. That is worth
+  fixing on its own terms, not on the strength of a number that doesn't
+  hold up.
+
+  | | one call | two calls |
+  |---|---|---|
+  | fact-echoed claims | 50 | **0** |
+  | compound "X with an exposed Y" claims | 9 | **2** |
+  | claims per finding | 1.91 | 1.58 |
+
+  The echo result is structural: the decomposition prompt is **never shown
+  the evidence**, so there is nothing to copy. That defect is now prevented
+  rather than filtered — `echoed_claims_dropped` no longer appears in `glean
+  eval` output, where it read 50. And the target case works:
+  `*.yulan.me`'s compound sentence became two claims, and the judge flagged
+  "resolves to a live IP" as unsupported — the half it swallowed whole
+  before. Splitting also dissolves the stale-label problem, since the
+  sentence that was ruled two ways is no longer a claim.
+
+  **Measured on a fully labelled packet: the split moved recall, which
+  nothing before it had.**
+
+  | audit | claims | precision | recall | kappa |
+  |---|---|---|---|---|
+  | as first shipped | 90 | 0.250 | 0.778 | 0.268 |
+  | evidence as sentences | 78 | 1.000 | 0.667 | 0.780 |
+  | merged evidence, fully labelled | 136 | 0.267 | 0.571 | 0.316 |
+  | echo filter | 86 | 0.800 | 0.571 | 0.642 |
+  | **decomposition split out** | **71** | **0.833** | **0.833** | **0.818** |
+
+  Best on every metric at once, and **recall moved for the first time**:
+  0.571 → 0.833. Four rounds of evidence and scoring work had taken
+  precision from 0.250 to 0.800 while recall sat still, because none of them
+  touched why the judge missed things — it was ruling on compound sentences,
+  and one verdict on "resolves to a live IP **with an exposed HTTPS
+  service**" answers for one half.
+
+  **Not a fitted result.** No prompt variants were compared against these
+  labels; the split came from a diagnosis, was built once and run once, and
+  the annotator then labelled what it produced (37 new, 34 carried).
+
+  Two disagreements remain, one each way. The miss is a wildcard narrated as
+  having an exposed HTTPS service with no service fact anywhere — a real
+  fabrication the judge accepts, and one **stage 1b already flags
+  deterministically**. The defence in depth works: the model misses it, the
+  structural check does not.
+
+  Cost is two Ollama calls per brief instead of one — still bounded per
+  brief, which is what the original cost concern actually was.
+
 ## [0.2.0] — 2026-08-10
 
 The evaluation harness stopped flattering itself, and a sixth tool went in.

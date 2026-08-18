@@ -180,7 +180,8 @@ figures moved a long way:
 | after evidence stated as sentences | 78 | 1.000 | 0.667 | 0.780 |
 | after linked-entity evidence added | 107 | 0.444 | 0.500 | 0.425 |
 | all of the above, fully labelled | 136 | 0.267 | 0.571 | 0.316 |
-| **after dropping the judge's invented claims** | 86 | **0.800** | 0.571 | 0.642 |
+| after dropping the judge's invented claims | 86 | 0.800 | 0.571 | 0.642 |
+| **after splitting decomposition from judging** | 71 | **0.833** | **0.833** | **0.818** |
 
 The first audit found the judge flagging 28 claims where a person found 9
 — **over-flagging roughly three to one**, so most of what pulled
@@ -192,18 +193,24 @@ ruling on them — 50 of 136, carrying 10 of the 11 false flags. Those are now
 detected and dropped before scoring (`glean eval` reports how many), which
 took precision to 0.800 with recall unchanged.
 
+The last row is the one that moved **recall**, which nothing before it had:
+the judge had been ruling on compound sentences, and a single verdict on
+"resolves to a live IP *with an exposed HTTPS service*" answers for one half.
+Decomposition is now its own call that never sees the evidence.
+
 Worth knowing if you extend this: every material improvement came from
-changing what the judge is **shown or scored on**, never from asking it more
-firmly. Six attempts at better prompt wording produced 0.111, 0.167, 0.444,
-0.600 and two regressions.
+changing what the judge is **shown, asked, or scored on** — never from asking
+it the same thing more firmly. Six attempts at better prompt wording produced
+0.111, 0.167, 0.444, 0.600 and two regressions.
 
 Two things hold across all of it. `stage2_faith` errs in the safe
 direction — it never overstates faithfulness — so it is a **lower bound,
 not an estimate**. And the bound's tightness has swung with each change,
 so quote it as a floor and cite the audit you mean. See ADR-0006's
-Validation section for every round, a retraction, and the limits no prompt
-work fixes — chiefly recall, still 0.571, meaning the judge misses two real
-problems in seven.
+Validation section for every round, including a retraction. One real
+fabrication still passes the judge in the current set — a wildcard host
+narrated as exposing a service — and it is caught by stage 1's structural
+check instead, which is the point of having both.
 
 ### Working with a scan in the browser
 

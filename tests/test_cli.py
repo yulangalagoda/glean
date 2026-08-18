@@ -711,10 +711,16 @@ def test_eval_llm_reports_stage2_faithfulness(
     def fake_judge(
         prompt: str, *, model: str = "", timeout: float = 0, urlopen: object = None
     ) -> str:
-        findings = [
-            {"entity_id": eid, "claims": [{"claim": "Narrated body.", "supported": True}]}
-            for eid in _entity_ids_in_prompt(prompt)
-        ]
+        """Stage 2 makes two calls since 2026-08-10 -- decompose, then rule
+        -- so a fake standing in for the judge has to answer both."""
+        ids = _entity_ids_in_prompt(prompt)
+        if "split each stated_text" in prompt:
+            findings = [{"entity_id": eid, "claims": ["Narrated body."]} for eid in ids]
+        else:
+            findings = [
+                {"entity_id": eid, "claims": [{"claim": "Narrated body.", "supported": True}]}
+                for eid in ids
+            ]
         return json.dumps({"findings": findings})
 
     monkeypatch.setattr(synthesis, "call_ollama", fake_narrate)

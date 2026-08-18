@@ -148,15 +148,51 @@ def faithfulness_stage1(
     )
 
 
-_JUDGE_PREAMBLE = """You are a fact-checking judge for a security \
-reconnaissance brief. You will be given a JSON array of findings, each \
-with the finding's stated_text (what a narrator wrote about it) and \
-real_facts (the actual, ground-truth data about the underlying entity).
+# Decomposition and entailment were one call until 2026-08-10 (Q2 chose
+# that to bound cost). Splitting them fixes a defect measurement found: the
+# judge left 24 of 86 claims as the entire body sentence, and a compound
+# sentence scored as one unit hides partial fabrication -- "resolves to a
+# live IP with an exposed HTTPS service" is two assertions, and a judge
+# ruling on it once tends to answer for whichever half it read first.
+#
+# Splitting also makes fact-echoing structurally impossible rather than
+# merely filtered: this prompt is never shown the evidence, so there is
+# nothing for it to copy.
+_DECOMPOSE_PREAMBLE = """You are preparing a security reconnaissance brief \
+for fact-checking. You will be given a JSON array of findings, each with \
+an entity_id and the stated_text a narrator wrote about it.
+
+Your only job is to split each stated_text into its distinct atomic \
+factual claims. You are NOT checking whether they are true, and you are \
+not given the underlying data.
 
 Rules, all mandatory:
-- For each finding, break stated_text into its distinct atomic factual \
-claims (each claim should assert exactly one fact). Decompose only \
-stated_text. Never turn a line of real_facts into a claim.
+- Each claim must assert exactly ONE fact. Split every sentence that \
+joins two assertions. "Subdomain x.example.com resolves to a live IP with \
+an exposed HTTPS service" is TWO claims: "x.example.com resolves to a \
+live IP" and "x.example.com has an exposed HTTPS service".
+- Split on "and", "with", "which", and on any clause adding a second \
+property. A claim that still contains two verbs or two properties is not \
+yet atomic.
+- Each claim must be readable on its own. Repeat the subject rather than \
+writing "it".
+- Use only what stated_text says. Never add a fact it does not state, and \
+never leave one out.
+- Output a single JSON object of the exact shape {"findings": \
+[{"entity_id": ..., "claims": ["...", "..."]}, ...]}, one array item per \
+input finding, in the same order.
+- Do not add commentary, markdown, or any text outside that JSON object."""
+
+
+_JUDGE_PREAMBLE = """You are a fact-checking judge for a security \
+reconnaissance brief. You will be given a JSON array of findings, each \
+with a list of atomic claims a narrator's prose asserted, and real_facts \
+(the actual, ground-truth data about the underlying entity).
+
+Rules, all mandatory:
+- Rule on each claim exactly as given. Do not merge claims, do not split \
+them further, and never add a claim of your own -- in particular, never \
+turn a line of real_facts into a claim.
 - real_facts.plain_facts is the evidence, one fact per sentence. It \
 covers both facts about this entity and facts about entities it connects \
 to -- the IP a host resolves to, the service that IP exposes -- and every \
@@ -175,7 +211,8 @@ characterisation supplied from world knowledge. Do not use outside \
 knowledge to fill a gap.
 - Output a single JSON object of the exact shape {"findings": \
 [{"entity_id": ..., "claims": [{"claim": ..., "supported": true|false}, \
-...]}, ...]}, one array item per input finding, in the same order.
+...]}, ...]}, one array item per input finding, in the same order, with \
+one verdict per claim you were given.
 - Do not add commentary, markdown, or any text outside that JSON object."""
 
 
@@ -384,10 +421,79 @@ def _judge_context(
     return edges_by_source, in_brief
 
 
-def build_judge_prompt(findings: tuple[Finding, ...], edges: Sequence[Edge] = ()) -> str:
+def build_decompose_prompt(findings: tuple[Finding, ...]) -> str:
+    """Prompt for the decomposition call. Carries no evidence at all.
+
+    That omission is the point: with no `real_facts` in front of it, the
+    model has nothing to copy, so the fact-echoing that produced 50 of 136
+    bogus claims in the 2026-08-10 audit cannot happen here by
+    construction rather than by filtering afterwards.
+    """
+    payload = [
+        {
+            "entity_id": f.entity.id,
+            "stated_text": {"body": f.body, "why_ranked": f.why_ranked},
+        }
+        for f in findings
+    ]
+    return _DECOMPOSE_PREAMBLE + "\n\nFindings:\n" + json.dumps(payload, indent=2)
+
+
+def build_judge_prompt(
+    findings: tuple[Finding, ...],
+    edges: Sequence[Edge] = (),
+    claims_by_id: dict[str, list[str]] | None = None,
+) -> str:
+    """Prompt for the entailment call: rule on claims already extracted.
+
+    `claims_by_id` is what the decomposition call produced. It defaults to
+    None so a caller can still inspect the evidence view on its own, in
+    which case the finding's prose is passed through as a single claim --
+    the pre-split behaviour, kept only as a fallback.
+    """
     edges_by_source, in_brief = _judge_context(findings, edges)
-    facts = [_judge_finding_facts(f, edges_by_source, in_brief) for f in findings]
-    return _JUDGE_PREAMBLE + "\n\nFindings:\n" + json.dumps(facts, indent=2)
+    payload = []
+    for finding in findings:
+        facts = _judge_finding_facts(finding, edges_by_source, in_brief)
+        claims = (
+            claims_by_id.get(finding.entity.id, []) if claims_by_id is not None else [finding.body]
+        )
+        payload.append(
+            {
+                "entity_id": facts["entity_id"],
+                "claims": claims,
+                "real_facts": facts["real_facts"],
+            }
+        )
+    return _JUDGE_PREAMBLE + "\n\nFindings:\n" + json.dumps(payload, indent=2)
+
+
+def _parse_decompose_response(raw_text: str, expected_ids: set[str]) -> dict[str, list[str]]:
+    """Parse the decomposition call into entity_id -> [claim, ...].
+
+    Same Ollama object-wrapping quirk as everything else here, so it goes
+    through `extract_json_items` too. A finding whose claims come back
+    unusable is simply absent, and the caller records it as unjudged.
+    """
+    try:
+        parsed = json.loads(raw_text)
+    except json.JSONDecodeError:
+        return {}
+
+    result: dict[str, list[str]] = {}
+    for item in extract_json_items(parsed):
+        if not isinstance(item, dict):
+            continue
+        entity_id = item.get("entity_id")
+        if not isinstance(entity_id, str) or entity_id not in expected_ids:
+            continue
+        raw_claims = item.get("claims")
+        if not isinstance(raw_claims, list):
+            continue
+        claims = [c.strip() for c in raw_claims if isinstance(c, str) and c.strip()]
+        if claims:
+            result[entity_id] = claims
+    return result
 
 
 def _parse_judge_response(
@@ -540,17 +646,44 @@ def faithfulness_stage2(
         )
 
     expected_ids = {f.entity.id for f in brief.top_priorities}
-    prompt = build_judge_prompt(brief.top_priorities, edges)
 
-    try:
-        raw_text = call_ollama(prompt, model=judge_model, timeout=timeout, urlopen=urlopen)
-    except OllamaError:
+    def _all_unjudged() -> Stage2FaithfulnessResult:
         return Stage2FaithfulnessResult(
             total_claims=0,
             supported_claims=0,
             judge_model=judge_model,
             unjudged_findings=len(brief.top_priorities),
         )
+
+    # Two calls since 2026-08-10, reversing Q2's original single-call
+    # choice. Decomposition first, with no evidence in front of it; then
+    # entailment over the claims it produced. Cost is two calls per brief
+    # rather than one -- still bounded per brief, which is what Q2 actually
+    # cared about, and the reason it chose one call was cost rather than
+    # any belief that combining the tasks was better.
+    try:
+        decomposed_raw = call_ollama(
+            build_decompose_prompt(brief.top_priorities),
+            model=judge_model,
+            timeout=timeout,
+            urlopen=urlopen,
+        )
+    except OllamaError:
+        return _all_unjudged()
+
+    claims_by_id = _parse_decompose_response(decomposed_raw, expected_ids)
+    if not claims_by_id:
+        return _all_unjudged()
+
+    try:
+        raw_text = call_ollama(
+            build_judge_prompt(brief.top_priorities, edges, claims_by_id),
+            model=judge_model,
+            timeout=timeout,
+            urlopen=urlopen,
+        )
+    except OllamaError:
+        return _all_unjudged()
 
     judged = _parse_judge_response(raw_text, expected_ids)
 

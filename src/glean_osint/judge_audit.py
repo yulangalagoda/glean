@@ -8,12 +8,18 @@ is. A number qualified by "this is sometimes wrong, we don't know how
 often" is close to unusable as evidence, which is what open question 5
 had been asking about since it was raised.
 
-Run for real (ADR-0006 Validation, 2026-08-04): 90 claims, flag
-precision 0.250, recall 0.778, kappa 0.268. The judge over-flags roughly
-three to one, which is why the headline below is precision on the flagged
-class.
+Run six times for real (ADR-0006 Validation). Flag precision went 0.250
+as first shipped -- the judge over-flagging roughly three to one, which is
+why the headline below is precision on the flagged class -- then 0.800
+once its evidence was presented usably and its invented claims dropped,
+then 0.833 with recall 0.833 and kappa 0.818 once decomposition was split
+out of the judging call.
 
-That run also earned its keep by refuting a diagnosis. The explanation
+Every gain came from changing what the judge is shown, asked, or scored
+on. Asking it the same thing more firmly was tried six times and produced
+0.111, 0.167, 0.444, 0.600 and two regressions.
+
+One of those runs also earned its keep by refuting a diagnosis. The explanation
 first published for the over-flagging -- that the judge could not see
 facts belonging to linked entities -- was checked against the labels on
 2026-08-06 and retracted: every false flag's evidence was already in

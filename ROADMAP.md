@@ -13,8 +13,9 @@ adding capability for its own sake.
 `v0.2.0` (2026-08-10) closed themes 1, 2, 4 and 5, added a sixth tool, and
 made both faithfulness numbers mean something they did not before: stage 1
 can now fail, and the stage-2 judge's flag precision went 0.250 → 0.800
-across four audits. Two things it shipped as known limitations are the top of
-the list below.
+across four audits. Since the release a fifth and sixth audit took the judge
+to **precision 0.833, recall 0.833, kappa 0.818** — the first movement in
+recall at all — leaving one shipped limitation outstanding rather than two.
 
 Ordered by what unblocks what, not by size.
 
@@ -186,11 +187,15 @@ Recorded here because they are live in a released version, not hypothetical.
    change that alters every target's ranking, so it needs re-measuring
    against the ground-truth set before it lands, the same way `cert_orphaned`
    was.
-2. **The stage-2 judge misses two real problems in seven** (recall 0.571).
-   Four audits moved precision 0.250 → 0.800 without moving recall, and
-   prompt wording trades one against the other. Splitting decomposition from
-   entailment into two calls (ADR-0006 Q2 chose one, for cost) is the open
-   structural answer and the highest-value research item left.
+2. ~~**The stage-2 judge misses two real problems in seven** (recall
+   0.571).~~ ✅ **Fixed 2026-08-10 — recall 0.571 → 0.833.** Diagnosis found
+   two of the three misses were stale labels and the third is caught by
+   stage 1b, so the number overstated the problem; the real defect was
+   decomposition, with 24 of 86 claims left as whole undecomposed sentences.
+   Decomposition is now a separate call that never sees the evidence.
+   Measured on a fully labelled packet: **precision 0.833, recall 0.833,
+   kappa 0.818** — best on every metric, and the first time recall moved at
+   all. Fact-echoes went 50 → 0 and compound claims 9 → 2.
 
 ## Open decisions
 

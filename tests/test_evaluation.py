@@ -7,6 +7,7 @@ network access happens in this suite.
 import json
 import math
 import urllib.error
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime, timezone
 
@@ -209,6 +210,49 @@ def _ollama_envelope(response_text: str) -> bytes:
     return json.dumps({"response": response_text}).encode("utf-8")
 
 
+def _two_call_judge(
+    verdicts: dict[str, list[tuple[str, bool]]],
+) -> "Callable[..., _FakeResponse]":
+    """Fake the two calls stage 2 makes since 2026-08-10.
+
+    Decomposition and entailment are separate prompts now, so a fake that
+    answers both has to tell them apart. It keys off the decomposition
+    preamble rather than a substring of the payload, which is the thing
+    that actually distinguishes them.
+    """
+
+    def fake_urlopen(request: object, timeout: float = 0) -> _FakeResponse:
+        prompt = _prompt_of(request)
+        if "split each stated_text" in prompt:
+            body = {
+                "findings": [
+                    {"entity_id": eid, "claims": [c for c, _ in claims]}
+                    for eid, claims in verdicts.items()
+                ]
+            }
+        else:
+            body = {
+                "findings": [
+                    {
+                        "entity_id": eid,
+                        "claims": [{"claim": c, "supported": ok} for c, ok in claims],
+                    }
+                    for eid, claims in verdicts.items()
+                ]
+            }
+        return _FakeResponse(_ollama_envelope(json.dumps(body)))
+
+    return fake_urlopen
+
+
+def _prompt_of(request: object) -> str:
+    """The prompt text out of whatever `call_ollama` was handed."""
+    data = getattr(request, "data", None)
+    if data is None:
+        return ""
+    return str(json.loads(data).get("prompt", ""))
+
+
 def _narrated_brief() -> Brief:
     entity = Entity(
         id="domain:example.com",
@@ -237,21 +281,14 @@ def test_build_judge_prompt_includes_stated_text_and_real_facts() -> None:
 def test_faithfulness_stage2_counts_supported_and_unsupported_claims() -> None:
     brief = _narrated_brief()
 
-    def fake_urlopen(request: object, timeout: float) -> _FakeResponse:
-        text = json.dumps(
-            {
-                "findings": [
-                    {
-                        "entity_id": "domain:example.com",
-                        "claims": [
-                            {"claim": "Resolves to a live IP.", "supported": True},
-                            {"claim": "Runs outdated software.", "supported": False},
-                        ],
-                    }
-                ]
-            }
-        )
-        return _FakeResponse(_ollama_envelope(text))
+    fake_urlopen = _two_call_judge(
+        {
+            "domain:example.com": [
+                ("Resolves to a live IP.", True),
+                ("Runs outdated software.", False),
+            ]
+        }
+    )
 
     result = faithfulness_stage2(brief, urlopen=fake_urlopen)
 
@@ -705,7 +742,14 @@ def test_without_a_graph_only_the_entity_existence_check_runs() -> None:
 
 
 def _judged_brief(claims: list[dict[str, object]]) -> tuple[Brief, object]:
-    """A one-finding brief plus a judge that returns exactly `claims`."""
+    """A one-finding brief plus a judge returning exactly `claims`.
+
+    The echo filter still runs after the 2026-08-10 decomposition split --
+    a dedicated decomposition call makes echoes far less likely, not
+    impossible, and these tests pin the filter itself rather than the
+    prompt that feeds it. So the fake deliberately emits echoes that a
+    real decomposition call would not.
+    """
     entities = [
         _entity(
             "subdomain:live.example.com",
@@ -722,17 +766,9 @@ def _judged_brief(claims: list[dict[str, object]]) -> tuple[Brief, object]:
         top_priorities=(replace(finding, body="It resolves to a live IP.", why_ranked="live"),),
         also_found=(),
     )
+    pairs = [(str(c["claim"]), bool(c["supported"])) for c in claims]
 
-    def urlopen(request: object, timeout: float = 0) -> object:
-        return _FakeResponse(
-            _ollama_envelope(
-                json.dumps(
-                    {"findings": [{"entity_id": "subdomain:live.example.com", "claims": claims}]}
-                )
-            )
-        )
-
-    return narrated, urlopen
+    return narrated, _two_call_judge({"subdomain:live.example.com": pairs})
 
 
 def test_a_claim_lifted_from_the_evidence_is_dropped_before_scoring() -> None:
@@ -769,26 +805,9 @@ def test_prose_that_happens_to_restate_a_fact_is_kept() -> None:
         top_priorities=(replace(finding, body="It resolves in DNS: it is a live host."),),
     )
 
-    def echo_urlopen(request: object, timeout: float = 0) -> object:
-        return _FakeResponse(
-            _ollama_envelope(
-                json.dumps(
-                    {
-                        "findings": [
-                            {
-                                "entity_id": "subdomain:live.example.com",
-                                "claims": [
-                                    {
-                                        "claim": "It resolves in DNS: it is a live host.",
-                                        "supported": False,
-                                    }
-                                ],
-                            }
-                        ]
-                    }
-                )
-            )
-        )
+    echo_urlopen = _two_call_judge(
+        {"subdomain:live.example.com": [("It resolves in DNS: it is a live host.", False)]}
+    )
 
     result = faithfulness_stage2(brief, urlopen=echo_urlopen)
 

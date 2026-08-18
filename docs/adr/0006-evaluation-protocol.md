@@ -1,6 +1,6 @@
 # ADR-0006 — Evaluation Protocol: the Three Numbers (v1)
 
-- **Status:** Accepted — extended 2026-08-04 with a measured judge-reliability figure (flag precision 0.250 over 90 human-labelled claims, since improved to 0.800), resolving open question 5; the accompanying diagnosis was retracted and corrected 2026-08-06, the packet re-labelled (precision 1.000, recall 0.667), and linked-entity evidence added to remove an ambiguity that left recall unreportable; see Validation (v0.1.0 — hand-validated 2026-07-23 against a real target under ADR-0007's protocol; see Validation). **`glean eval` (roadmap E4) built 2026-07-27** — the formulas are no longer hand-computed one target at a time; a single command now runs the full pipeline and reports all three numbers across every target with a ground-truth file.
+- **Status:** Accepted — extended 2026-08-04 with a measured judge-reliability figure (flag precision 0.250 over 90 human-labelled claims, since improved to 0.833 with recall 0.833), resolving open question 5; the accompanying diagnosis was retracted and corrected 2026-08-06, the packet re-labelled (precision 1.000, recall 0.667), and linked-entity evidence added to remove an ambiguity that left recall unreportable; see Validation (v0.1.0 — hand-validated 2026-07-23 against a real target under ADR-0007's protocol; see Validation). **`glean eval` (roadmap E4) built 2026-07-27** — the formulas are no longer hand-computed one target at a time; a single command now runs the full pipeline and reports all three numbers across every target with a ground-truth file.
 - **Date:** 2026-07-22
 - **Scope:** Glean v1 — the exact, computable definitions of faithfulness, prioritisation quality, and provenance retention
 - **Depends on:** ADR-0001 (entity schema — the reference set faithfulness checks against), ADR-0004 (prioritisation rubric — the ranking prioritisation quality is measured against), ADR-0005 (brief contract — the artifact all three metrics are computed over)
@@ -96,7 +96,7 @@ Borrowing Mezzi et al.'s repeated-sampling/confidence-interval approach and Self
 ## Open questions
 
 1. ~~**Judge model for D1 stage 2**~~ — **resolved 2026-07-27:** a local judge, per the ADR's own leaning — `llama3.1:8b`, a different and larger model than synthesis's default `llama3.2:latest` (D4's "different, ideally stronger" requirement). Real validation (below) found the local judge itself makes real errors, but not the kind that would be fixed by a bigger/cloud judge alone — see Validation for why this is being left as-is rather than immediately escalated to a cloud judge.
-2. ~~Exact atomic-claim decomposition prompt template~~ — **resolved 2026-07-27:** decomposition and entailment are combined into a single judge call per brief (not two separate calls), asking the judge to both break each finding's prose into atomic claims *and* verdict each one against that entity's real facts in one pass — bounds cost to one call per brief, matching how ADR-0009's narration call is already batched. Prompt and parsing in `glean_osint.evaluation.build_judge_prompt`/`_parse_judge_response`.
+2. ~~Exact atomic-claim decomposition prompt template~~ — **resolved 2026-07-27:** decomposition and entailment are combined into a single judge call per brief (not two separate calls), asking the judge to both break each finding's prose into atomic claims *and* verdict each one against that entity's real facts in one pass — bounds cost to one call per brief, matching how ADR-0009's narration call is already batched. Prompt and parsing in `glean_osint.evaluation.build_judge_prompt`/`_parse_judge_response`. **Reversed 2026-08-10:** the two are now separate calls. The single-call choice was made on cost ("bounds cost to one call per brief"), not on any belief that combining the tasks helped, and measurement showed it hurt. Asked to decompose *and* rule in one pass, the judge left **24 of 86 claims as the entire body sentence**, and a compound sentence scored as one unit hides partial fabrication -- "resolves to a live IP with an exposed HTTPS service" is two assertions, and a judge ruling on it once answers for whichever half it read first. It also manufactured claims by copying lines out of the evidence in front of it (50 of 136 in the 2026-08-10 audit). Splitting fixes both: the decomposition prompt is **never shown the evidence**, so echoing is impossible by construction rather than filtered afterwards, and the entailment prompt rules on claims it did not choose. Cost is two calls per brief instead of one -- still bounded per brief, which is what the original concern actually was.
 3. ~~nDCG@N vs. overlap@N as the *headline* reported number when only one fits in a summary table~~ — **Resolved 2026-08-04:** the constraint turned out not to bind. `glean eval` reports both per target and both in the summary line, so no choice of a single headline was needed.
 4. Ground-truth ranking tie-break rule — explicitly deferred to F2, not decided here.
 5. ~~**Whether the judge's own errors need quantifying before `stage2_faith` can be read at face value**~~ — **Resolved 2026-08-04: they did, and now are.** Raised by real validation, which found the judge making real errors of its own (see Validation), and left open on 2026-08-04 with the apparatus built but the measurement outstanding. `glean judge-audit` samples the judge's individual verdicts (retained on `Stage2FaithfulnessResult.claims` rather than summed away) into a packet carrying each claim and the exact evidence the judge was shown; `glean judge-score` scores the judge once a human has labelled them. The headline is precision on the *flagged* class, because flags are the only thing that moves `stage2_faith` below 1.000: a judge that over-flags makes published faithfulness look worse than reality, which is the counter-intuitive direction. Cohen's kappa accompanies raw agreement, since agreement flatters any judge on a skewed set. **The labels are research data and must come from a human annotator — nothing generates them, and scoring refuses a partially-labelled packet rather than treating unlabelled rows as agreement.** A packet of all 90 claims has now been labelled and scored: the judge over-flags roughly three-to-one, so a documented caveat was *not* enough and `stage2_faith` is a loose lower bound rather than an estimate. Numbers and diagnosis are in the Validation entries at the end of this ADR — note that the 2026-08-04 diagnosis of *why* was **retracted on 2026-08-06** when it was checked against the labelled data, and replaced with one the data supports. The measurement itself stands; a fix for the corrected diagnosis is in and awaiting re-measurement.
@@ -567,3 +567,97 @@ seven real problems, and prompt wording trades precision against exactly
 that. The decomposition instability behind these echoes is the same defect
 in another form, and splitting decomposition from entailment into two calls
 (ADR-0006 Q2 chose one, for cost) remains the open structural answer.
+
+---
+
+**2026-08-10 (later) — decomposition split from entailment (Q2 reversed).**
+
+**Diagnosis first, and it changed the task.** Recall stood at 0.571 — three
+misses in seven. Read individually, the three were not what the number
+implied. Two were the *same claim sentence* on sibling subdomains of one
+target (`api`/`beta.tessno.com`) labelled `unsupported` while the identical
+sentence on `www.tessno.com` was labelled `supported`; they are the stale
+labels flagged at v8 and carried forward through three packets. The third,
+`*.yulan.me`, is a real fabrication — and one **stage 1b already catches
+deterministically**. So the headline recall figure was substantially a
+labelling artifact over a case already covered elsewhere.
+
+What was real, and separately measurable, was the decomposition underneath:
+**24 of 86 claims were the entire body sentence undecomposed**, and 16
+findings produced a single claim. That is the mechanism that *would* hide
+partial fabrication, whether or not this label set happened to demonstrate
+it, so it is worth fixing on its own terms rather than on the strength of a
+number that does not hold up.
+
+**What splitting changed, measured.**
+
+| | one call | two calls |
+|---|---|---|
+| fact-echoed claims | 50 | **0** |
+| compound "X with an exposed Y" claims | 9 | **2** |
+| claims per finding | 1.91 | 1.58 |
+
+The echo result is the structural one: the decomposition prompt is never
+shown `real_facts`, so there is nothing to copy. That defect is now
+prevented rather than filtered — `echoed_claims_dropped` no longer appears
+in `glean eval` output at all, where it read 50.
+
+And the case it was built for behaves correctly. `*.yulan.me`'s
+`resolves to a live IP with an exposed HTTPS service` became two claims, and
+**the judge flagged "resolves to a live IP" as unsupported** — the half it
+accepted wholesale under one call. Splitting also dissolves the stale-label
+problem as a side effect: the compound sentence that was ruled two ways no
+longer exists as a claim.
+
+**Measured, once the packet was labelled: the split moved recall, which
+nothing else had.**
+
+| audit | claims | precision | recall | kappa | agreement |
+|---|---|---|---|---|---|
+| v1 — as first shipped | 90 | 0.250 | 0.778 | 0.268 | 0.744 |
+| v5 — evidence as sentences | 78 | 1.000 | 0.667 | 0.780 | 1.000 |
+| v7 — linked facts, separate field | 107 | 0.444 | 0.500 | 0.425 | 0.916 |
+| v8 — merged evidence, fully labelled | 136 | 0.267 | 0.571 | 0.316 | 0.897 |
+| v10 — echo filter | 86 | 0.800 | 0.571 | 0.642 | 0.953 |
+| **v11 — decomposition split out** | **71** | **0.833** | **0.833** | **0.818** | **0.972** |
+
+Best figure on every metric at once, and the first time **recall** has moved
+at all: 0.571 → 0.833. Four rounds of evidence and scoring work raised
+precision from 0.250 to 0.800 while leaving recall flat, because none of them
+touched the reason the judge missed things — it was ruling on compound
+sentences, and one verdict on "resolves to a live IP **with an exposed HTTPS
+service**" answers for one half. Splitting the sentence is what let it answer
+for both.
+
+**This is not a fitted result, and the distinction matters** given the
+retraction recorded above. No prompt variants were compared against these
+labels. The split was chosen from a diagnosis (24 of 86 claims left
+undecomposed), built once and run once; the annotator then labelled what it
+produced — 37 new labels, 34 carried from v10. That is ordinary annotation:
+labels rate claims, they do not select between implementations.
+
+**Two disagreements remain, one in each direction.** The miss is `*.yulan.me`
+narrated as having an exposed HTTPS service with no service fact anywhere in
+its evidence — a genuine fabrication the judge accepts, and one **stage 1b
+already flags deterministically** on both resolution and service grounds. The
+defence in depth works: the model misses it, the structural check does not.
+The false flag is `found only via active collection` on a `web_tech` entity
+whose evidence says exactly that in the same words. One claim in 71, and the
+mirror image of the miss — the judge now errs about equally in either
+direction, which is what kappa 0.818 describes.
+
+**Claims per finding fell (1.91 → 1.58), and the labels answer why.** Fewer
+claims could have meant cleaner atomic decomposition or content being
+dropped. Recall rising to 0.833 rules out the second: if the split were
+losing assertions, the fabrications hiding in them would have gone
+*undetected more often*, not less. Combined with compound claims falling 9 →
+2, what the drop reflects is the disappearance of duplicate and echoed
+claims, not lost content.
+
+**Where this leaves `stage2_faith`.** It remains a lower bound — the judge
+still errs, and one real fabrication in this set passes it. But the bound is
+now a reasonably tight one, and the residual miss is covered by a
+deterministic check rather than left to the model. That is the shape the
+whole exercise was aiming at: **an LLM judge for what needs judgement, a
+structural check for what does not, and a measured figure for how far to
+trust the first.**
